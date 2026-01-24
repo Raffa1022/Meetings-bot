@@ -111,17 +111,6 @@ const MAX_MEETINGS = 3;
 const letturaCounts = new Map(); // Conta le letture (Max 1)
 const MAX_LETTURE = 1;
 
-
-const client = new Client({
-    intents: [
-        GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent,
-        GatewayIntentBits.GuildMessageReactions,
-        GatewayIntentBits.GuildMembers
-    ]
-});
-
 client.once('clientReady', () => {
     console.log(`✅ Bot online: ${client.user.tag}`);
     console.log("Sistema pronto: Ruoli meeting, Privacy e !impostazioni attivi.");
@@ -446,6 +435,7 @@ client.on('messageCreate', async message => {
 });
 
 client.login('MTQ2MzU5NDkwMTAzOTIyMjg3Nw.GFe33d.9RgkeDdLwtKrQhi69vQFgMCVaR-hqvYkkI-hVg');
+
 
 
 
