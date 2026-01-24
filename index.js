@@ -82,9 +82,6 @@ client.on('messageReactionAdd', async (reaction, user) => {
     }
 });
 
-// 5. LOGIN DEL BOT
-// Usa process.env.TOKEN se carichi il token nelle impostazioni di Koyeb (scelta consigliata)
-client.login('IL_TUO_TOKEN_QUI');
 // --- 🔧 CONFIGURAZIONE ID (COMPILA TUTTI I CAMPI) ---
 
 // 1. ID del Server "TELECOMANDO" (Dove scrivi i comandi)
@@ -450,6 +447,7 @@ client.on('messageCreate', async message => {
 });
 
 client.login('MTQ2MzU5NDkwMTAzOTIyMjg3Nw.GFe33d.9RgkeDdLwtKrQhi69vQFgMCVaR-hqvYkkI-hVg');
+
 
 
 
