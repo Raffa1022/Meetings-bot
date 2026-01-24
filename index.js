@@ -1,21 +1,13 @@
 const http = require('http');
-const { 
-    Client, 
-    GatewayIntentBits, 
-    Partials, 
-    Options, 
-    PermissionsBitField, 
-    ChannelType, 
-    EmbedBuilder 
-} = require('discord.js');
+const { Client, GatewayIntentBits, Partials, Options, PermissionsBitField, ChannelType, EmbedBuilder } = require('discord.js');
 
-// 1. SERVER PER MANTENERE IL BOT SVEGLIO (Keep-alive per Koyeb)
+// 1. SERVER PER KOYEB
 http.createServer((req, res) => {
     res.writeHead(200);
     res.end('Bot is alive');
 }).listen(8000);
 
-// 2. CONFIGURAZIONE DEL CLIENT DISCORD
+// 2. CONFIGURAZIONE CLIENT
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -23,18 +15,15 @@ const client = new Client({
         GatewayIntentBits.GuildMessageReactions,
         GatewayIntentBits.MessageContent
     ],
-    // Partials: permettono di leggere reazioni su messaggi vecchi
     partials: [Partials.Message, Partials.Reaction, Partials.User],
-    
-    // Cache: Ridotta per risparmiare RAM su Koyeb
     makeCache: Options.cacheWithLimits({
-        MessageManager: 10,        // Ricorda solo gli ultimi 10 messaggi per canale
-        PresenceManager: 0,       
-        GuildMemberManager: 100    
+        MessageManager: 10,
+        PresenceManager: 0,
+        GuildMemberManager: 100
     }),
 });
 
-// --- 🔧 CONFIGURAZIONE ID ---
+// --- 🔧 CONFIGURAZIONE ID (METTI I TUOI QUI) ---
 const ID_SERVER_COMMAND = '1294619216447799376'; 
 const ID_CANALE_LOG = '1294619216930013277';
 const ID_SERVER_TARGET = '1463608688244822018';
@@ -43,36 +32,59 @@ const ID_RUOLO_RESET = '1463619259728134299';
 const ID_RUOLO_MEETING_1 = '1369800222448025711';
 const ID_RUOLO_MEETING_2 = '1463689842285215764';
 
-// --- 🔢 SISTEMI DI CONTEGGIO ---
+// ID DEL CANALE CHE FUNGE DA DATABASE
+const ID_CANALE_DATABASE = '1464707241394311282'; 
+
+// --- 🔢 MEMORIA CONTEGGI ---
 const meetingCounts = new Map(); 
-const MAX_MEETINGS = 3;
 const letturaCounts = new Map(); 
+const MAX_MEETINGS = 3;
 const MAX_LETTURE = 1;
 
-// 3. EVENTO: IL BOT È PRONTO
-client.once('ready', () => {
+// --- 📦 FUNZIONI DI MEMORIA (DISCORD DATABASE) ---
+async function syncDatabase() {
+    try {
+        const dbChannel = await client.channels.fetch(ID_CANALE_DATABASE);
+        const dataString = JSON.stringify({
+            meeting: Object.fromEntries(meetingCounts),
+            lettura: Object.fromEntries(letturaCounts)
+        });
+        await dbChannel.send(`📦 **BACKUP_DATI**\n\`\`\`json\n${dataString}\n\`\`\``);
+    } catch (e) { console.error("Errore salvataggio:", e); }
+}
+
+async function restoreDatabase() {
+    try {
+        const dbChannel = await client.channels.fetch(ID_CANALE_DATABASE);
+        const messages = await dbChannel.messages.fetch({ limit: 20 });
+        const lastBackup = messages.find(m => m.content.includes('BACKUP_DATI'));
+        if (lastBackup) {
+            const jsonStr = lastBackup.content.split('```json\n')[1].split('\n```')[0];
+            const data = JSON.parse(jsonStr);
+            meetingCounts.clear();
+            Object.entries(data.meeting || {}).forEach(([id, val]) => meetingCounts.set(id, val));
+            letturaCounts.clear();
+            Object.entries(data.lettura || {}).forEach(([id, val]) => letturaCounts.set(id, val));
+            console.log("✅ Memoria ripristinata dal canale Discord.");
+        }
+    } catch (e) { console.log("ℹ️ Nessun backup trovato."); }
+}
+
+// 3. EVENTO READY
+client.once('ready', async () => {
     console.log(`✅ Bot online: ${client.user.tag}`);
-    console.log("Sistema pronto: Ruoli meeting, Privacy e !impostazioni attivi.");
+    await restoreDatabase(); // Recupera i dati appena si accende
 });
 
-// 4. LOGICA GLOBALE REAZIONI (Gestisce i messaggi vecchi/partials)
+// 4. GESTIONE REAZIONI (MESSAGGI VECCHI)
 client.on('messageReactionAdd', async (reaction, user) => {
     if (user.bot) return;
-
-    // Recupera il messaggio se è vecchio (Partial)
     if (reaction.partial) {
-        try {
-            await reaction.fetch();
-        } catch (error) {
-            console.error('Errore recupero messaggio vecchio:', error);
-            return;
-        }
+        try { await reaction.fetch(); } catch (e) { return; }
     }
-
-    // Qui puoi aggiungere logica globale per le reazioni se necessario
 });
 
-// 5. GESTIONE COMANDI
+// 5. COMANDI
 client.on('messageCreate', async message => {
     if (message.author.bot) return;
 
@@ -80,39 +92,37 @@ client.on('messageCreate', async message => {
     if (message.content === '!impostazioni') {
         if (message.guild.id !== ID_SERVER_COMMAND) return;
         const helpEmbed = new EmbedBuilder()
-            .setTitle('🛠️ Pannello Comandi Bot')
+            .setTitle('🛠️ Pannello Comandi')
             .setColor(0x0099FF)
-            .setDescription("Lista comandi disponibili.")
             .addFields(
-                { name: '🟢 `!meeting @utente`', value: 'Crea una chat privata.' },
-                { name: '🛑 `!fine`', value: 'Archivia la chat.' },
-                { name: '🕵️ `!lettura`', value: 'Entra come supervisore.' }
+                { name: '🟢 !meeting @utente', value: 'Crea chat (Max 3)' },
+                { name: '🕵️ !lettura', value: 'Supervisione (Max 1)' },
+                { name: '🔄 !azzeramento1 / !azzeramento2', value: 'Reset Staff' }
             );
         return message.channel.send({ embeds: [helpEmbed] });
     }
 
-    // !azzeramento1 (Meeting)
+    // !azzeramento1
     if (message.content === '!azzeramento1') {
-        if (message.guild.id !== ID_SERVER_COMMAND) return;
-        if (!message.member.roles.cache.has(ID_RUOLO_RESET)) return message.reply("❌ Non autorizzato.");
-        meetingCounts.clear(); 
-        return message.reply("🔄 Meeting azzerati (0/3).");
+        if (message.guild.id !== ID_SERVER_COMMAND || !message.member.roles.cache.has(ID_RUOLO_RESET)) return;
+        meetingCounts.clear();
+        await syncDatabase(); // Salva lo svuotamento
+        return message.reply("🔄 Meeting azzerati e salvati.");
     }
 
-    // !azzeramento2 (Letture)
+    // !azzeramento2
     if (message.content === '!azzeramento2') {
-        if (message.guild.id !== ID_SERVER_COMMAND) return;
-        if (!message.member.roles.cache.has(ID_RUOLO_RESET)) return message.reply("❌ Non autorizzato.");
-        letturaCounts.clear(); 
-        return message.reply("🔄 Letture azzerate (0/1).");
+        if (message.guild.id !== ID_SERVER_COMMAND || !message.member.roles.cache.has(ID_RUOLO_RESET)) return;
+        letturaCounts.clear();
+        await syncDatabase(); // Salva lo svuotamento
+        return message.reply("🔄 Letture azzerate e salvate.");
     }
 
     // !meeting
     if (message.content.startsWith('!meeting ')) {
         if (message.guild.id !== ID_SERVER_COMMAND) return;
-
         const hasRole = message.member.roles.cache.has(ID_RUOLO_MEETING_1) || message.member.roles.cache.has(ID_RUOLO_MEETING_2);
-        if (!hasRole) return message.reply("❌ Ruolo mancante.");
+        if (!hasRole) return message.reply("❌ Ruolo non autorizzato.");
 
         const authorCount = meetingCounts.get(message.author.id) || 0;
         if (authorCount >= MAX_MEETINGS) return message.reply("❌ Limite 3 meeting raggiunto.");
@@ -120,37 +130,29 @@ client.on('messageCreate', async message => {
         const userToInvite = message.mentions.users.first();
         if (!userToInvite || userToInvite.id === message.author.id) return message.reply("❌ Tagga un utente valido.");
 
-        const scadenzaMs = 3 * 60 * 60 * 1000;
-        const scadenzaUnix = Math.floor((Date.now() + scadenzaMs) / 1000);
+        const proposalMsg = await message.channel.send(`🔔 Richiesta Meeting per <@${userToInvite.id}> da ${message.author}. ✅/❌`);
+        await proposalMsg.react('✅'); await proposalMsg.react('❌');
 
-        const proposalMsg = await message.channel.send(
-            `🔔 **Richiesta Meeting**\n<@${userToInvite.id}>, ${message.author} vuole parlarti.\n⏳ Scadenza: <t:${scadenzaUnix}:R>`
-        );
-        
-        await proposalMsg.react('✅');
-        await proposalMsg.react('❌');
-
-        const filter = (reaction, user) => ['✅', '❌'].includes(reaction.emoji.name) && user.id === userToInvite.id;
-        const collector = proposalMsg.createReactionCollector({ filter, time: scadenzaMs, max: 1 });
+        const collector = proposalMsg.createReactionCollector({ 
+            filter: (r, u) => ['✅', '❌'].includes(r.emoji.name) && u.id === userToInvite.id, 
+            time: 3 * 60 * 60 * 1000, max: 1 
+        });
 
         collector.on('collect', async (reaction) => {
             if (reaction.emoji.name === '✅') {
-                let countAuthor = meetingCounts.get(message.author.id) || 0;
-                let countInvite = meetingCounts.get(userToInvite.id) || 0;
+                let cAuthor = meetingCounts.get(message.author.id) || 0;
+                let cInvite = meetingCounts.get(userToInvite.id) || 0;
+                if (cAuthor >= MAX_MEETINGS || cInvite >= MAX_MEETINGS) return proposalMsg.reply("❌ Limite raggiunto.");
 
-                if (countAuthor >= MAX_MEETINGS || countInvite >= MAX_MEETINGS) {
-                    return proposalMsg.reply("❌ Uno dei due ha raggiunto il limite.");
-                }
-
-                meetingCounts.set(message.author.id, countAuthor + 1);
-                meetingCounts.set(userToInvite.id, countInvite + 1);
+                meetingCounts.set(message.author.id, cAuthor + 1);
+                meetingCounts.set(userToInvite.id, cInvite + 1);
+                await syncDatabase(); // <--- SALVA IL NUOVO CONTEGGIO
 
                 try {
                     const targetGuild = client.guilds.cache.get(ID_SERVER_TARGET);
                     const newChannel = await targetGuild.channels.create({
                         name: `meeting-${message.author.username}-${userToInvite.username}`,
-                        type: ChannelType.GuildText,
-                        parent: ID_CATEGORIA_TARGET,
+                        type: ChannelType.GuildText, parent: ID_CATEGORIA_TARGET,
                         permissionOverwrites: [
                             { id: targetGuild.id, deny: [PermissionsBitField.Flags.ViewChannel] },
                             { id: message.author.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages] },
@@ -158,47 +160,39 @@ client.on('messageCreate', async message => {
                             { id: client.user.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages] }
                         ],
                     });
-
-                    await newChannel.send(`🔒 Sessione avviata tra <@${message.author.id}> e <@${userToInvite.id}>. Scrivete **!fine** per chiudere.`);
-
+                    await newChannel.send(`🔒 Benvenuti! Scrivete **!fine** per chiudere.`);
                     const logChannel = await client.channels.fetch(ID_CANALE_LOG);
                     if (logChannel) {
-                        const logEmbed = new EmbedBuilder()
-                            .setTitle('📂 Meeting Avviato')
-                            .setColor(0x00FF00)
-                            .setDescription(`Autore: ${message.author.tag}\nOspite: ${userToInvite.tag}`)
+                        const logEmbed = new EmbedBuilder().setTitle('📂 Meeting Avviato').setColor(0x00FF00)
+                            .setDescription(`Autore: ${message.author.tag} (${cAuthor+1}/3)\nOspite: ${userToInvite.tag} (${cInvite+1}/3)`)
                             .setFooter({ text: `ID:${newChannel.id}` });
                         await logChannel.send({ embeds: [logEmbed] });
                     }
                 } catch (e) { console.error(e); }
-            } else {
-                await proposalMsg.reply("❌ Rifiutato.");
             }
         });
     }
 
     // !lettura
     if (message.content === '!lettura') {
-        if (message.guild.id !== ID_SERVER_COMMAND) return;
-        if (!message.reference) return message.reply("❌ Rispondi al log verde.");
-
-        const readCount = letturaCounts.get(message.author.id) || 0;
-        if (readCount >= MAX_LETTURE) return message.reply("❌ Limite 1 lettura raggiunto.");
+        if (message.guild.id !== ID_SERVER_COMMAND || !message.reference) return;
+        const currentRead = letturaCounts.get(message.author.id) || 0;
+        if (currentRead >= MAX_LETTURE) return message.reply("❌ Limite 1 lettura raggiunto.");
 
         try {
             const repliedMsg = await message.channel.messages.fetch(message.reference.messageId);
             const channelId = repliedMsg.embeds[0]?.footer?.text.match(/(\d{17,20})/)?.[1];
-            if (!channelId) return message.reply("❌ ID non trovato.");
-
             const targetGuild = client.guilds.cache.get(ID_SERVER_TARGET);
             const targetChannel = await targetGuild.channels.fetch(channelId);
 
-            if (targetChannel.permissionOverwrites.cache.has(message.author.id)) {
-                return message.reply("❌ Non puoi entrare nelle tue chat.");
-            }
+            if (targetChannel.permissionOverwrites.cache.has(message.author.id)) return message.reply("❌ Non puoi supervisionare le tue chat.");
 
             await targetChannel.permissionOverwrites.create(message.author.id, { ViewChannel: true, SendMessages: false });
-            letturaCounts.set(message.author.id, readCount + 1);
+            letturaCounts.set(message.author.id, currentRead + 1);
+            await syncDatabase(); // <--- SALVA LA LETTURA USATA
+
+            const newEmbed = EmbedBuilder.from(repliedMsg.embeds[0]).setColor(0xFFA500).addFields({ name: '👮‍♂️ Supervisore', value: `${message.author.tag}` });
+            await repliedMsg.edit({ embeds: [newEmbed] });
             message.reply("✅ Accesso supervisore attivato.");
         } catch (e) { console.error(e); }
     }
@@ -206,19 +200,14 @@ client.on('messageCreate', async message => {
     // !fine
     if (message.content === '!fine') {
         if (message.guild.id !== ID_SERVER_TARGET || !message.channel.name.startsWith('meeting-')) return;
-
-        await message.channel.send("🛑 Chat archiviata in sola lettura.");
-        const overwrites = message.channel.permissionOverwrites.cache;
-        for (const [id, overwrite] of overwrites) {
-            if (id === client.user.id) continue;
-            await message.channel.permissionOverwrites.edit(id, { SendMessages: false, AddReactions: false });
-        }
+        await message.channel.send("🛑 Chat archiviata.");
+        message.channel.permissionOverwrites.cache.forEach(async (o) => {
+            if (o.id !== client.user.id) await message.channel.permissionOverwrites.edit(o.id, { SendMessages: false, AddReactions: false });
+        });
     }
 });
 
-// LOGIN SICURO
 client.login('MTQ2MzU5NDkwMTAzOTIyMjg3Nw.GFe33d.9RgkeDdLwtKrQhi69vQFgMCVaR-hqvYkkI-hVg');
-
 
 
 
