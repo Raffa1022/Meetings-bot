@@ -3,23 +3,42 @@ http.createServer((req, res) => {
   res.writeHead(200);
   res.end('Bot is alive');
 }).listen(8000);
-const { Client, GatewayIntentBits, Partials, Options, PermissionsBitField, ChannelType, EmbedBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, Partials, Options } = require('discord.js');
+
 const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.GuildMessageReactions,
-    GatewayIntentBits.MessageContent
-  ],
-  // Permette al bot di gestire reazioni su messaggi che non ha più in memoria
-  partials: [Partials.Message, Partials.Reaction, Partials.User], 
-  
-  // Limita la cache per non saturare la RAM di Koyeb
-  makeCache: Options.cacheWithLimits({
-    MessageManager: 10,       // Ricorda solo gli ultimi 10 messaggi
-    PresenceManager: 0,       // Non memorizza lo stato degli utenti (risparmio RAM)
-    GuildMemberManager: 100,  // Ricorda al massimo 100 membri
-  }),
+    intents: [
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.GuildMessageReactions,
+        GatewayIntentBits.MessageContent,
+    ],
+    partials: [Partials.Message, Partials.Reaction, Partials.User],
+    makeCache: Options.cacheWithLimits({
+        MessageManager: 10, 
+        PresenceManager: 0,
+        GuildMemberManager: 100,
+    }),
+});
+client.on('messageReactionAdd', async (reaction, user) => {
+    if (user.bot) return; // Ignora le reazioni messe dal bot stesso
+
+    // Se il messaggio è vecchio (non nei famosi 10), lo recupera al volo
+    if (reaction.partial) {
+        try {
+            await reaction.fetch();
+        } catch (error) {
+            return console.error('Errore nel recupero:', error);
+        }
+    }
+
+    // Gestione dei tasti
+    if (reaction.emoji.name === '✅') {
+        // Codice per accettare il meeting
+        await reaction.message.channel.send(`Meeting accettato da ${user.username}!`);
+    } else if (reaction.emoji.name === '❌') {
+        // Codice per rifiutare il meeting
+        await reaction.message.channel.send(`Meeting rifiutato da ${user.username}.`);
+    }
 });
 // --- 🔧 CONFIGURAZIONE ID (COMPILA TUTTI I CAMPI) ---
 
@@ -386,5 +405,7 @@ client.on('messageCreate', async message => {
 });
 
 client.login('MTQ2MzU5NDkwMTAzOTIyMjg3Nw.GFe33d.9RgkeDdLwtKrQhi69vQFgMCVaR-hqvYkkI-hVg');
+
+
 
 
