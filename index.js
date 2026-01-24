@@ -217,7 +217,8 @@ client.on('messageCreate', async message => {
 });
 
 // LOGIN SICURO
-client.login(process.env.TOKEN);
+client.login('MTQ2MzU5NDkwMTAzOTIyMjg3Nw.GFe33d.9RgkeDdLwtKrQhi69vQFgMCVaR-hqvYkkI-hVg');
+
 
 
 
