@@ -3,7 +3,6 @@ http.createServer((req, res) => {
   res.writeHead(200);
   res.end('Bot is alive');
 }).listen(8000);
-const http = require('http');
 const { 
     Client, 
     GatewayIntentBits, 
@@ -447,6 +446,7 @@ client.on('messageCreate', async message => {
 });
 
 client.login('MTQ2MzU5NDkwMTAzOTIyMjg3Nw.GFe33d.9RgkeDdLwtKrQhi69vQFgMCVaR-hqvYkkI-hVg');
+
 
 
 
