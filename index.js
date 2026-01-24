@@ -3,43 +3,88 @@ http.createServer((req, res) => {
   res.writeHead(200);
   res.end('Bot is alive');
 }).listen(8000);
-const { Client, GatewayIntentBits, Partials, Options } = require('discord.js');
+const http = require('http');
+const { 
+    Client, 
+    GatewayIntentBits, 
+    Partials, 
+    Options, 
+    PermissionsBitField, 
+    ChannelType, 
+    EmbedBuilder 
+} = require('discord.js');
 
+// 1. SERVER PER MANTENERE IL BOT SVEGLIO (Keep-alive)
+http.createServer((req, res) => {
+    res.writeHead(200);
+    res.end('Bot is alive');
+}).listen(8000);
+
+// 2. CONFIGURAZIONE DEL CLIENT DISCORD
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.GuildMessageReactions,
-        GatewayIntentBits.MessageContent,
+        GatewayIntentBits.MessageContent
     ],
+    // Partials: Fondamentali per leggere reazioni su messaggi vecchi (non in memoria)
     partials: [Partials.Message, Partials.Reaction, Partials.User],
+    
+    // Cache: Ridotta al minimo per non far crashare il bot su Koyeb
     makeCache: Options.cacheWithLimits({
-        MessageManager: 10, 
-        PresenceManager: 0,
-        GuildMemberManager: 100,
+        MessageManager: 10,        // Ricorda solo gli ultimi 10 messaggi per canale
+        PresenceManager: 0,       // Non memorizza lo stato (online/offline) degli utenti
+        GuildMemberManager: 100    // Memorizza al massimo 100 membri del server
     }),
 });
-client.on('messageReactionAdd', async (reaction, user) => {
-    if (user.bot) return; // Ignora le reazioni messe dal bot stesso
 
-    // Se il messaggio è vecchio (non nei famosi 10), lo recupera al volo
+// --- CONFIGURAZIONE ID (COMPILA TUTTI I CAMPI SE NECESSARIO) ---
+// Qui puoi aggiungere le tue variabili come ID_SERVER_COMMAND ecc.
+
+// 3. EVENTO: IL BOT È PRONTO
+client.once('ready', () => {
+    console.log(`Bot loggato come ${client.user.tag}`);
+});
+
+// 4. LOGICA DELLE REAZIONI (✅ e ❌)
+client.on('messageReactionAdd', async (reaction, user) => {
+    // Ignora le reazioni messe dal bot stesso
+    if (user.bot) return;
+
+    // Se il messaggio è vecchio e non è tra i 10 in memoria, il bot lo "riprende" da Discord
     if (reaction.partial) {
         try {
             await reaction.fetch();
         } catch (error) {
-            return console.error('Errore nel recupero:', error);
+            console.error('Errore nel recupero del messaggio vecchio:', error);
+            return;
         }
     }
 
-    // Gestione dei tasti
+    // Gestione dei tasti per il meeting
+    const message = reaction.message;
+
     if (reaction.emoji.name === '✅') {
-        // Codice per accettare il meeting
-        await reaction.message.channel.send(`Meeting accettato da ${user.username}!`);
-    } else if (reaction.emoji.name === '❌') {
-        // Codice per rifiutare il meeting
-        await reaction.message.channel.send(`Meeting rifiutato da ${user.username}.`);
+        // Logica quando viene cliccata la spunta
+        console.log(`${user.username} ha accettato il meeting.`);
+        // Esempio: invia un messaggio di conferma
+        await message.channel.send(`✅ **${user.username}** ha accettato l'incontro!`);
+        
+        // Una volta finita l'operazione, il messaggio uscirà dalla memoria 
+        // appena arrivano nuovi messaggi, grazie al limite di 10 impostato sopra.
+    }
+
+    if (reaction.emoji.name === '❌') {
+        // Logica quando viene cliccata la croce
+        console.log(`${user.username} ha rifiutato il meeting.`);
+        await message.channel.send(`❌ **${user.username}** ha declinato l'invito.`);
     }
 });
+
+// 5. LOGIN DEL BOT
+// Usa process.env.TOKEN se carichi il token nelle impostazioni di Koyeb (scelta consigliata)
+client.login('IL_TUO_TOKEN_QUI');
 // --- 🔧 CONFIGURAZIONE ID (COMPILA TUTTI I CAMPI) ---
 
 // 1. ID del Server "TELECOMANDO" (Dove scrivi i comandi)
@@ -405,6 +450,7 @@ client.on('messageCreate', async message => {
 });
 
 client.login('MTQ2MzU5NDkwMTAzOTIyMjg3Nw.GFe33d.9RgkeDdLwtKrQhi69vQFgMCVaR-hqvYkkI-hVg');
+
 
 
 
