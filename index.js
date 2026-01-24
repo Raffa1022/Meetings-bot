@@ -3,8 +3,24 @@ http.createServer((req, res) => {
   res.writeHead(200);
   res.end('Bot is alive');
 }).listen(8000);
-const { Client, GatewayIntentBits, PermissionsBitField, ChannelType, EmbedBuilder } = require('discord.js');
-
+const { Client, GatewayIntentBits, Partials, Options, PermissionsBitField, ChannelType, EmbedBuilder } = require('discord.js');
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.GuildMessageReactions,
+    GatewayIntentBits.MessageContent
+  ],
+  // Permette al bot di gestire reazioni su messaggi che non ha più in memoria
+  partials: [Partials.Message, Partials.Reaction, Partials.User], 
+  
+  // Limita la cache per non saturare la RAM di Koyeb
+  makeCache: Options.cacheWithLimits({
+    MessageManager: 10,       // Ricorda solo gli ultimi 10 messaggi
+    PresenceManager: 0,       // Non memorizza lo stato degli utenti (risparmio RAM)
+    GuildMemberManager: 100,  // Ricorda al massimo 100 membri
+  }),
+});
 // --- 🔧 CONFIGURAZIONE ID (COMPILA TUTTI I CAMPI) ---
 
 // 1. ID del Server "TELECOMANDO" (Dove scrivi i comandi)
@@ -370,4 +386,5 @@ client.on('messageCreate', async message => {
 });
 
 client.login('MTQ2MzU5NDkwMTAzOTIyMjg3Nw.GFe33d.9RgkeDdLwtKrQhi69vQFgMCVaR-hqvYkkI-hVg');
+
 
