@@ -4,7 +4,7 @@ const { Client, GatewayIntentBits, Partials, Options, PermissionsBitField, Chann
 // --- 1. SERVER KEEP-ALIVE ---
 http.createServer((req, res) => {
     res.writeHead(200);
-    res.end('Bot is alive - Low Memory Mode v4.8 (Full Sponsor Follow)');
+    res.end('Bot is alive - Low Memory Mode v4.9 (Fix Lettura & Archivio Chiusura)');
 }).listen(8000);
 
 // --- 2. CONFIGURAZIONE CLIENT OTTIMIZZATA ---
@@ -102,11 +102,20 @@ async function restoreDatabase() {
         const dbChannel = await client.channels.fetch(ID_CANALE_DATABASE);
         if (!dbChannel) return;
 
-        const messages = await dbChannel.messages.fetch({ limit: 10 });
-        const lastBackup = messages.find(m => m.content.includes('BACKUP_DATI'));
+        // Aumentato limite fetch per trovare eventuali archivi vecchi se il bot è stato spento a lungo
+        const messages = await dbChannel.messages.fetch({ limit: 20 });
         
-        if (lastBackup) {
-            const jsonStr = lastBackup.content.split('```json\n')[1].split('\n```')[0];
+        // Cerca prima il Backup Standard, se non c'è cerca un Archivio Chiusura
+        let dataMsg = messages.find(m => m.content.includes('BACKUP_DATI'));
+        let source = "Backup Live";
+
+        if (!dataMsg) {
+            dataMsg = messages.find(m => m.content.includes('ARCHIVIO_TABELLA'));
+            source = "Archivio Chiusura";
+        }
+        
+        if (dataMsg) {
+            const jsonStr = dataMsg.content.split('```json\n')[1].split('\n```')[0];
             const data = JSON.parse(jsonStr);
             
             meetingCounts.clear();
@@ -118,12 +127,20 @@ async function restoreDatabase() {
             (data.active || []).forEach(id => activeUsers.add(id));
 
             if (data.autorole !== undefined) isAutoRoleActive = data.autorole;
-            
-            console.log("✅ Database ripristinato.");
-        }
-        messages.forEach(m => dbChannel.messages.cache.delete(m.id)); 
 
-    } catch (e) { console.log("ℹ️ Nessun backup trovato."); }
+            // Se stiamo recuperando un archivio tabella (perché il bot è stato spento dopo chiusura)
+            if (source === "Archivio Chiusura" && data.tableBackup) {
+                 activeTable = data.tableBackup;
+            }
+            
+            console.log(`✅ Database ripristinato da: ${source}`);
+        }
+        messages.forEach(m => {
+            // Cancella solo i messaggi di keep-alive vecchi, lasciamo gli archivi per sicurezza
+            if(m.content.includes('BACKUP_DATI')) dbChannel.messages.cache.delete(m.id);
+        }); 
+
+    } catch (e) { console.log("ℹ️ Nessun backup trovato.", e); }
 }
 
 // --- 3. EVENTO AVVIO ---
@@ -190,11 +207,11 @@ client.on('messageCreate', async message => {
                 { name: '🚪 !entrata (Overseer)', value: `Attiva/Disattiva ruolo automatico all'ingresso. (Stato: ${isAutoRoleActive ? 'ON' : 'OFF'})` },
                 { name: '📋 !tabella [num] (Overseer)', value: 'Crea la tabella iscrizioni (Es. !tabella 10).' },
                 { name: '🚀 !assegna (Overseer)', value: 'Assegna stanze, ruoli e permessi avanzati.' },
-                { name: '🔒 !chiusura (Overseer)', value: 'Chiude la tabella e resetta le iscrizioni.' },
+                { name: '🔒 !chiusura (Overseer)', value: 'Archivia la tabella nel DB e resetta la memoria.' },
                 { name: '⚠️ !azzeramento1 (Overseer)', value: 'Resetta meeting e sblocca utenti.' },
                 { name: '⚠️ !azzeramento2 (Overseer)', value: 'Resetta il conteggio delle Letture.' }
             )
-            .setFooter({ text: 'Sistema v4.8 - Sponsor Follows & Notification' });
+            .setFooter({ text: 'Sistema v4.9 - Fix Lettura & Archivio' });
 
         return message.channel.send({ embeds: [helpEmbed] });
     }
@@ -364,8 +381,24 @@ client.on('messageCreate', async message => {
         if (message.guild.id !== ID_SERVER_COMMAND) return;
         if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) return;
 
+        // 1. Salva l'archivio nel canale database (così "va a prenderla" se serve)
+        const dbChannel = await client.channels.fetch(ID_CANALE_DATABASE);
+        if (dbChannel) {
+            const dataToArchive = {
+                tableBackup: activeTable,
+                meeting: Object.fromEntries(meetingCounts),
+                lettura: Object.fromEntries(letturaCounts),
+                active: Array.from(activeUsers),
+                autorole: isAutoRoleActive
+            };
+            const jsonStr = JSON.stringify(dataToArchive);
+            // Questo messaggio "ARCHIVIO_TABELLA" non viene cancellato automaticamente, così rimane come backup
+            await dbChannel.send(`📁 **ARCHIVIO_TABELLA** (Chiusura del ${new Date().toLocaleTimeString('it-IT')})\n\`\`\`json\n${jsonStr}\n\`\`\``);
+        }
+
+        // 2. Resetta la memoria
         activeTable = { limit: 0, slots: [], messageId: null };
-        message.reply("🔒 **Tabella chiusa e memoria resettata.**");
+        message.reply("🔒 **Tabella archiviata, chiusa e memoria resettata.**");
     }
 
     // --- COMANDO: !meeting ---
@@ -499,7 +532,6 @@ client.on('messageCreate', async message => {
                         .setDescription(`Benvenuti nel canale privato!\nScrivete **!fine** per chiudere la chat.`)
                         .setColor(0x00FFFF);
 
-                    // Qui mandiamo il "content" con le menzioni per notificare tutti, + l'embed
                     await newChannel.send({ content: `🔔 Benvenuti: ${participantsText}`, embeds: [welcomeEmbed] });
                     
                     const logEmbed = new EmbedBuilder()
@@ -575,8 +607,14 @@ client.on('messageCreate', async message => {
                 });
             }
 
+            // --- FIX LISTA PARTECIPANTI (ESCLUDE SPONSOR DAL WARNING INIZIALE) ---
             const participants = targetChannel.permissionOverwrites.cache
-                .filter(o => o.id !== client.user.id && o.id !== message.author.id && o.id !== targetGuild.id)
+                .filter(o => 
+                    o.id !== client.user.id && 
+                    o.id !== message.author.id && 
+                    o.id !== targetGuild.id &&
+                    (supervisorSponsor ? o.id !== supervisorSponsor : true) // ESCLUDE LO SPONSOR DALLA LISTA "VITTIME"
+                )
                 .map(o => `<@${o.id}>`)
                 .join(' ');
 
