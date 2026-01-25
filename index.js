@@ -4,7 +4,7 @@ const { Client, GatewayIntentBits, Partials, Options, PermissionsBitField, Chann
 // --- 1. SERVER KEEP-ALIVE ---
 http.createServer((req, res) => {
     res.writeHead(200);
-    res.end('Bot is alive - Low Memory Mode v3.5');
+    res.end('Bot is alive - Low Memory Mode v3.7 Verified');
 }).listen(8000);
 
 // --- 2. CONFIGURAZIONE CLIENT OTTIMIZZATA ---
@@ -22,6 +22,7 @@ const client = new Client({
         Partials.User, 
         Partials.GuildMember
     ],
+    // Cache aggressiva (Low Memory)
     makeCache: Options.cacheWithLimits({
         MessageManager: 10,       
         PresenceManager: 0,       
@@ -42,12 +43,14 @@ const ID_RUOLO_RESET = '1463619259728134299';
 const ID_RUOLO_MEETING_1 = '1369800222448025711';
 const ID_RUOLO_MEETING_2 = '1463689842285215764';
 
+// Canale Database
 const ID_CANALE_DATABASE = '1464707241394311282'; 
 
 // --- 🔢 VARIABILI MEMORIA ---
 const meetingCounts = new Map(); 
 const letturaCounts = new Map(); 
-const activeUsers = new Set(); // NUOVO: Traccia chi è attualmente in chat
+// Questa variabile tiene traccia di chi è IN QUESTO MOMENTO in una chat
+const activeUsers = new Set(); 
 const MAX_MEETINGS = 3;
 const MAX_LETTURE = 1;
 
@@ -60,11 +63,11 @@ async function syncDatabase() {
         const dataString = JSON.stringify({
             meeting: Object.fromEntries(meetingCounts),
             lettura: Object.fromEntries(letturaCounts),
-            active: Array.from(activeUsers) // Salva anche chi è attivo
+            active: Array.from(activeUsers) // Salviamo anche chi è bloccato
         });
 
         const sentMsg = await dbChannel.send(`📦 **BACKUP_DATI**\n\`\`\`json\n${dataString}\n\`\`\``);
-        sentMsg.channel.messages.cache.delete(sentMsg.id); 
+        sentMsg.channel.messages.cache.delete(sentMsg.id); // Pulizia RAM
 
     } catch (e) { console.error("Errore salvataggio DB:", e); }
 }
@@ -86,13 +89,13 @@ async function restoreDatabase() {
             letturaCounts.clear();
             Object.entries(data.lettura || {}).forEach(([id, val]) => letturaCounts.set(id, val));
             
-            // Ripristina utenti attivi
+            // Ripristino utenti attivi/bloccati
             activeUsers.clear();
             (data.active || []).forEach(id => activeUsers.add(id));
             
             console.log("✅ Database ripristinato.");
         }
-        messages.forEach(m => dbChannel.messages.cache.delete(m.id)); 
+        messages.forEach(m => dbChannel.messages.cache.delete(m.id)); // Pulizia RAM
 
     } catch (e) { console.log("ℹ️ Nessun backup trovato."); }
 }
@@ -129,7 +132,7 @@ client.on('messageCreate', async message => {
                 { name: '⚠️ !azzeramento1', value: 'Resetta meeting e sblocca utenti.' },
                 { name: '⚠️ !azzeramento2', value: 'Resetta il conteggio delle Letture.' }
             )
-            .setFooter({ text: 'Sistema v3.5 - Low Memory' });
+            .setFooter({ text: 'Sistema v3.7 - Low Memory Verified' });
 
         return message.channel.send({ embeds: [helpEmbed] });
     }
@@ -140,7 +143,7 @@ client.on('messageCreate', async message => {
         if (!message.member.roles.cache.has(ID_RUOLO_RESET)) return message.reply("⛔ Non hai i permessi.");
 
         meetingCounts.clear();
-        activeUsers.clear(); // Resetta anche i blocchi "in corso"
+        activeUsers.clear(); // Sblocca tutti gli utenti "incastrati"
         await syncDatabase();
         return message.reply("♻️ Conteggio **Meeting** azzerato e utenti sbloccati.");
     }
@@ -162,7 +165,7 @@ client.on('messageCreate', async message => {
         const hasRole = message.member.roles.cache.has(ID_RUOLO_MEETING_1) || message.member.roles.cache.has(ID_RUOLO_MEETING_2);
         if (!hasRole) return message.reply("⛔ Ruolo non autorizzato.");
 
-        // NUOVO CONTROLLO: Se l'autore è già in una chat
+        // CHECK 1: Autore già impegnato?
         if (activeUsers.has(message.author.id)) {
             return message.reply("⚠️ Hai già una chat attiva! Concludila con **!fine** prima di aprirne un'altra.");
         }
@@ -173,7 +176,7 @@ client.on('messageCreate', async message => {
         const userToInvite = message.mentions.users.first();
         if (!userToInvite || userToInvite.id === message.author.id) return message.reply("⚠️ Devi taggare un utente valido.");
 
-        // NUOVO CONTROLLO: Se l'ospite è già in una chat
+        // CHECK 2: Ospite già impegnato?
         if (activeUsers.has(userToInvite.id)) {
             return message.reply(`⚠️ L'utente ${userToInvite} è già impegnato in un'altra chat attiva.`);
         }
@@ -190,9 +193,9 @@ client.on('messageCreate', async message => {
             if (reaction.emoji.name === '✅') {
                 if (reaction.message.partial) await reaction.message.fetch();
 
-                // Ricontrolli finali (se nel frattempo ne hanno aperta un'altra)
+                // CHECK 3: Controllo finale anti-spam
                 if (activeUsers.has(message.author.id) || activeUsers.has(userToInvite.id)) {
-                     return reaction.message.reply("❌ Meeting annullato: Uno dei partecipanti è occupato.");
+                     return reaction.message.reply("❌ Meeting annullato: Uno dei partecipanti risulta ora occupato.");
                 }
 
                 let cAuthor = meetingCounts.get(message.author.id) || 0;
@@ -204,7 +207,7 @@ client.on('messageCreate', async message => {
                 meetingCounts.set(message.author.id, cAuthor + 1);
                 meetingCounts.set(userToInvite.id, cGuest + 1);
                 
-                // NUOVO: Blocca gli utenti
+                // BLOCCO UTENTI
                 activeUsers.add(message.author.id);
                 activeUsers.add(userToInvite.id);
                 
@@ -218,11 +221,13 @@ client.on('messageCreate', async message => {
                         parent: ID_CATEGORIA_TARGET,
                         permissionOverwrites: [
                             { id: targetGuild.id, deny: [PermissionsBitField.Flags.ViewChannel] },
+                            // AUTORE (Blocco Thread)
                             { 
                                 id: message.author.id, 
                                 allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages],
                                 deny: [PermissionsBitField.Flags.CreatePublicThreads, PermissionsBitField.Flags.CreatePrivateThreads] 
                             },
+                            // OSPITE (Blocco Thread)
                             { 
                                 id: userToInvite.id, 
                                 allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages],
@@ -248,7 +253,7 @@ client.on('messageCreate', async message => {
                 } catch (e) { 
                     console.error("Errore creazione:", e);
                     reaction.message.channel.send("❌ Errore creazione canale.");
-                    // In caso di errore sblocchiamo gli utenti
+                    // ROLLBACK: Sblocca utenti se fallisce
                     activeUsers.delete(message.author.id);
                     activeUsers.delete(userToInvite.id);
                 }
@@ -282,13 +287,16 @@ client.on('messageCreate', async message => {
             if (!targetChannel) return message.reply("❌ Canale inesistente.");
             if (targetChannel.permissionOverwrites.cache.has(message.author.id)) return message.reply("⚠️ Sei già dentro.");
 
+            // Aggiungi Supervisore (NO Thread, NO Scrittura, NO Reazioni)
             await targetChannel.permissionOverwrites.create(message.author.id, { 
                 ViewChannel: true, 
                 SendMessages: false,
-                CreatePublicThreads: false,
-                CreatePrivateThreads: false
+                AddReactions: false,          
+                CreatePublicThreads: false,   
+                CreatePrivateThreads: false   
             });
 
+            // Tag Utenti
             const participants = targetChannel.permissionOverwrites.cache
                 .filter(o => o.id !== client.user.id && o.id !== message.author.id && o.id !== targetGuild.id)
                 .map(o => `<@${o.id}>`)
@@ -319,15 +327,16 @@ client.on('messageCreate', async message => {
         if (message.guild.id !== ID_SERVER_TARGET) return;
         if (!message.channel.name.startsWith('meeting-')) return;
 
-        // NUOVO: Sblocca gli utenti attivi (quelli che potevano scrivere)
+        // SBLOCCO UTENTI: Rimuove dal Set chi aveva permesso di scrivere (Autore e Ospite)
         message.channel.permissionOverwrites.cache.forEach((ow) => {
             if (ow.allow.has(PermissionsBitField.Flags.SendMessages)) {
                 activeUsers.delete(ow.id);
             }
         });
-        await syncDatabase(); // Salva lo sblocco
+        await syncDatabase(); // Salva lo stato sbloccato
 
-        await message.channel.send("🛑 **Chat Chiusa**. Archiviazione...");
+        // MODIFICA QUI: Rimosso "Archiviazione..."
+        await message.channel.send("🛑 **Chat Chiusa.**");
         
         message.channel.permissionOverwrites.cache.forEach(async (overwrite) => {
             if (overwrite.id !== client.user.id) {
