@@ -4,7 +4,7 @@ const { Client, GatewayIntentBits, Partials, Options, PermissionsBitField, Chann
 // --- 1. SERVER KEEP-ALIVE ---
 http.createServer((req, res) => {
     res.writeHead(200);
-    res.end('Bot is alive - Low Memory Mode v3.7 Verified');
+    res.end('Bot is alive - Low Memory Mode v3.8 Verified');
 }).listen(8000);
 
 // --- 2. CONFIGURAZIONE CLIENT OTTIMIZZATA ---
@@ -132,7 +132,7 @@ client.on('messageCreate', async message => {
                 { name: '⚠️ !azzeramento1', value: 'Resetta meeting e sblocca utenti.' },
                 { name: '⚠️ !azzeramento2', value: 'Resetta il conteggio delle Letture.' }
             )
-            .setFooter({ text: 'Sistema v3.7 - Low Memory Verified' });
+            .setFooter({ text: 'Sistema v3.8 - Low Memory Verified' });
 
         return message.channel.send({ embeds: [helpEmbed] });
     }
@@ -162,10 +162,11 @@ client.on('messageCreate', async message => {
     if (message.content.startsWith('!meeting ')) {
         if (message.guild.id !== ID_SERVER_COMMAND) return;
 
-        const hasRole = message.member.roles.cache.has(ID_RUOLO_MEETING_1) || message.member.roles.cache.has(ID_RUOLO_MEETING_2);
-        if (!hasRole) return message.reply("⛔ Ruolo non autorizzato.");
+        // CONTROLLO 1: L'autore ha il ruolo?
+        const hasRoleAuthor = message.member.roles.cache.has(ID_RUOLO_MEETING_1) || message.member.roles.cache.has(ID_RUOLO_MEETING_2);
+        if (!hasRoleAuthor) return message.reply("⛔ Non hai il ruolo autorizzato per creare meeting.");
 
-        // CHECK 1: Autore già impegnato?
+        // CHECK 2: Autore già impegnato?
         if (activeUsers.has(message.author.id)) {
             return message.reply("⚠️ Hai già una chat attiva! Concludila con **!fine** prima di aprirne un'altra.");
         }
@@ -176,7 +177,20 @@ client.on('messageCreate', async message => {
         const userToInvite = message.mentions.users.first();
         if (!userToInvite || userToInvite.id === message.author.id) return message.reply("⚠️ Devi taggare un utente valido.");
 
-        // CHECK 2: Ospite già impegnato?
+        // --- NUOVO CONTROLLO: L'ospite ha il ruolo? ---
+        try {
+            const memberToInvite = await message.guild.members.fetch(userToInvite.id);
+            const hasRoleGuest = memberToInvite.roles.cache.has(ID_RUOLO_MEETING_1) || memberToInvite.roles.cache.has(ID_RUOLO_MEETING_2);
+            
+            if (!hasRoleGuest) {
+                return message.reply(`⛔ L'utente ${userToInvite} non ha il ruolo necessario per partecipare ai meeting.`);
+            }
+        } catch (e) {
+            return message.reply("⚠️ Impossibile verificare i permessi dell'utente invitato.");
+        }
+        // ----------------------------------------------
+
+        // CHECK 3: Ospite già impegnato?
         if (activeUsers.has(userToInvite.id)) {
             return message.reply(`⚠️ L'utente ${userToInvite} è già impegnato in un'altra chat attiva.`);
         }
@@ -193,7 +207,7 @@ client.on('messageCreate', async message => {
             if (reaction.emoji.name === '✅') {
                 if (reaction.message.partial) await reaction.message.fetch();
 
-                // CHECK 3: Controllo finale anti-spam
+                // CHECK 4: Controllo finale anti-spam
                 if (activeUsers.has(message.author.id) || activeUsers.has(userToInvite.id)) {
                      return reaction.message.reply("❌ Meeting annullato: Uno dei partecipanti risulta ora occupato.");
                 }
@@ -352,4 +366,3 @@ client.on('messageCreate', async message => {
 });
 
 client.login('MTQ2MzU5NDkwMTAzOTIyMjg3Nw.GFe33d.9RgkeDdLwtKrQhi69vQFgMCVaR-hqvYkkI-hVg');
-
