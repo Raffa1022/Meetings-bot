@@ -4,7 +4,7 @@ const { Client, GatewayIntentBits, Partials, Options, PermissionsBitField, Chann
 // --- 1. SERVER KEEP-ALIVE ---
 http.createServer((req, res) => {
     res.writeHead(200);
-    res.end('Bot is alive - Low Memory Mode v3.2');
+    res.end('Bot is alive - Low Memory Mode v3.3');
 }).listen(8000);
 
 // --- 2. CONFIGURAZIONE CLIENT OTTIMIZZATA ---
@@ -125,7 +125,7 @@ client.on('messageCreate', async message => {
                 { name: '⚠️ !azzeramento1', value: 'Resetta il conteggio dei Meeting.' },
                 { name: '⚠️ !azzeramento2', value: 'Resetta il conteggio delle Letture.' }
             )
-            .setFooter({ text: 'Sistema v3.2 - Low Memory' });
+            .setFooter({ text: 'Sistema v3.3 - Low Memory' });
 
         return message.channel.send({ embeds: [helpEmbed] });
     }
@@ -193,13 +193,27 @@ client.on('messageCreate', async message => {
                         parent: ID_CATEGORIA_TARGET,
                         permissionOverwrites: [
                             { id: targetGuild.id, deny: [PermissionsBitField.Flags.ViewChannel] },
-                            { id: message.author.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages] },
-                            { id: userToInvite.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages] },
+                            
+                            // --- PERMESSI AUTORE ---
+                            { 
+                                id: message.author.id, 
+                                allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages],
+                                // BLOCCO THREAD QUI:
+                                deny: [PermissionsBitField.Flags.CreatePublicThreads, PermissionsBitField.Flags.CreatePrivateThreads] 
+                            },
+                            
+                            // --- PERMESSI OSPITE ---
+                            { 
+                                id: userToInvite.id, 
+                                allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages],
+                                // BLOCCO THREAD QUI:
+                                deny: [PermissionsBitField.Flags.CreatePublicThreads, PermissionsBitField.Flags.CreatePrivateThreads]
+                            },
+                            
                             { id: client.user.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages] }
                         ],
                     });
                     
-                    // --- MODIFICA 1: BENVENUTO CON I TAG ---
                     await newChannel.send(`👋 Benvenuti ${message.author} ${userToInvite}!\nScrivete **!fine** per chiudere la chat.`);
                     
                     const logEmbed = new EmbedBuilder()
@@ -250,8 +264,7 @@ client.on('messageCreate', async message => {
             // Aggiungi supervisore
             await targetChannel.permissionOverwrites.create(message.author.id, { ViewChannel: true, SendMessages: false });
 
-            // --- MODIFICA 2: AVVISO CON TAG PARTECIPANTI ---
-            // Recupera gli ID dei partecipanti (Escludendo Bot, Supervisore e il ruolo @everyone)
+            // Recupera partecipanti per il tag
             const participants = targetChannel.permissionOverwrites.cache
                 .filter(o => o.id !== client.user.id && o.id !== message.author.id && o.id !== targetGuild.id)
                 .map(o => `<@${o.id}>`)
@@ -283,11 +296,15 @@ client.on('messageCreate', async message => {
         if (!message.channel.name.startsWith('meeting-')) return;
 
         await message.channel.send("🛑 **Chat Chiusa**. Archiviazione...");
+        
         message.channel.permissionOverwrites.cache.forEach(async (overwrite) => {
             if (overwrite.id !== client.user.id) {
+                // MODIFICA: Blocca anche Reazioni e Thread alla fine
                 await message.channel.permissionOverwrites.edit(overwrite.id, { 
                     SendMessages: false, 
-                    AddReactions: false 
+                    AddReactions: false,        // Blocca nuove reazioni
+                    CreatePublicThreads: false, // Blocca thread
+                    CreatePrivateThreads: false // Blocca thread
                 });
             }
         });
