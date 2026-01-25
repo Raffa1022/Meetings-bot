@@ -4,7 +4,7 @@ const { Client, GatewayIntentBits, Partials, Options, PermissionsBitField, Chann
 // --- 1. SERVER KEEP-ALIVE ---
 http.createServer((req, res) => {
     res.writeHead(200);
-    res.end('Bot is alive - Low Memory Mode v4.2 Verified');
+    res.end('Bot is alive - Low Memory Mode v4.3 Verified');
 }).listen(8000);
 
 // --- 2. CONFIGURAZIONE CLIENT OTTIMIZZATA ---
@@ -50,9 +50,12 @@ const ID_CANALE_DATABASE = '1464940718933151839';
 // ID CATEGORIA CHAT RUOLO (#1, #2...)
 const ID_CATEGORIA_CHAT_RUOLO = '1460741414357827747'; 
 
-// --- 🆕 NUOVI ID PER I RUOLI AUTOMATICI (INSERISCI QUI GLI ID) ---
+// --- ID RUOLI AUTOMATICI (TABELLA) ---
 const ID_RUOLO_GIOCATORE_AUTO = '1460741403331268661'; 
 const ID_RUOLO_SPONSOR_AUTO = '1460741404497019002';
+
+// --- 🆕 NUOVO ID PER AUTO-JOIN (RUOLO ALL'INGRESSO) ---
+const ID_RUOLO_AUTO_JOIN = '1460741402672758814'; 
 
 // --- 🔢 VARIABILI MEMORIA ---
 const meetingCounts = new Map(); 
@@ -60,6 +63,9 @@ const letturaCounts = new Map();
 const activeUsers = new Set(); 
 const MAX_MEETINGS = 3;
 const MAX_LETTURE = 1;
+
+// Variabile stato Auto-Ruolo (False = spento di default)
+let isAutoRoleActive = false;
 
 // --- 📋 VARIABILI TABELLA ---
 let activeTable = {
@@ -77,7 +83,8 @@ async function syncDatabase() {
         const dataString = JSON.stringify({
             meeting: Object.fromEntries(meetingCounts),
             lettura: Object.fromEntries(letturaCounts),
-            active: Array.from(activeUsers) 
+            active: Array.from(activeUsers),
+            autorole: isAutoRoleActive // Salviamo lo stato dell'auto-ruolo
         });
 
         const sentMsg = await dbChannel.send(`📦 **BACKUP_DATI**\n\`\`\`json\n${dataString}\n\`\`\``);
@@ -105,6 +112,9 @@ async function restoreDatabase() {
             
             activeUsers.clear();
             (data.active || []).forEach(id => activeUsers.add(id));
+
+            // Ripristina lo stato dell'auto-ruolo
+            if (data.autorole !== undefined) isAutoRoleActive = data.autorole;
             
             console.log("✅ Database ripristinato.");
         }
@@ -119,6 +129,20 @@ client.once('ready', async () => {
     await restoreDatabase(); 
 });
 
+// --- 🆕 EVENTO: AUTO-JOIN (QUANDO QUALCUNO ENTRA NEL SERVER) ---
+client.on('guildMemberAdd', async member => {
+    // Se l'interruttore è SPENTO, non fa nulla
+    if (!isAutoRoleActive) return;
+
+    try {
+        // Assegna il ruolo automatico
+        await member.roles.add(ID_RUOLO_AUTO_JOIN);
+        console.log(`Ruolo assegnato a ${member.user.tag}`);
+    } catch (e) {
+        console.error(`Errore assegnazione ruolo a ${member.user.tag}:`, e);
+    }
+});
+
 // --- 4. REAZIONI ---
 client.on('messageReactionAdd', async (reaction, user) => {
     if (user.bot) return;
@@ -131,7 +155,7 @@ client.on('messageReactionAdd', async (reaction, user) => {
 client.on('messageCreate', async message => {
     if (message.author.bot) return;
 
-    // --- COMANDO: !impostazioni (AGGIORNATO CON ETICHETTE) ---
+    // --- COMANDO: !impostazioni (AGGIORNATO) ---
     if (message.content === '!impostazioni') {
         if (message.guild.id !== ID_SERVER_COMMAND) return;
         
@@ -141,16 +165,30 @@ client.on('messageCreate', async message => {
             .addFields(
                 { name: '🔹 !meeting @utente (Giocatori)', value: 'Crea una chat privata (Max 3).' },
                 { name: '🛑 !fine (Giocatori)', value: 'Chiude la chat privata.' },
-                { name: '👁️ !lettura (Overseer)', value: 'Supervisione chat attiva (Max 1).' },
+                { name: '👁️ !lettura (Giocatori)', value: 'Supervisione chat attiva (Max 1).' }, 
+                { name: '🚪 !entrata (Overseer)', value: `Attiva/Disattiva ruolo automatico all'ingresso. (Stato: ${isAutoRoleActive ? 'ON' : 'OFF'})` },
                 { name: '📋 !tabella [num] (Overseer)', value: 'Crea la tabella iscrizioni (Es. !tabella 10).' },
                 { name: '🚀 !assegna (Overseer)', value: 'Assegna stanze, ruoli e permessi avanzati.' },
                 { name: '🔒 !chiusura (Overseer)', value: 'Chiude la tabella e resetta le iscrizioni.' },
                 { name: '⚠️ !azzeramento1 (Overseer)', value: 'Resetta meeting e sblocca utenti.' },
                 { name: '⚠️ !azzeramento2 (Overseer)', value: 'Resetta il conteggio delle Letture.' }
             )
-            .setFooter({ text: 'Sistema v4.2 - Low Memory Verified' });
+            .setFooter({ text: 'Sistema v4.3 - Low Memory Verified' });
 
         return message.channel.send({ embeds: [helpEmbed] });
+    }
+
+    // --- 🆕 NUOVO COMANDO: !entrata ---
+    if (message.content === '!entrata') {
+        if (message.guild.id !== ID_SERVER_COMMAND) return;
+        if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) return; // Solo admin
+
+        // Inverte lo stato (da ON a OFF e viceversa)
+        isAutoRoleActive = !isAutoRoleActive;
+        await syncDatabase(); // Salva lo stato nel database
+
+        const stato = isAutoRoleActive ? "✅ ATTIVO" : "🛑 DISATTIVO";
+        message.reply(`🚪 **Auto-Ruolo Ingressi:** ${stato}.\n(Ruolo ID: ${ID_RUOLO_AUTO_JOIN})`);
     }
 
     // --- !azzeramento1 ---
@@ -225,7 +263,7 @@ client.on('messageCreate', async message => {
         activeTable.messageId = sentMsg.id;
     }
 
-    // --- COMANDO: !assegna (AGGIORNATO: BENVENUTO + PERMESSI PIN/THREAD) ---
+    // --- COMANDO: !assegna ---
     if (message.content === '!assegna') {
         if (message.guild.id !== ID_SERVER_COMMAND) return;
         if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) return;
@@ -246,30 +284,27 @@ client.on('messageCreate', async message => {
             const channel = message.guild.channels.cache.find(c => c.parentId === ID_CATEGORIA_CHAT_RUOLO && c.name === channelName);
 
             if (channel) {
-                // 1. Reset permessi stanza (Nessuno vede tranne bot e admin)
+                // 1. Reset permessi stanza
                 await channel.permissionOverwrites.set([
                     { id: message.guild.id, deny: [PermissionsBitField.Flags.ViewChannel] } 
                 ]);
 
-                // Definiamo i permessi avanzati: PIN (ManageMessages) e Thread Privati
+                // Permessi avanzati
                 const permessiSpeciali = {
                     ViewChannel: true,
                     SendMessages: true,
-                    ManageMessages: true,        // Permette di PINNARE messaggi
-                    CreatePrivateThreads: true,  // Permette thread PRIVATI
-                    SendMessagesInThreads: true, // Permette di scrivere nei thread
-                    CreatePublicThreads: false   // VIETA thread PUBBLICI
+                    ManageMessages: true,        
+                    CreatePrivateThreads: true,  
+                    SendMessagesInThreads: true, 
+                    CreatePublicThreads: false   
                 };
 
                 let utentiDaSalutare = [];
 
                 // --- GESTIONE GIOCATORE ---
                 if (slot.player) {
-                    // Assegna permessi avanzati
                     await channel.permissionOverwrites.edit(slot.player, permessiSpeciali);
                     utentiDaSalutare.push(`<@${slot.player}>`);
-                    
-                    // Assegna Ruolo
                     try {
                         const member = await message.guild.members.fetch(slot.player);
                         if (member) await member.roles.add(ID_RUOLO_GIOCATORE_AUTO);
@@ -278,11 +313,8 @@ client.on('messageCreate', async message => {
 
                 // --- GESTIONE SPONSOR ---
                 if (slot.sponsor) {
-                    // Assegna permessi avanzati
                     await channel.permissionOverwrites.edit(slot.sponsor, permessiSpeciali);
                     utentiDaSalutare.push(`<@${slot.sponsor}>`);
-
-                    // Assegna Ruolo
                     try {
                         const member = await message.guild.members.fetch(slot.sponsor);
                         if (member) await member.roles.add(ID_RUOLO_SPONSOR_AUTO);
@@ -296,7 +328,6 @@ client.on('messageCreate', async message => {
                         : `Benvenuto ${utentiDaSalutare[0]}!`;
                     await channel.send(saluto);
                 }
-
                 assegnati++;
             }
         }
@@ -307,7 +338,7 @@ client.on('messageCreate', async message => {
         await message.channel.send(msgFinale);
     }
 
-    // --- NUOVO COMANDO: !chiusura ---
+    // --- COMANDO: !chiusura ---
     if (message.content === '!chiusura') {
         if (message.guild.id !== ID_SERVER_COMMAND) return;
         if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) return;
