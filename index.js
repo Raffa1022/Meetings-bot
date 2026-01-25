@@ -4,26 +4,19 @@ const { Client, GatewayIntentBits, Partials, Options, PermissionsBitField, Chann
 // --- 1. SERVER KEEP-ALIVE ---
 http.createServer((req, res) => {
     res.writeHead(200);
-    res.end('Bot is alive - Low Memory Mode v4.3 Verified');
+    res.end('Bot is alive - Version 4.6 Final (No Ghost Ping + Anti-Alt)');
 }).listen(8000);
 
-// --- 2. CONFIGURAZIONE CLIENT OTTIMIZZATA ---
+// --- 2. CONFIGURAZIONE CLIENT ---
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.GuildMessageReactions,
         GatewayIntentBits.MessageContent,
-        GatewayIntentBits.GuildMembers // Necessario per assegnare i ruoli
+        GatewayIntentBits.GuildMembers 
     ],
-    partials: [
-        Partials.Message, 
-        Partials.Channel, 
-        Partials.Reaction, 
-        Partials.User, 
-        Partials.GuildMember
-    ],
-    // Cache aggressiva (Low Memory)
+    partials: [Partials.Message, Partials.Channel, Partials.Reaction, Partials.User, Partials.GuildMember],
     makeCache: Options.cacheWithLimits({
         MessageManager: 10,       
         PresenceManager: 0,       
@@ -34,7 +27,7 @@ const client = new Client({
     }),
 });
 
-// --- 🔧 CONFIGURAZIONE ID (INSERISCI I TUOI) ---
+// --- 🔧 CONFIGURAZIONE ID ---
 const ID_SERVER_COMMAND = '1460740887494787259'; 
 const ID_CANALE_LOG = '1464941042380837010';
 const ID_SERVER_TARGET = '1463608688244822018';
@@ -43,19 +36,19 @@ const ID_CATEGORIA_TARGET = '1463608688991273015';
 const ID_RUOLO_RESET = '1460741401435181295'; 
 const ID_RUOLO_MEETING_1 = '1460741403331268661';
 const ID_RUOLO_MEETING_2 = '1460741402672758814';
-
-// Canale Database
 const ID_CANALE_DATABASE = '1464940718933151839'; 
-
-// ID CATEGORIA CHAT RUOLO (#1, #2...)
 const ID_CATEGORIA_CHAT_RUOLO = '1460741414357827747'; 
 
-// --- ID RUOLI AUTOMATICI (TABELLA) ---
+// ID RUOLI AUTOMATICI (TABELLA)
 const ID_RUOLO_GIOCATORE_AUTO = '1460741403331268661'; 
 const ID_RUOLO_SPONSOR_AUTO = '1460741404497019002';
 
-// --- 🆕 NUOVO ID PER AUTO-JOIN (RUOLO ALL'INGRESSO) ---
+// ID PER AUTO-JOIN
 const ID_RUOLO_AUTO_JOIN = '1460741402672758814'; 
+
+// --- 🆕 NUOVI ID PER IL BENVENUTO E GLI ALT ---
+const ID_CANALE_BENVENUTO = '1460740888450830501'; 
+const ID_RUOLO_ALT = '1460741402672758814'; 
 
 // --- 🔢 VARIABILI MEMORIA ---
 const meetingCounts = new Map(); 
@@ -64,33 +57,46 @@ const activeUsers = new Set();
 const MAX_MEETINGS = 3;
 const MAX_LETTURE = 1;
 
-// Variabile stato Auto-Ruolo (False = spento di default)
 let isAutoRoleActive = false;
 
 // --- 📋 VARIABILI TABELLA ---
 let activeTable = {
     limit: 0,
-    slots: [], // Contiene { player: id, sponsor: id }
-    messageId: null
+    slots: [], 
+    messageId: null,
+    locked: false 
 };
 
-// --- 📦 SISTEMA DATABASE ---
+// --- 📦 SISTEMA DATABASE SILENZIOSO (NO GHOST PING) ---
 async function syncDatabase() {
     try {
         const dbChannel = await client.channels.fetch(ID_CANALE_DATABASE);
-        if (!dbChannel) return console.error("❌ Canale Database non trovato!");
+        if (!dbChannel) return;
 
         const dataString = JSON.stringify({
             meeting: Object.fromEntries(meetingCounts),
             lettura: Object.fromEntries(letturaCounts),
             active: Array.from(activeUsers),
-            autorole: isAutoRoleActive // Salviamo lo stato dell'auto-ruolo
+            autorole: isAutoRoleActive
         });
 
-        const sentMsg = await dbChannel.send(`📦 **BACKUP_DATI**\n\`\`\`json\n${dataString}\n\`\`\``);
-        sentMsg.channel.messages.cache.delete(sentMsg.id); 
+        const content = `📦 **BACKUP_DATI**\n\`\`\`json\n${dataString}\n\`\`\``;
 
-    } catch (e) { console.error("Errore salvataggio DB:", e); }
+        // Cerca l'ultimo messaggio del bot
+        const messages = await dbChannel.messages.fetch({ limit: 10 });
+        const lastBackup = messages.find(m => m.author.id === client.user.id && m.content.includes('BACKUP_DATI'));
+
+        if (lastBackup) {
+            // MODIFICA il messaggio esistente (Nessuna notifica)
+            if (lastBackup.content !== content) {
+                await lastBackup.edit(content);
+            }
+        } else {
+            // Se non esiste, ne crea uno nuovo
+            await dbChannel.send(content);
+        }
+
+    } catch (e) { console.error("Errore DB:", e); }
 }
 
 async function restoreDatabase() {
@@ -112,501 +118,339 @@ async function restoreDatabase() {
             
             activeUsers.clear();
             (data.active || []).forEach(id => activeUsers.add(id));
-
-            // Ripristina lo stato dell'auto-ruolo
             if (data.autorole !== undefined) isAutoRoleActive = data.autorole;
             
             console.log("✅ Database ripristinato.");
         }
-        messages.forEach(m => dbChannel.messages.cache.delete(m.id)); 
-
     } catch (e) { console.log("ℹ️ Nessun backup trovato."); }
 }
 
-// --- 3. EVENTO AVVIO ---
+// --- AVVIO ---
 client.once('ready', async () => {
     console.log(`✅ Bot online: ${client.user.tag}`);
     await restoreDatabase(); 
 });
 
-// --- 🆕 EVENTO: AUTO-JOIN (QUANDO QUALCUNO ENTRA NEL SERVER) ---
+// --- GESTIONE BENVENUTO & AUTO-JOIN ---
 client.on('guildMemberAdd', async member => {
-    // Se l'interruttore è SPENTO, non fa nulla
-    if (!isAutoRoleActive) return;
+    // 1. Assegnazione Ruolo Automatico
+    if (isAutoRoleActive) {
+        try { await member.roles.add(ID_RUOLO_AUTO_JOIN); } catch (e) {}
+    }
 
+    // 2. Controllo Alt per Benvenuto
     try {
-        // Assegna il ruolo automatico
-        await member.roles.add(ID_RUOLO_AUTO_JOIN);
-        console.log(`Ruolo assegnato a ${member.user.tag}`);
-    } catch (e) {
-        console.error(`Errore assegnazione ruolo a ${member.user.tag}:`, e);
+        // Ricarichiamo il membro per essere sicuri di avere i ruoli aggiornati
+        const fetchedMember = await member.fetch();
+        const hasAltRole = fetchedMember.roles.cache.has(ID_RUOLO_ALT);
+
+        // Se NON è un alt, manda il benvenuto
+        if (!hasAltRole) {
+            const welcomeChannel = member.guild.channels.cache.get(ID_CANALE_BENVENUTO);
+            if (welcomeChannel) {
+                await welcomeChannel.send(`Benvenuto ${member} nel server!`);
+            }
+        }
+    } catch (e) { console.error("Errore Benvenuto:", e); }
+});
+
+// --- PULIZIA MEMORIA SE CANALE CANCELLATO MANUALMENTE ---
+client.on('channelDelete', async channel => {
+    if (channel.parentId === ID_CATEGORIA_TARGET && channel.name.startsWith('meeting-')) {
+        // Rimuove gli utenti attivi se il canale viene eliminato a mano
+        let changes = false;
+        channel.permissionOverwrites.cache.forEach(ow => {
+            if (activeUsers.has(ow.id)) {
+                activeUsers.delete(ow.id);
+                changes = true;
+            }
+        });
+        if (changes) await syncDatabase();
     }
 });
 
-// --- 4. REAZIONI ---
 client.on('messageReactionAdd', async (reaction, user) => {
     if (user.bot) return;
-    if (reaction.partial) {
-        try { await reaction.fetch(); } catch (error) { return; }
-    }
+    if (reaction.partial) { try { await reaction.fetch(); } catch (error) { return; } }
 });
 
-// --- 5. GESTIONE COMANDI ---
+// --- GESTIONE COMANDI ---
 client.on('messageCreate', async message => {
     if (message.author.bot) return;
 
-    // --- COMANDO: !impostazioni (AGGIORNATO) ---
+    // !impostazioni
     if (message.content === '!impostazioni') {
         if (message.guild.id !== ID_SERVER_COMMAND) return;
-        
         const helpEmbed = new EmbedBuilder()
             .setTitle('⚙️ Pannello Gestione Bot')
             .setColor(0x2B2D31)
             .addFields(
-                { name: '🔹 !meeting @utente (Giocatori)', value: 'Crea una chat privata (Max 3).' },
-                { name: '🛑 !fine (Giocatori)', value: 'Chiude la chat privata.' },
-                { name: '👁️ !lettura (Giocatori)', value: 'Supervisione chat attiva (Max 1).' }, 
-                { name: '🚪 !entrata (Overseer)', value: `Attiva/Disattiva ruolo automatico all'ingresso. (Stato: ${isAutoRoleActive ? 'ON' : 'OFF'})` },
-                { name: '📋 !tabella [num] (Overseer)', value: 'Crea la tabella iscrizioni (Es. !tabella 10).' },
-                { name: '🚀 !assegna (Overseer)', value: 'Assegna stanze, ruoli e permessi avanzati.' },
-                { name: '🔒 !chiusura (Overseer)', value: 'Chiude la tabella e resetta le iscrizioni.' },
-                { name: '⚠️ !azzeramento1 (Overseer)', value: 'Resetta meeting e sblocca utenti.' },
-                { name: '⚠️ !azzeramento2 (Overseer)', value: 'Resetta il conteggio delle Letture.' }
+                { name: '🔹 !meeting @utente (Giocatori)', value: 'Crea chat privata (Inclusi Sponsor).' },
+                { name: '🛑 !fine (Giocatori)', value: 'Chiude la chat.' },
+                { name: '👁️ !lettura (Giocatori)', value: 'Supervisione chat (+ Sponsor).' }, 
+                { name: '🚪 !entrata (Overseer)', value: `Auto-Ruolo Ingresso. (Stato: ${isAutoRoleActive ? 'ON' : 'OFF'})` },
+                { name: '📋 !tabella [num] (Overseer)', value: 'Crea tabella iscrizioni.' },
+                { name: '🚀 !assegna (Overseer)', value: 'Assegna stanze e ruoli.' },
+                { name: '🔒 !chiusura (Overseer)', value: 'Blocca iscrizioni (Dati mantenuti).' },
+                { name: '⚠️ !azzeramento1/2 (Overseer)', value: 'Reset contatori.' }
             )
-            .setFooter({ text: 'Sistema v4.3 - Low Memory Verified' });
-
+            .setFooter({ text: 'Sistema v4.6 - Final' });
         return message.channel.send({ embeds: [helpEmbed] });
     }
 
-    // --- 🆕 NUOVO COMANDO: !entrata ---
+    // !entrata
     if (message.content === '!entrata') {
         if (message.guild.id !== ID_SERVER_COMMAND) return;
-        if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) return; // Solo admin
-
-        // Inverte lo stato (da ON a OFF e viceversa)
+        if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) return; 
         isAutoRoleActive = !isAutoRoleActive;
-        await syncDatabase(); // Salva lo stato nel database
-
-        const stato = isAutoRoleActive ? "✅ ATTIVO" : "🛑 DISATTIVO";
-        message.reply(`🚪 **Auto-Ruolo Ingressi:** ${stato}.\n(Ruolo ID: ${ID_RUOLO_AUTO_JOIN})`);
+        await syncDatabase(); 
+        message.reply(`🚪 **Auto-Ruolo Ingressi:** ${isAutoRoleActive ? "✅ ATTIVO" : "🛑 DISATTIVO"}.`);
     }
 
-    // --- !azzeramento1 ---
+    // !azzeramenti
     if (message.content === '!azzeramento1') {
-        if (message.guild.id !== ID_SERVER_COMMAND) return;
         if (!message.member.roles.cache.has(ID_RUOLO_RESET)) return message.reply("⛔ Non hai i permessi.");
-
-        meetingCounts.clear();
-        activeUsers.clear(); 
-        await syncDatabase();
-        return message.reply("♻️ Conteggio **Meeting** azzerato e utenti sbloccati.");
+        meetingCounts.clear(); activeUsers.clear(); await syncDatabase();
+        return message.reply("♻️ Conteggio **Meeting** azzerato.");
     }
-
-    // --- !azzeramento2 ---
     if (message.content === '!azzeramento2') {
-        if (message.guild.id !== ID_SERVER_COMMAND) return;
         if (!message.member.roles.cache.has(ID_RUOLO_RESET)) return message.reply("⛔ Non hai i permessi.");
-
-        letturaCounts.clear();
-        await syncDatabase();
-        return message.reply("♻️ Conteggio **Letture** azzerato per tutti.");
+        letturaCounts.clear(); await syncDatabase();
+        return message.reply("♻️ Conteggio **Letture** azzerato.");
     }
 
-    // --- COMANDO: !tabella ---
+    // !tabella
     if (message.content.startsWith('!tabella')) {
-        if (message.guild.id !== ID_SERVER_COMMAND) return;
         if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) return;
+        const num = parseInt(message.content.split(' ')[1]);
+        if (!num || num > 25) return message.reply("Max 25 slot.");
 
-        const args = message.content.split(' ');
-        const num = parseInt(args[1]);
-
-        if (!num || num > 25) return message.reply("Specifica un numero di slot (max 25). Es: `!tabella 10`");
-
-        activeTable.limit = num;
-        activeTable.slots = Array(num).fill(null).map(() => ({ player: null, sponsor: null }));
-
-        const description = generateTableText();
-
-        const embed = new EmbedBuilder()
-            .setTitle(`📋 Iscrizione Giocatori & Sponsor`)
-            .setDescription(description)
-            .setColor('Blue')
-            .setFooter({ text: "Usa i menu qui sotto per iscriverti!" });
-
+        activeTable = { limit: num, slots: Array(num).fill(null).map(() => ({ player: null, sponsor: null })), messageId: null, locked: false };
+        
         const options = [];
-        for (let i = 1; i <= num; i++) {
-            options.push({ label: `Numero ${i}`, value: `${i - 1}` });
-        }
+        for (let i = 1; i <= num; i++) options.push({ label: `Numero ${i}`, value: `${i - 1}` });
 
-        const rowPlayer = new ActionRowBuilder().addComponents(
-            new StringSelectMenuBuilder()
-                .setCustomId('select_player')
-                .setPlaceholder('👤 Seleziona Slot Giocatore')
-                .addOptions(options)
-        );
+        const rows = [
+            new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId('select_player').setPlaceholder('👤 Slot Giocatore').addOptions(options)),
+            new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId('select_sponsor').setPlaceholder('💰 Slot Sponsor').addOptions(options)),
+            new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('leave_game').setLabel('🏃 Abbandona').setStyle(ButtonStyle.Danger))
+        ];
 
-        const rowSponsor = new ActionRowBuilder().addComponents(
-            new StringSelectMenuBuilder()
-                .setCustomId('select_sponsor')
-                .setPlaceholder('💰 Seleziona Slot Sponsor')
-                .addOptions(options)
-        );
-
-        const rowButton = new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-                .setCustomId('leave_game')
-                .setLabel('🏃 Abbandona Gioco')
-                .setStyle(ButtonStyle.Danger)
-        );
-
-        const sentMsg = await message.channel.send({ embeds: [embed], components: [rowPlayer, rowSponsor, rowButton] });
+        const sentMsg = await message.channel.send({ 
+            embeds: [new EmbedBuilder().setTitle(`📋 Iscrizione`).setDescription(generateTableText()).setColor('Blue')], 
+            components: rows 
+        });
         activeTable.messageId = sentMsg.id;
     }
 
-    // --- COMANDO: !assegna ---
+    // !assegna
     if (message.content === '!assegna') {
-        if (message.guild.id !== ID_SERVER_COMMAND) return;
         if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) return;
-        if (activeTable.limit === 0) return message.reply("⚠️ Nessuna tabella attiva. Usa prima `!tabella`.");
-
-        await message.reply("⏳ **Inizio configurazione Stanze, Ruoli e Permessi...** attendi.");
-
-        const category = message.guild.channels.cache.get(ID_CATEGORIA_CHAT_RUOLO);
-        if (!category) return message.channel.send("❌ Errore: ID Categoria Chat Ruolo non trovato o non valido. Inseriscilo nel codice.");
-
+        if (activeTable.limit === 0) return message.reply("⚠️ Nessuna tabella.");
+        await message.reply("⏳ Configurazione in corso...");
+        
         let assegnati = 0;
-        let erroriRuolo = 0;
+        const category = message.guild.channels.cache.get(ID_CATEGORIA_CHAT_RUOLO);
+        if (!category) return message.channel.send("❌ ID Categoria errato.");
 
         for (let i = 0; i < activeTable.limit; i++) {
             const slot = activeTable.slots[i];
-            const channelName = `${i + 1}`; 
-
-            const channel = message.guild.channels.cache.find(c => c.parentId === ID_CATEGORIA_CHAT_RUOLO && c.name === channelName);
-
+            const channel = message.guild.channels.cache.find(c => c.parentId === ID_CATEGORIA_CHAT_RUOLO && c.name === `${i + 1}`);
             if (channel) {
-                // 1. Reset permessi stanza
-                await channel.permissionOverwrites.set([
-                    { id: message.guild.id, deny: [PermissionsBitField.Flags.ViewChannel] } 
-                ]);
+                await channel.permissionOverwrites.set([{ id: message.guild.id, deny: [PermissionsBitField.Flags.ViewChannel] }]);
+                const perms = { ViewChannel: true, SendMessages: true, ManageMessages: true, CreatePrivateThreads: true, SendMessagesInThreads: true, CreatePublicThreads: false };
+                let saluti = [];
 
-                // Permessi avanzati
-                const permessiSpeciali = {
-                    ViewChannel: true,
-                    SendMessages: true,
-                    ManageMessages: true,        
-                    CreatePrivateThreads: true,  
-                    SendMessagesInThreads: true, 
-                    CreatePublicThreads: false   
-                };
-
-                let utentiDaSalutare = [];
-
-                // --- GESTIONE GIOCATORE ---
                 if (slot.player) {
-                    await channel.permissionOverwrites.edit(slot.player, permessiSpeciali);
-                    utentiDaSalutare.push(`<@${slot.player}>`);
-                    try {
-                        const member = await message.guild.members.fetch(slot.player);
-                        if (member) await member.roles.add(ID_RUOLO_GIOCATORE_AUTO);
-                    } catch (e) { erroriRuolo++; }
+                    await channel.permissionOverwrites.edit(slot.player, perms);
+                    saluti.push(`<@${slot.player}>`);
+                    try { const m = await message.guild.members.fetch(slot.player); await m.roles.add(ID_RUOLO_GIOCATORE_AUTO); } catch(e){}
                 }
-
-                // --- GESTIONE SPONSOR ---
                 if (slot.sponsor) {
-                    await channel.permissionOverwrites.edit(slot.sponsor, permessiSpeciali);
-                    utentiDaSalutare.push(`<@${slot.sponsor}>`);
-                    try {
-                        const member = await message.guild.members.fetch(slot.sponsor);
-                        if (member) await member.roles.add(ID_RUOLO_SPONSOR_AUTO);
-                    } catch (e) { erroriRuolo++; }
+                    await channel.permissionOverwrites.edit(slot.sponsor, perms);
+                    saluti.push(`<@${slot.sponsor}>`);
+                    try { const m = await message.guild.members.fetch(slot.sponsor); await m.roles.add(ID_RUOLO_SPONSOR_AUTO); } catch(e){}
                 }
-
-                // --- MESSAGGIO DI BENVENUTO ---
-                if (utentiDaSalutare.length > 0) {
-                    const saluto = utentiDaSalutare.length > 1 
-                        ? `Benvenuti ${utentiDaSalutare.join(' ')}!` 
-                        : `Benvenuto ${utentiDaSalutare[0]}!`;
-                    await channel.send(saluto);
-                }
+                if (saluti.length > 0) await channel.send(`Benvenuti ${saluti.join(' ')}!`);
                 assegnati++;
             }
         }
-        
-        let msgFinale = `✅ **Operazione completata!** Stanze configurate: ${assegnati}.`;
-        if (erroriRuolo > 0) msgFinale += `\n⚠️ Attenzione: ${erroriRuolo} utenti non hanno ricevuto il ruolo (controlla la gerarchia ruoli).`;
-
-        await message.channel.send(msgFinale);
+        await message.channel.send(`✅ Fatto! Stanze configurate: ${assegnati}.`);
     }
 
-    // --- COMANDO: !chiusura ---
+    // !chiusura (Smart)
     if (message.content === '!chiusura') {
-        if (message.guild.id !== ID_SERVER_COMMAND) return;
         if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) return;
-
-        activeTable = { limit: 0, slots: [], messageId: null };
-        message.reply("🔒 **Tabella chiusa e memoria resettata.**");
+        activeTable.locked = true;
+        if (activeTable.messageId) {
+            try {
+                const msg = await message.channel.messages.fetch(activeTable.messageId);
+                await msg.edit({ components: [] }); 
+            } catch (e) {}
+        }
+        message.reply("🔒 **Iscrizioni Chiuse.** Menu rimossi, dati meeting mantenuti.");
     }
 
-    // --- COMANDO: !meeting ---
+    // !meeting (Sponsor Auto-Add)
     if (message.content.startsWith('!meeting ')) {
-        if (message.guild.id !== ID_SERVER_COMMAND) return;
+        const hasRole = message.member.roles.cache.has(ID_RUOLO_MEETING_1) || message.member.roles.cache.has(ID_RUOLO_MEETING_2);
+        if (!hasRole) return message.reply("⛔ Non hai il ruolo autorizzato.");
 
-        const hasRoleAuthor = message.member.roles.cache.has(ID_RUOLO_MEETING_1) || message.member.roles.cache.has(ID_RUOLO_MEETING_2);
-        if (!hasRoleAuthor) return message.reply("⛔ Non hai il ruolo autorizzato per creare meeting.");
+        if (activeUsers.has(message.author.id)) return message.reply("⚠️ Hai già una chat attiva.");
+        if ((meetingCounts.get(message.author.id) || 0) >= MAX_MEETINGS) return message.reply("⚠️ Limite meeting raggiunto.");
 
-        if (activeUsers.has(message.author.id)) {
-            return message.reply("⚠️ Hai già una chat attiva! Concludila con **!fine** prima di aprirne un'altra.");
-        }
-
-        const authorCount = meetingCounts.get(message.author.id) || 0;
-        if (authorCount >= MAX_MEETINGS) return message.reply(`⚠️ Hai raggiunto il limite TOTALE di ${MAX_MEETINGS} meeting.`);
-
-        const userToInvite = message.mentions.users.first();
-        if (!userToInvite || userToInvite.id === message.author.id) return message.reply("⚠️ Devi taggare un utente valido.");
-
+        const guest = message.mentions.users.first();
+        if (!guest || guest.id === message.author.id) return message.reply("⚠️ Tagga un utente.");
+        
         try {
-            const memberToInvite = await message.guild.members.fetch(userToInvite.id);
-            const hasRoleGuest = memberToInvite.roles.cache.has(ID_RUOLO_MEETING_1) || memberToInvite.roles.cache.has(ID_RUOLO_MEETING_2);
-            
-            if (!hasRoleGuest) {
-                return message.reply(`⛔ L'utente ${userToInvite} non ha il ruolo necessario per partecipare ai meeting.`);
-            }
-        } catch (e) {
-            return message.reply("⚠️ Impossibile verificare i permessi dell'utente invitato.");
-        }
+            const mGuest = await message.guild.members.fetch(guest.id);
+            const gRole = mGuest.roles.cache.has(ID_RUOLO_MEETING_1) || mGuest.roles.cache.has(ID_RUOLO_MEETING_2);
+            if (!gRole) return message.reply("⛔ L'ospite non ha i permessi.");
+        } catch (e) { return message.reply("⚠️ Errore controllo ospite."); }
 
-        if (activeUsers.has(userToInvite.id)) {
-            return message.reply(`⚠️ L'utente ${userToInvite} è già impegnato in un'altra chat attiva.`);
-        }
+        if (activeUsers.has(guest.id)) return message.reply("⚠️ Ospite occupato.");
 
-        const proposalMsg = await message.channel.send(`🔔 **Richiesta Meeting**\n👤 **Ospite:** ${userToInvite}\n📩 **Da:** ${message.author}\n\n*Reagisci per accettare/rifiutare*`);
-        await proposalMsg.react('✅'); await proposalMsg.react('❌');
+        const msg = await message.channel.send(`🔔 **Richiesta Meeting**\nDa: ${message.author}\nA: ${guest}\n\n✅ Accetta | ❌ Rifiuta`);
+        await msg.react('✅'); await msg.react('❌');
 
-        const collector = proposalMsg.createReactionCollector({ 
-            filter: (r, u) => ['✅', '❌'].includes(r.emoji.name) && u.id === userToInvite.id, 
-            time: 3 * 60 * 60 * 1000, max: 1 
-        });
-
-        collector.on('collect', async (reaction) => {
-            if (reaction.emoji.name === '✅') {
-                if (reaction.message.partial) await reaction.message.fetch();
-
-                if (activeUsers.has(message.author.id) || activeUsers.has(userToInvite.id)) {
-                     return reaction.message.reply("❌ Meeting annullato: Uno dei partecipanti risulta ora occupato.");
-                }
-
-                let cAuthor = meetingCounts.get(message.author.id) || 0;
-                let cGuest = meetingCounts.get(userToInvite.id) || 0;
-
-                if (cAuthor >= MAX_MEETINGS) return reaction.message.reply(`❌ Meeting annullato: ${message.author} ha finito i token.`);
-                if (cGuest >= MAX_MEETINGS) return reaction.message.reply(`❌ Meeting annullato: ${userToInvite} ha finito i token.`);
-
-                meetingCounts.set(message.author.id, cAuthor + 1);
-                meetingCounts.set(userToInvite.id, cGuest + 1);
+        const coll = msg.createReactionCollector({ filter: (r, u) => ['✅','❌'].includes(r.emoji.name) && u.id === guest.id, max: 1, time: 300000 });
+        
+        coll.on('collect', async r => {
+            if (r.emoji.name === '✅') {
+                if (activeUsers.has(message.author.id) || activeUsers.has(guest.id)) return msg.reply("❌ Qualcuno è occupato.");
                 
-                activeUsers.add(message.author.id);
-                activeUsers.add(userToInvite.id);
+                meetingCounts.set(message.author.id, (meetingCounts.get(message.author.id)||0)+1);
+                meetingCounts.set(guest.id, (meetingCounts.get(guest.id)||0)+1);
                 
+                // SPONSOR CHECK
+                let sponsorHost = null, sponsorGuest = null;
+                activeTable.slots.forEach(slot => {
+                    if (slot.player === message.author.id) sponsorHost = slot.sponsor;
+                    if (slot.player === guest.id) sponsorGuest = slot.sponsor;
+                });
+
+                activeUsers.add(message.author.id); activeUsers.add(guest.id);
+                if (sponsorHost) activeUsers.add(sponsorHost);
+                if (sponsorGuest) activeUsers.add(sponsorGuest);
+
                 await syncDatabase();
 
                 try {
                     const targetGuild = client.guilds.cache.get(ID_SERVER_TARGET);
-                    const newChannel = await targetGuild.channels.create({
-                        name: `meeting-${message.author.username}-${userToInvite.username}`,
-                        type: ChannelType.GuildText, 
-                        parent: ID_CATEGORIA_TARGET,
-                        permissionOverwrites: [
-                            { id: targetGuild.id, deny: [PermissionsBitField.Flags.ViewChannel] },
-                            { 
-                                id: message.author.id, 
-                                allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages],
-                                deny: [PermissionsBitField.Flags.CreatePublicThreads, PermissionsBitField.Flags.CreatePrivateThreads] 
-                            },
-                            { 
-                                id: userToInvite.id, 
-                                allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages],
-                                deny: [PermissionsBitField.Flags.CreatePublicThreads, PermissionsBitField.Flags.CreatePrivateThreads]
-                            },
-                            { id: client.user.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages] }
-                        ],
-                    });
-                    
-                    await newChannel.send(`👋 Benvenuti ${message.author} ${userToInvite}!\nScrivete **!fine** per chiudere la chat.`);
-                    
-                    const logEmbed = new EmbedBuilder()
-                        .setTitle('📂 Meeting Avviato')
-                        .setColor(0x00FF00) 
-                        .setDescription(`**Autore:** ${message.author.tag} (${cAuthor+1}/${MAX_MEETINGS})\n**Ospite:** ${userToInvite.tag} (${cGuest+1}/${MAX_MEETINGS})\n\nℹ️ Rispondi con **!lettura** per osservare la chat.`)
-                        .addFields({ name: 'Stato', value: '🟢 Aperto (Nessun supervisore)', inline: true })
-                        .setFooter({ text: `ID:${newChannel.id}` })
-                        .setTimestamp();
-                    
-                    await reaction.message.reply({ content: "✅ Meeting creato!", embeds: [logEmbed] });
-                    reaction.message.channel.messages.cache.delete(reaction.message.id);
+                    const perms = [
+                        { id: ID_SERVER_TARGET, deny: ['ViewChannel'] },
+                        { id: message.author.id, allow: ['ViewChannel', 'SendMessages'], deny: ['CreatePublicThreads'] },
+                        { id: guest.id, allow: ['ViewChannel', 'SendMessages'], deny: ['CreatePublicThreads'] },
+                        { id: client.user.id, allow: ['ViewChannel', 'SendMessages'] }
+                    ];
+                    if (sponsorHost) perms.push({ id: sponsorHost, allow: ['ViewChannel', 'SendMessages'], deny: ['CreatePublicThreads'] });
+                    if (sponsorGuest) perms.push({ id: sponsorGuest, allow: ['ViewChannel', 'SendMessages'], deny: ['CreatePublicThreads'] });
 
-                } catch (e) { 
-                    console.error("Errore creazione:", e);
-                    reaction.message.channel.send("❌ Errore creazione canale.");
-                    activeUsers.delete(message.author.id);
-                    activeUsers.delete(userToInvite.id);
+                    const ch = await targetGuild.channels.create({
+                        name: `meeting-${message.author.username}-${guest.username}`,
+                        type: ChannelType.GuildText, parent: ID_CATEGORIA_TARGET, permissionOverwrites: perms
+                    });
+
+                    let w = `👋 Benvenuti ${message.author} ${guest}`;
+                    if (sponsorHost) w += ` (Sponsor: <@${sponsorHost}>)`;
+                    if (sponsorGuest) w += ` (Sponsor: <@${sponsorGuest}>)`;
+                    await ch.send(w + "!\nScrivete **!fine** per chiudere.");
+
+                    const embed = new EmbedBuilder().setTitle('📂 Meeting Avviato').setColor(0x00FF00)
+                        .setDescription(`Host: ${message.author.tag}\nGuest: ${guest.tag}\nSponsors: ${sponsorHost ? 'Sì' : 'No'} / ${sponsorGuest ? 'Sì' : 'No'}`)
+                        .setFooter({ text: `ID:${ch.id}` });
+                    
+                    msg.reply({ content: "✅ Creato!", embeds: [embed] });
+                    msg.delete().catch(()=>{});
+
+                } catch (e) {
+                    activeUsers.delete(message.author.id); activeUsers.delete(guest.id);
+                    if (sponsorHost) activeUsers.delete(sponsorHost);
+                    if (sponsorGuest) activeUsers.delete(sponsorGuest);
+                    msg.reply("❌ Errore creazione.");
                 }
-            } else {
-                reaction.message.reply("❌ Richiesta rifiutata.");
-            }
+            } else msg.reply("❌ Rifiutata.");
         });
     }
 
-    // --- COMANDO: !lettura ---
+    // --- !lettura (SOLO GIOCATORI + SPONSOR) ---
     if (message.content === '!lettura') {
-        if (message.guild.id !== ID_SERVER_COMMAND) return;
         if (!message.reference) return message.reply("⚠️ Rispondi al messaggio verde.");
 
-        const currentRead = letturaCounts.get(message.author.id) || 0;
-        if (currentRead >= MAX_LETTURE) return message.reply("⛔ Limite supervisioni raggiunto.");
-
-        try {
-            const repliedMsg = await message.channel.messages.fetch(message.reference.messageId);
-            if (!repliedMsg.embeds.length) return message.reply("⚠️ Messaggio non valido.");
-            const targetEmbed = repliedMsg.embeds[0];
-
-            if (targetEmbed.fields.some(f => f.name === '👮 Supervisore')) return message.reply("⛔ Supervisore già presente.");
-
-            const channelId = targetEmbed.footer?.text.match(/ID:(\d+)/)?.[1];
-            if (!channelId) return message.reply("⚠️ ID canale mancante.");
-
-            const targetGuild = client.guilds.cache.get(ID_SERVER_TARGET);
-            const targetChannel = await targetGuild.channels.fetch(channelId).catch(() => null);
-
-            if (!targetChannel) return message.reply("❌ Canale inesistente.");
-            if (targetChannel.permissionOverwrites.cache.has(message.author.id)) return message.reply("⚠️ Sei già dentro.");
-
-            await targetChannel.permissionOverwrites.create(message.author.id, { 
-                ViewChannel: true, 
-                SendMessages: false,
-                AddReactions: false,          
-                CreatePublicThreads: false,   
-                CreatePrivateThreads: false   
-            });
-
-            const participants = targetChannel.permissionOverwrites.cache
-                .filter(o => o.id !== client.user.id && o.id !== message.author.id && o.id !== targetGuild.id)
-                .map(o => `<@${o.id}>`)
-                .join(' ');
-
-            await targetChannel.send(`⚠️ ATTENZIONE ${participants}: ${message.author} è entrato per osservare la vostra conversazione.`);
-
-            letturaCounts.set(message.author.id, currentRead + 1);
-            await syncDatabase();
-
-            const newEmbed = EmbedBuilder.from(targetEmbed)
-                .setColor(0xFFA500)
-                .spliceFields(0, 1, { name: 'Stato', value: '🟠 Supervisionato', inline: true })
-                .addFields({ name: '👮 Supervisore', value: `${message.author}`, inline: true });
-
-            await repliedMsg.edit({ embeds: [newEmbed] });
-            message.reply("👁️ **Accesso Garantito** (Utenti avvisati).");
-            message.channel.messages.cache.delete(repliedMsg.id);
-
-        } catch (e) { 
-            console.error(e);
-            message.reply("❌ Errore tecnico.");
+        if (!message.member.roles.cache.has(ID_RUOLO_GIOCATORE_AUTO) && !message.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
+            return message.reply("⛔ Solo i **Giocatori** possono usare questo comando.");
         }
+
+        const c = letturaCounts.get(message.author.id) || 0;
+        if (c >= MAX_LETTURE) return message.reply("⛔ Limite raggiunto.");
+        
+        try {
+            const ref = await message.channel.messages.fetch(message.reference.messageId);
+            const chId = ref.embeds[0]?.footer?.text.match(/ID:(\d+)/)?.[1];
+            if (!chId) return;
+            const tGuild = client.guilds.cache.get(ID_SERVER_TARGET);
+            const ch = await tGuild.channels.fetch(chId);
+            if (ch.permissionOverwrites.cache.has(message.author.id)) return message.reply("⚠️ Sei già dentro.");
+            
+            // 1. Aggiungi il Giocatore
+            await ch.permissionOverwrites.create(message.author.id, { ViewChannel: true, SendMessages: false });
+            
+            // 2. Cerca e aggiungi lo Sponsor (se esiste)
+            let sponsorId = null;
+            activeTable.slots.forEach(slot => {
+                if (slot.player === message.author.id) sponsorId = slot.sponsor;
+            });
+            
+            let extraText = "";
+            if (sponsorId) {
+                 await ch.permissionOverwrites.create(sponsorId, { ViewChannel: true, SendMessages: false });
+                 extraText = ` (e il suo sponsor <@${sponsorId}>)`;
+            }
+
+            await ch.send(`⚠️ ${message.author}${extraText} sta osservando.`);
+            letturaCounts.set(message.author.id, c + 1); await syncDatabase();
+            message.reply("👁️ Accesso dato.");
+        } catch (e) { message.reply("❌ Errore."); }
     }
 
-    // --- COMANDO: !fine ---
-    if (message.content === '!fine') {
-        if (message.guild.id !== ID_SERVER_TARGET) return;
-        if (!message.channel.name.startsWith('meeting-')) return;
-
-        message.channel.permissionOverwrites.cache.forEach((ow) => {
-            if (ow.allow.has(PermissionsBitField.Flags.SendMessages)) {
-                activeUsers.delete(ow.id);
-            }
+    // --- !fine ---
+    if (message.content === '!fine' && message.guild.id === ID_SERVER_TARGET) {
+        message.channel.permissionOverwrites.cache.forEach(ow => {
+            if (ow.allow.has(PermissionsBitField.Flags.SendMessages)) activeUsers.delete(ow.id);
         });
-        await syncDatabase(); 
-
-        await message.channel.send("🛑 **Chat Chiusa.**");
-        
-        message.channel.permissionOverwrites.cache.forEach(async (overwrite) => {
-            if (overwrite.id !== client.user.id) {
-                await message.channel.permissionOverwrites.edit(overwrite.id, { 
-                    SendMessages: false, 
-                    AddReactions: false,        
-                    CreatePublicThreads: false, 
-                    CreatePrivateThreads: false 
-                });
-            }
+        await syncDatabase();
+        message.channel.send("🛑 Chiusa.");
+        message.channel.permissionOverwrites.cache.forEach(ow => {
+            if (ow.id !== client.user.id) message.channel.permissionOverwrites.edit(ow.id, { SendMessages: false });
         });
     }
 });
 
-// --- GESTIONE INTERAZIONI (MENU & BOTTONI) ---
-client.on('interactionCreate', async interaction => {
-    // Gestione Menu a Tendina (Iscrizione)
-    if (interaction.isStringSelectMenu()) {
-        if (interaction.customId === 'select_player' || interaction.customId === 'select_sponsor') {
-            if (activeTable.limit === 0) return interaction.reply({ content: "⛔ Tabella chiusa.", ephemeral: true });
+// --- INTERAZIONI ---
+client.on('interactionCreate', async i => {
+    if ((i.isStringSelectMenu() && ['select_player','select_sponsor'].includes(i.customId)) || (i.isButton() && i.customId === 'leave_game')) {
+        if (activeTable.locked) return i.reply({ content: "🔒 Tabella chiusa.", ephemeral: true });
 
-            const slotIndex = parseInt(interaction.values[0]);
-            const userId = interaction.user.id;
-            const type = interaction.customId === 'select_player' ? 'player' : 'sponsor';
-
-            if (activeTable.slots[slotIndex][type]) {
-                return interaction.reply({ content: "❌ Posto occupato!", ephemeral: true });
-            }
-
-            // Rimuove l'utente da altri slot per evitare duplicati
-            activeTable.slots.forEach(slot => {
-                if (slot.player === userId) slot.player = null;
-                if (slot.sponsor === userId) slot.sponsor = null;
-            });
-
-            activeTable.slots[slotIndex][type] = userId;
-
-            const newDescription = generateTableText();
-            const originalEmbed = interaction.message.embeds[0];
-            const newEmbed = new EmbedBuilder(originalEmbed).setDescription(newDescription);
-            
-            await interaction.update({ embeds: [newEmbed] });
-        }
-    }
-
-    // Gestione Bottone (Abbandona Gioco)
-    if (interaction.isButton()) {
-        if (interaction.customId === 'leave_game') {
-            if (activeTable.limit === 0) return interaction.reply({ content: "⛔ Tabella chiusa.", ephemeral: true });
-
-            const userId = interaction.user.id;
+        if (i.customId === 'leave_game') {
             let found = false;
-
-            activeTable.slots.forEach(slot => {
-                if (slot.player === userId) { slot.player = null; found = true; }
-                if (slot.sponsor === userId) { slot.sponsor = null; found = true; }
-            });
-
-            if (!found) {
-                return interaction.reply({ content: "❌ Non eri iscritto in nessuna lista.", ephemeral: true });
-            }
-
-            const newDescription = generateTableText();
-            const originalEmbed = interaction.message.embeds[0];
-            const newEmbed = new EmbedBuilder(originalEmbed).setDescription(newDescription);
-
-            await interaction.update({ embeds: [newEmbed] });
+            activeTable.slots.forEach(s => { if(s.player===i.user.id){s.player=null; found=true;} if(s.sponsor===i.user.id){s.sponsor=null; found=true;} });
+            if(!found) return i.reply({content:"❌ Non eri iscritto.", ephemeral:true});
+        } else {
+            const idx = parseInt(i.values[0]);
+            const type = i.customId === 'select_player' ? 'player' : 'sponsor';
+            if (activeTable.slots[idx][type]) return i.reply({ content: "❌ Occupato!", ephemeral: true });
+            
+            activeTable.slots.forEach(s => { if(s.player===i.user.id)s.player=null; if(s.sponsor===i.user.id)s.sponsor=null; });
+            activeTable.slots[idx][type] = i.user.id;
         }
+        i.update({ embeds: [new EmbedBuilder(i.message.embeds[0]).setDescription(generateTableText())] });
     }
 });
 
 function generateTableText() {
-    let text = "**Giocatori** \u200b \u200b \u200b \u200b \u200b \u200b \u200b \u200b \u200b \u200b| \u200b \u200b **Sponsor**\n";
-    text += "------------------------------\n";
-
-    activeTable.slots.forEach((slot, i) => {
-        const pName = slot.player ? `<@${slot.player}>` : "`(libero)`";
-        const sName = slot.sponsor ? `<@${slot.sponsor}>` : "`(libero)`";
-        text += `**#${i + 1}** ${pName} \u200b | \u200b ${sName}\n`;
-    });
-    return text;
+    let t = "**Giocatori** \u200b \u200b | \u200b \u200b **Sponsor**\n---\n";
+    activeTable.slots.forEach((s, i) => t += `**#${i+1}** ${s.player?`<@${s.player}>`:'(libero)'} | ${s.sponsor?`<@${s.sponsor}>`:'(libero)'}\n`);
+    return t;
 }
 
 client.login('MTQ2MzU5NDkwMTAzOTIyMjg3Nw.GFe33d.9RgkeDdLwtKrQhi69vQFgMCVaR-hqvYkkI-hVg');
