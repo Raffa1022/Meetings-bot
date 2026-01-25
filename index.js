@@ -4,7 +4,7 @@ const { Client, GatewayIntentBits, Partials, Options, PermissionsBitField, Chann
 // --- 1. SERVER KEEP-ALIVE ---
 http.createServer((req, res) => {
     res.writeHead(200);
-    res.end('Bot is alive - Low Memory Mode v3.3');
+    res.end('Bot is alive - Low Memory Mode v3.5');
 }).listen(8000);
 
 // --- 2. CONFIGURAZIONE CLIENT OTTIMIZZATA ---
@@ -22,7 +22,6 @@ const client = new Client({
         Partials.User, 
         Partials.GuildMember
     ],
-    // Cache aggressiva (Low Memory)
     makeCache: Options.cacheWithLimits({
         MessageManager: 10,       
         PresenceManager: 0,       
@@ -43,12 +42,12 @@ const ID_RUOLO_RESET = '1463619259728134299';
 const ID_RUOLO_MEETING_1 = '1369800222448025711';
 const ID_RUOLO_MEETING_2 = '1463689842285215764';
 
-// Canale Database
 const ID_CANALE_DATABASE = '1464707241394311282'; 
 
 // --- 🔢 VARIABILI MEMORIA ---
 const meetingCounts = new Map(); 
 const letturaCounts = new Map(); 
+const activeUsers = new Set(); // NUOVO: Traccia chi è attualmente in chat
 const MAX_MEETINGS = 3;
 const MAX_LETTURE = 1;
 
@@ -60,11 +59,12 @@ async function syncDatabase() {
 
         const dataString = JSON.stringify({
             meeting: Object.fromEntries(meetingCounts),
-            lettura: Object.fromEntries(letturaCounts)
+            lettura: Object.fromEntries(letturaCounts),
+            active: Array.from(activeUsers) // Salva anche chi è attivo
         });
 
         const sentMsg = await dbChannel.send(`📦 **BACKUP_DATI**\n\`\`\`json\n${dataString}\n\`\`\``);
-        sentMsg.channel.messages.cache.delete(sentMsg.id); // Pulizia RAM
+        sentMsg.channel.messages.cache.delete(sentMsg.id); 
 
     } catch (e) { console.error("Errore salvataggio DB:", e); }
 }
@@ -86,9 +86,13 @@ async function restoreDatabase() {
             letturaCounts.clear();
             Object.entries(data.lettura || {}).forEach(([id, val]) => letturaCounts.set(id, val));
             
+            // Ripristina utenti attivi
+            activeUsers.clear();
+            (data.active || []).forEach(id => activeUsers.add(id));
+            
             console.log("✅ Database ripristinato.");
         }
-        messages.forEach(m => dbChannel.messages.cache.delete(m.id)); // Pulizia RAM
+        messages.forEach(m => dbChannel.messages.cache.delete(m.id)); 
 
     } catch (e) { console.log("ℹ️ Nessun backup trovato."); }
 }
@@ -119,13 +123,13 @@ client.on('messageCreate', async message => {
             .setTitle('⚙️ Pannello Gestione Bot')
             .setColor(0x2B2D31)
             .addFields(
-                { name: '🔹 !meeting @utente', value: 'Crea una chat privata (Max 3).\n*Il conteggio aumenta per entrambi.*' },
+                { name: '🔹 !meeting @utente', value: 'Crea una chat privata (Max 3).\n*Non puoi crearne una nuova se non finisci quella attiva.*' },
                 { name: '👁️ !lettura', value: 'Rispondi al messaggio verde per supervisionare (Max 1).' },
-                { name: '🛑 !fine', value: 'Chiude e archivia la chat privata.' },
-                { name: '⚠️ !azzeramento1', value: 'Resetta il conteggio dei Meeting.' },
+                { name: '🛑 !fine', value: 'Chiude la chat privata.' },
+                { name: '⚠️ !azzeramento1', value: 'Resetta meeting e sblocca utenti.' },
                 { name: '⚠️ !azzeramento2', value: 'Resetta il conteggio delle Letture.' }
             )
-            .setFooter({ text: 'Sistema v3.3 - Low Memory' });
+            .setFooter({ text: 'Sistema v3.5 - Low Memory' });
 
         return message.channel.send({ embeds: [helpEmbed] });
     }
@@ -136,8 +140,9 @@ client.on('messageCreate', async message => {
         if (!message.member.roles.cache.has(ID_RUOLO_RESET)) return message.reply("⛔ Non hai i permessi.");
 
         meetingCounts.clear();
+        activeUsers.clear(); // Resetta anche i blocchi "in corso"
         await syncDatabase();
-        return message.reply("♻️ Conteggio **Meeting** azzerato per tutti.");
+        return message.reply("♻️ Conteggio **Meeting** azzerato e utenti sbloccati.");
     }
 
     // --- !azzeramento2 ---
@@ -157,11 +162,21 @@ client.on('messageCreate', async message => {
         const hasRole = message.member.roles.cache.has(ID_RUOLO_MEETING_1) || message.member.roles.cache.has(ID_RUOLO_MEETING_2);
         if (!hasRole) return message.reply("⛔ Ruolo non autorizzato.");
 
+        // NUOVO CONTROLLO: Se l'autore è già in una chat
+        if (activeUsers.has(message.author.id)) {
+            return message.reply("⚠️ Hai già una chat attiva! Concludila con **!fine** prima di aprirne un'altra.");
+        }
+
         const authorCount = meetingCounts.get(message.author.id) || 0;
-        if (authorCount >= MAX_MEETINGS) return message.reply(`⚠️ Hai raggiunto il limite di ${MAX_MEETINGS} meeting.`);
+        if (authorCount >= MAX_MEETINGS) return message.reply(`⚠️ Hai raggiunto il limite TOTALE di ${MAX_MEETINGS} meeting.`);
 
         const userToInvite = message.mentions.users.first();
         if (!userToInvite || userToInvite.id === message.author.id) return message.reply("⚠️ Devi taggare un utente valido.");
+
+        // NUOVO CONTROLLO: Se l'ospite è già in una chat
+        if (activeUsers.has(userToInvite.id)) {
+            return message.reply(`⚠️ L'utente ${userToInvite} è già impegnato in un'altra chat attiva.`);
+        }
 
         const proposalMsg = await message.channel.send(`🔔 **Richiesta Meeting**\n👤 **Ospite:** ${userToInvite}\n📩 **Da:** ${message.author}\n\n*Reagisci per accettare/rifiutare*`);
         await proposalMsg.react('✅'); await proposalMsg.react('❌');
@@ -175,14 +190,24 @@ client.on('messageCreate', async message => {
             if (reaction.emoji.name === '✅') {
                 if (reaction.message.partial) await reaction.message.fetch();
 
+                // Ricontrolli finali (se nel frattempo ne hanno aperta un'altra)
+                if (activeUsers.has(message.author.id) || activeUsers.has(userToInvite.id)) {
+                     return reaction.message.reply("❌ Meeting annullato: Uno dei partecipanti è occupato.");
+                }
+
                 let cAuthor = meetingCounts.get(message.author.id) || 0;
                 let cGuest = meetingCounts.get(userToInvite.id) || 0;
 
-                if (cAuthor >= MAX_MEETINGS) return reaction.message.reply(`❌ Meeting annullato: ${message.author} ha finito i meeting.`);
-                if (cGuest >= MAX_MEETINGS) return reaction.message.reply(`❌ Meeting annullato: ${userToInvite} ha finito i meeting.`);
+                if (cAuthor >= MAX_MEETINGS) return reaction.message.reply(`❌ Meeting annullato: ${message.author} ha finito i token.`);
+                if (cGuest >= MAX_MEETINGS) return reaction.message.reply(`❌ Meeting annullato: ${userToInvite} ha finito i token.`);
 
                 meetingCounts.set(message.author.id, cAuthor + 1);
                 meetingCounts.set(userToInvite.id, cGuest + 1);
+                
+                // NUOVO: Blocca gli utenti
+                activeUsers.add(message.author.id);
+                activeUsers.add(userToInvite.id);
+                
                 await syncDatabase();
 
                 try {
@@ -193,23 +218,16 @@ client.on('messageCreate', async message => {
                         parent: ID_CATEGORIA_TARGET,
                         permissionOverwrites: [
                             { id: targetGuild.id, deny: [PermissionsBitField.Flags.ViewChannel] },
-                            
-                            // --- PERMESSI AUTORE ---
                             { 
                                 id: message.author.id, 
                                 allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages],
-                                // BLOCCO THREAD QUI:
                                 deny: [PermissionsBitField.Flags.CreatePublicThreads, PermissionsBitField.Flags.CreatePrivateThreads] 
                             },
-                            
-                            // --- PERMESSI OSPITE ---
                             { 
                                 id: userToInvite.id, 
                                 allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages],
-                                // BLOCCO THREAD QUI:
                                 deny: [PermissionsBitField.Flags.CreatePublicThreads, PermissionsBitField.Flags.CreatePrivateThreads]
                             },
-                            
                             { id: client.user.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages] }
                         ],
                     });
@@ -219,7 +237,7 @@ client.on('messageCreate', async message => {
                     const logEmbed = new EmbedBuilder()
                         .setTitle('📂 Meeting Avviato')
                         .setColor(0x00FF00) // VERDE
-                        .setDescription(`**Autore:** ${message.author.tag} (${cAuthor+1}/${MAX_MEETINGS})\n**Ospite:** ${userToInvite.tag} (${cGuest+1}/${MAX_MEETINGS})`)
+                        .setDescription(`**Autore:** ${message.author.tag} (${cAuthor+1}/${MAX_MEETINGS})\n**Ospite:** ${userToInvite.tag} (${cGuest+1}/${MAX_MEETINGS})\n\nℹ️ Rispondi con **!lettura** per osservare la chat.`)
                         .addFields({ name: 'Stato', value: '🟢 Aperto (Nessun supervisore)', inline: true })
                         .setFooter({ text: `ID:${newChannel.id}` })
                         .setTimestamp();
@@ -230,6 +248,9 @@ client.on('messageCreate', async message => {
                 } catch (e) { 
                     console.error("Errore creazione:", e);
                     reaction.message.channel.send("❌ Errore creazione canale.");
+                    // In caso di errore sblocchiamo gli utenti
+                    activeUsers.delete(message.author.id);
+                    activeUsers.delete(userToInvite.id);
                 }
             } else {
                 reaction.message.reply("❌ Richiesta rifiutata.");
@@ -261,10 +282,13 @@ client.on('messageCreate', async message => {
             if (!targetChannel) return message.reply("❌ Canale inesistente.");
             if (targetChannel.permissionOverwrites.cache.has(message.author.id)) return message.reply("⚠️ Sei già dentro.");
 
-            // Aggiungi supervisore
-            await targetChannel.permissionOverwrites.create(message.author.id, { ViewChannel: true, SendMessages: false });
+            await targetChannel.permissionOverwrites.create(message.author.id, { 
+                ViewChannel: true, 
+                SendMessages: false,
+                CreatePublicThreads: false,
+                CreatePrivateThreads: false
+            });
 
-            // Recupera partecipanti per il tag
             const participants = targetChannel.permissionOverwrites.cache
                 .filter(o => o.id !== client.user.id && o.id !== message.author.id && o.id !== targetGuild.id)
                 .map(o => `<@${o.id}>`)
@@ -276,7 +300,7 @@ client.on('messageCreate', async message => {
             await syncDatabase();
 
             const newEmbed = EmbedBuilder.from(targetEmbed)
-                .setColor(0xFFA500) // ARANCIONE
+                .setColor(0xFFA500)
                 .spliceFields(0, 1, { name: 'Stato', value: '🟠 Supervisionato', inline: true })
                 .addFields({ name: '👮 Supervisore', value: `${message.author}`, inline: true });
 
@@ -295,16 +319,23 @@ client.on('messageCreate', async message => {
         if (message.guild.id !== ID_SERVER_TARGET) return;
         if (!message.channel.name.startsWith('meeting-')) return;
 
+        // NUOVO: Sblocca gli utenti attivi (quelli che potevano scrivere)
+        message.channel.permissionOverwrites.cache.forEach((ow) => {
+            if (ow.allow.has(PermissionsBitField.Flags.SendMessages)) {
+                activeUsers.delete(ow.id);
+            }
+        });
+        await syncDatabase(); // Salva lo sblocco
+
         await message.channel.send("🛑 **Chat Chiusa**. Archiviazione...");
         
         message.channel.permissionOverwrites.cache.forEach(async (overwrite) => {
             if (overwrite.id !== client.user.id) {
-                // MODIFICA: Blocca anche Reazioni e Thread alla fine
                 await message.channel.permissionOverwrites.edit(overwrite.id, { 
                     SendMessages: false, 
-                    AddReactions: false,        // Blocca nuove reazioni
-                    CreatePublicThreads: false, // Blocca thread
-                    CreatePrivateThreads: false // Blocca thread
+                    AddReactions: false,        
+                    CreatePublicThreads: false, 
+                    CreatePrivateThreads: false 
                 });
             }
         });
