@@ -4,7 +4,7 @@ const { Client, GatewayIntentBits, Partials, Options, PermissionsBitField, Chann
 // --- 1. SERVER KEEP-ALIVE ---
 http.createServer((req, res) => {
     res.writeHead(200);
-    res.end('Bot is alive - Low Memory Mode v4.1 Verified');
+    res.end('Bot is alive - Low Memory Mode v4.2 Verified');
 }).listen(8000);
 
 // --- 2. CONFIGURAZIONE CLIENT OTTIMIZZATA ---
@@ -14,7 +14,7 @@ const client = new Client({
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.GuildMessageReactions,
         GatewayIntentBits.MessageContent,
-        GatewayIntentBits.GuildMembers // <--- AGGIUNTO: Necessario per assegnare i ruoli!
+        GatewayIntentBits.GuildMembers // Necessario per assegnare i ruoli
     ],
     partials: [
         Partials.Message, 
@@ -131,7 +131,7 @@ client.on('messageReactionAdd', async (reaction, user) => {
 client.on('messageCreate', async message => {
     if (message.author.bot) return;
 
-    // --- COMANDO: !impostazioni (AGGIORNATO) ---
+    // --- COMANDO: !impostazioni (AGGIORNATO CON ETICHETTE) ---
     if (message.content === '!impostazioni') {
         if (message.guild.id !== ID_SERVER_COMMAND) return;
         
@@ -139,16 +139,16 @@ client.on('messageCreate', async message => {
             .setTitle('⚙️ Pannello Gestione Bot')
             .setColor(0x2B2D31)
             .addFields(
-                { name: '🔹 !meeting @utente', value: 'Crea una chat privata (Max 3).\n*Non puoi crearne una nuova se non finisci quella attiva.*' },
-                { name: '👁️ !lettura', value: 'Rispondi al messaggio verde per supervisionare (Max 1).' },
-                { name: '🛑 !fine', value: 'Chiude la chat privata.' },
-                { name: '📋 !tabella [numero]', value: 'Crea la tabella iscrizioni (Es. !tabella 10).' },
-                { name: '🚀 !assegna', value: 'Assegna stanze (#1, #2...) e RUOLI ai partecipanti.' },
-                { name: '🔒 !chiusura', value: 'Chiude la tabella e resetta le iscrizioni.' },
-                { name: '⚠️ !azzeramento1', value: 'Resetta meeting e sblocca utenti.' },
-                { name: '⚠️ !azzeramento2', value: 'Resetta il conteggio delle Letture.' }
+                { name: '🔹 !meeting @utente (Giocatori)', value: 'Crea una chat privata (Max 3).' },
+                { name: '🛑 !fine (Giocatori)', value: 'Chiude la chat privata.' },
+                { name: '👁️ !lettura (Overseer)', value: 'Supervisione chat attiva (Max 1).' },
+                { name: '📋 !tabella [num] (Overseer)', value: 'Crea la tabella iscrizioni (Es. !tabella 10).' },
+                { name: '🚀 !assegna (Overseer)', value: 'Assegna stanze, ruoli e permessi avanzati.' },
+                { name: '🔒 !chiusura (Overseer)', value: 'Chiude la tabella e resetta le iscrizioni.' },
+                { name: '⚠️ !azzeramento1 (Overseer)', value: 'Resetta meeting e sblocca utenti.' },
+                { name: '⚠️ !azzeramento2 (Overseer)', value: 'Resetta il conteggio delle Letture.' }
             )
-            .setFooter({ text: 'Sistema v4.1 - Low Memory Verified' });
+            .setFooter({ text: 'Sistema v4.2 - Low Memory Verified' });
 
         return message.channel.send({ embeds: [helpEmbed] });
     }
@@ -174,7 +174,7 @@ client.on('messageCreate', async message => {
         return message.reply("♻️ Conteggio **Letture** azzerato per tutti.");
     }
 
-    // --- NUOVO COMANDO: !tabella ---
+    // --- COMANDO: !tabella ---
     if (message.content.startsWith('!tabella')) {
         if (message.guild.id !== ID_SERVER_COMMAND) return;
         if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) return;
@@ -225,13 +225,13 @@ client.on('messageCreate', async message => {
         activeTable.messageId = sentMsg.id;
     }
 
-    // --- COMANDO: !assegna (MODIFICATO PER RUOLI) ---
+    // --- COMANDO: !assegna (AGGIORNATO: BENVENUTO + PERMESSI PIN/THREAD) ---
     if (message.content === '!assegna') {
         if (message.guild.id !== ID_SERVER_COMMAND) return;
         if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) return;
         if (activeTable.limit === 0) return message.reply("⚠️ Nessuna tabella attiva. Usa prima `!tabella`.");
 
-        await message.reply("⏳ **Inizio assegnazione Stanze e Ruoli...** attendi.");
+        await message.reply("⏳ **Inizio configurazione Stanze, Ruoli e Permessi...** attendi.");
 
         const category = message.guild.channels.cache.get(ID_CATEGORIA_CHAT_RUOLO);
         if (!category) return message.channel.send("❌ Errore: ID Categoria Chat Ruolo non trovato o non valido. Inseriscilo nel codice.");
@@ -246,39 +246,62 @@ client.on('messageCreate', async message => {
             const channel = message.guild.channels.cache.find(c => c.parentId === ID_CATEGORIA_CHAT_RUOLO && c.name === channelName);
 
             if (channel) {
-                // Reset permessi stanza
+                // 1. Reset permessi stanza (Nessuno vede tranne bot e admin)
                 await channel.permissionOverwrites.set([
                     { id: message.guild.id, deny: [PermissionsBitField.Flags.ViewChannel] } 
                 ]);
 
-                // --- GIOCATORE ---
+                // Definiamo i permessi avanzati: PIN (ManageMessages) e Thread Privati
+                const permessiSpeciali = {
+                    ViewChannel: true,
+                    SendMessages: true,
+                    ManageMessages: true,        // Permette di PINNARE messaggi
+                    CreatePrivateThreads: true,  // Permette thread PRIVATI
+                    SendMessagesInThreads: true, // Permette di scrivere nei thread
+                    CreatePublicThreads: false   // VIETA thread PUBBLICI
+                };
+
+                let utentiDaSalutare = [];
+
+                // --- GESTIONE GIOCATORE ---
                 if (slot.player) {
-                    // 1. Permessi Chat
-                    await channel.permissionOverwrites.edit(slot.player, { ViewChannel: true, SendMessages: true });
+                    // Assegna permessi avanzati
+                    await channel.permissionOverwrites.edit(slot.player, permessiSpeciali);
+                    utentiDaSalutare.push(`<@${slot.player}>`);
                     
-                    // 2. Assegnazione Ruolo
+                    // Assegna Ruolo
                     try {
                         const member = await message.guild.members.fetch(slot.player);
                         if (member) await member.roles.add(ID_RUOLO_GIOCATORE_AUTO);
                     } catch (e) { erroriRuolo++; }
                 }
 
-                // --- SPONSOR ---
+                // --- GESTIONE SPONSOR ---
                 if (slot.sponsor) {
-                    // 1. Permessi Chat
-                    await channel.permissionOverwrites.edit(slot.sponsor, { ViewChannel: true, SendMessages: true });
-                    
-                    // 2. Assegnazione Ruolo
+                    // Assegna permessi avanzati
+                    await channel.permissionOverwrites.edit(slot.sponsor, permessiSpeciali);
+                    utentiDaSalutare.push(`<@${slot.sponsor}>`);
+
+                    // Assegna Ruolo
                     try {
                         const member = await message.guild.members.fetch(slot.sponsor);
                         if (member) await member.roles.add(ID_RUOLO_SPONSOR_AUTO);
                     } catch (e) { erroriRuolo++; }
                 }
+
+                // --- MESSAGGIO DI BENVENUTO ---
+                if (utentiDaSalutare.length > 0) {
+                    const saluto = utentiDaSalutare.length > 1 
+                        ? `Benvenuti ${utentiDaSalutare.join(' ')}!` 
+                        : `Benvenuto ${utentiDaSalutare[0]}!`;
+                    await channel.send(saluto);
+                }
+
                 assegnati++;
             }
         }
         
-        let msgFinale = `✅ **Operazione completata!** Stanze aggiornate: ${assegnati}.`;
+        let msgFinale = `✅ **Operazione completata!** Stanze configurate: ${assegnati}.`;
         if (erroriRuolo > 0) msgFinale += `\n⚠️ Attenzione: ${erroriRuolo} utenti non hanno ricevuto il ruolo (controlla la gerarchia ruoli).`;
 
         await message.channel.send(msgFinale);
