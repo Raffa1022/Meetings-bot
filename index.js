@@ -4,7 +4,7 @@ const { Client, GatewayIntentBits, Partials, Options, PermissionsBitField, Chann
 // --- 1. SERVER KEEP-ALIVE ---
 http.createServer((req, res) => {
     res.writeHead(200);
-    res.end('Bot is alive - Low Memory Mode v4.0 Verified');
+    res.end('Bot is alive - Low Memory Mode v4.1 Verified');
 }).listen(8000);
 
 // --- 2. CONFIGURAZIONE CLIENT OTTIMIZZATA ---
@@ -13,7 +13,8 @@ const client = new Client({
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.GuildMessageReactions,
-        GatewayIntentBits.MessageContent
+        GatewayIntentBits.MessageContent,
+        GatewayIntentBits.GuildMembers // <--- AGGIUNTO: Necessario per assegnare i ruoli!
     ],
     partials: [
         Partials.Message, 
@@ -46,9 +47,12 @@ const ID_RUOLO_MEETING_2 = '1460741402672758814';
 // Canale Database
 const ID_CANALE_DATABASE = '1464940718933151839'; 
 
-// NUOVO ID PER LA CATEGORIA DELLE CHAT RUOLO (#1, #2, #3...)
-// Assicurati di mettere l'ID corretto della categoria dove sono le stanze numerate
+// ID CATEGORIA CHAT RUOLO (#1, #2...)
 const ID_CATEGORIA_CHAT_RUOLO = '1460741414357827747'; 
+
+// --- 🆕 NUOVI ID PER I RUOLI AUTOMATICI (INSERISCI QUI GLI ID) ---
+const ID_RUOLO_GIOCATORE_AUTO = '1460741403331268661'; 
+const ID_RUOLO_SPONSOR_AUTO = '1460741404497019002';
 
 // --- 🔢 VARIABILI MEMORIA ---
 const meetingCounts = new Map(); 
@@ -139,12 +143,12 @@ client.on('messageCreate', async message => {
                 { name: '👁️ !lettura', value: 'Rispondi al messaggio verde per supervisionare (Max 1).' },
                 { name: '🛑 !fine', value: 'Chiude la chat privata.' },
                 { name: '📋 !tabella [numero]', value: 'Crea la tabella iscrizioni (Es. !tabella 10).' },
-                { name: '🚀 !assegna', value: 'Sposta giocatori e sponsor nelle stanze numerate (#1, #2...).' },
+                { name: '🚀 !assegna', value: 'Assegna stanze (#1, #2...) e RUOLI ai partecipanti.' },
                 { name: '🔒 !chiusura', value: 'Chiude la tabella e resetta le iscrizioni.' },
                 { name: '⚠️ !azzeramento1', value: 'Resetta meeting e sblocca utenti.' },
                 { name: '⚠️ !azzeramento2', value: 'Resetta il conteggio delle Letture.' }
             )
-            .setFooter({ text: 'Sistema v4.0 - Low Memory Verified' });
+            .setFooter({ text: 'Sistema v4.1 - Low Memory Verified' });
 
         return message.channel.send({ embeds: [helpEmbed] });
     }
@@ -221,18 +225,19 @@ client.on('messageCreate', async message => {
         activeTable.messageId = sentMsg.id;
     }
 
-    // --- NUOVO COMANDO: !assegna ---
+    // --- COMANDO: !assegna (MODIFICATO PER RUOLI) ---
     if (message.content === '!assegna') {
         if (message.guild.id !== ID_SERVER_COMMAND) return;
         if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) return;
         if (activeTable.limit === 0) return message.reply("⚠️ Nessuna tabella attiva. Usa prima `!tabella`.");
 
-        await message.reply("⏳ **Inizio assegnazione permessi...** attendi.");
+        await message.reply("⏳ **Inizio assegnazione Stanze e Ruoli...** attendi.");
 
         const category = message.guild.channels.cache.get(ID_CATEGORIA_CHAT_RUOLO);
         if (!category) return message.channel.send("❌ Errore: ID Categoria Chat Ruolo non trovato o non valido. Inseriscilo nel codice.");
 
         let assegnati = 0;
+        let erroriRuolo = 0;
 
         for (let i = 0; i < activeTable.limit; i++) {
             const slot = activeTable.slots[i];
@@ -241,21 +246,42 @@ client.on('messageCreate', async message => {
             const channel = message.guild.channels.cache.find(c => c.parentId === ID_CATEGORIA_CHAT_RUOLO && c.name === channelName);
 
             if (channel) {
+                // Reset permessi stanza
                 await channel.permissionOverwrites.set([
                     { id: message.guild.id, deny: [PermissionsBitField.Flags.ViewChannel] } 
                 ]);
 
+                // --- GIOCATORE ---
                 if (slot.player) {
+                    // 1. Permessi Chat
                     await channel.permissionOverwrites.edit(slot.player, { ViewChannel: true, SendMessages: true });
+                    
+                    // 2. Assegnazione Ruolo
+                    try {
+                        const member = await message.guild.members.fetch(slot.player);
+                        if (member) await member.roles.add(ID_RUOLO_GIOCATORE_AUTO);
+                    } catch (e) { erroriRuolo++; }
                 }
 
+                // --- SPONSOR ---
                 if (slot.sponsor) {
+                    // 1. Permessi Chat
                     await channel.permissionOverwrites.edit(slot.sponsor, { ViewChannel: true, SendMessages: true });
+                    
+                    // 2. Assegnazione Ruolo
+                    try {
+                        const member = await message.guild.members.fetch(slot.sponsor);
+                        if (member) await member.roles.add(ID_RUOLO_SPONSOR_AUTO);
+                    } catch (e) { erroriRuolo++; }
                 }
                 assegnati++;
             }
         }
-        await message.channel.send(`✅ **Operazione completata!** Ho aggiornato i permessi per ${assegnati} stanze.`);
+        
+        let msgFinale = `✅ **Operazione completata!** Stanze aggiornate: ${assegnati}.`;
+        if (erroriRuolo > 0) msgFinale += `\n⚠️ Attenzione: ${erroriRuolo} utenti non hanno ricevuto il ruolo (controlla la gerarchia ruoli).`;
+
+        await message.channel.send(msgFinale);
     }
 
     // --- NUOVO COMANDO: !chiusura ---
