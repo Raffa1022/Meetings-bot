@@ -4,7 +4,7 @@ const { Client, GatewayIntentBits, Partials, Options, PermissionsBitField, Chann
 // --- 1. SERVER KEEP-ALIVE ---
 http.createServer((req, res) => {
     res.writeHead(200);
-    res.end('Bot is alive - Low Memory Mode v4.7 (Fixed Logic)');
+    res.end('Bot is alive - Low Memory Mode v4.8 (Full Sponsor Follow)');
 }).listen(8000);
 
 // --- 2. CONFIGURAZIONE CLIENT OTTIMIZZATA ---
@@ -186,7 +186,7 @@ client.on('messageCreate', async message => {
             .addFields(
                 { name: '🔹 !meeting @giocatore (Solo Giocatori)', value: 'Invita un altro giocatore. I rispettivi Sponsor entrano in automatico.' },
                 { name: '🛑 !fine (Giocatori)', value: 'Chiude la chat privata.' },
-                { name: '👁️ !lettura (Solo Giocatori)', value: 'Supervisione chat attiva (Max 1). Sponsor esclusi.' }, 
+                { name: '👁️ !lettura (Solo Giocatori)', value: 'Supervisione chat attiva (Max 1). Anche il tuo Sponsor entrerà in visione.' }, 
                 { name: '🚪 !entrata (Overseer)', value: `Attiva/Disattiva ruolo automatico all'ingresso. (Stato: ${isAutoRoleActive ? 'ON' : 'OFF'})` },
                 { name: '📋 !tabella [num] (Overseer)', value: 'Crea la tabella iscrizioni (Es. !tabella 10).' },
                 { name: '🚀 !assegna (Overseer)', value: 'Assegna stanze, ruoli e permessi avanzati.' },
@@ -194,7 +194,7 @@ client.on('messageCreate', async message => {
                 { name: '⚠️ !azzeramento1 (Overseer)', value: 'Resetta meeting e sblocca utenti.' },
                 { name: '⚠️ !azzeramento2 (Overseer)', value: 'Resetta il conteggio delle Letture.' }
             )
-            .setFooter({ text: 'Sistema v4.7 - Auto-Sponsor & Ghost Fix' });
+            .setFooter({ text: 'Sistema v4.8 - Sponsor Follows & Notification' });
 
         return message.channel.send({ embeds: [helpEmbed] });
     }
@@ -439,8 +439,6 @@ client.on('messageCreate', async message => {
                 
                 activeUsers.add(message.author.id);
                 activeUsers.add(userToInvite.id);
-                // Aggiungiamo anche gli sponsor alla lista "attivi" per evitare conflitti? 
-                // Dipende se lo sponsor può stare in più chat. Per ora li lasciamo liberi ma li invitiamo.
                 
                 await syncDatabase();
 
@@ -490,18 +488,19 @@ client.on('messageCreate', async message => {
                         permissionOverwrites: permissions,
                     });
                     
-                    // Costruiamo la lista menzioni per il messaggio (solo visiva)
+                    // Costruiamo la lista menzioni per il messaggio per NOTIFICARE gli utenti
                     let participantsText = `${message.author} e ${userToInvite}`;
-                    if (sponsorAuthor) participantsText += ` (con Sponsor <@${sponsorAuthor}>)`;
-                    if (sponsorGuest) participantsText += ` (con Sponsor <@${sponsorGuest}>)`;
+                    if (sponsorAuthor) participantsText += ` <@${sponsorAuthor}>`;
+                    if (sponsorGuest) participantsText += ` <@${sponsorGuest}>`;
 
                     // --- 👻 FIX GHOST PING: Usa Embed ---
                     const welcomeEmbed = new EmbedBuilder()
                         .setTitle("👋 Meeting Avviato")
-                        .setDescription(`Benvenuti nel canale privato!\n\n👤 **Partecipanti:**\n${participantsText}\n\nScrivete **!fine** per chiudere la chat.`)
+                        .setDescription(`Benvenuti nel canale privato!\nScrivete **!fine** per chiudere la chat.`)
                         .setColor(0x00FFFF);
 
-                    await newChannel.send({ embeds: [welcomeEmbed] });
+                    // Qui mandiamo il "content" con le menzioni per notificare tutti, + l'embed
+                    await newChannel.send({ content: `🔔 Benvenuti: ${participantsText}`, embeds: [welcomeEmbed] });
                     
                     const logEmbed = new EmbedBuilder()
                         .setTitle('📂 Meeting Avviato')
@@ -555,6 +554,7 @@ client.on('messageCreate', async message => {
             if (!targetChannel) return message.reply("❌ Canale inesistente.");
             if (targetChannel.permissionOverwrites.cache.has(message.author.id)) return message.reply("⚠️ Sei già dentro.");
 
+            // 1. Aggiungi il GIOCATORE (Supervisore)
             await targetChannel.permissionOverwrites.create(message.author.id, { 
                 ViewChannel: true, 
                 SendMessages: false,
@@ -563,12 +563,28 @@ client.on('messageCreate', async message => {
                 CreatePrivateThreads: false   
             });
 
+            // 2. Controllo e aggiunta dello SPONSOR (Supervisore)
+            const supervisorSponsor = activeTable.slots.find(s => s.player === message.author.id)?.sponsor;
+            if (supervisorSponsor) {
+                await targetChannel.permissionOverwrites.create(supervisorSponsor, { 
+                    ViewChannel: true, 
+                    SendMessages: false,
+                    AddReactions: false,          
+                    CreatePublicThreads: false,   
+                    CreatePrivateThreads: false   
+                });
+            }
+
             const participants = targetChannel.permissionOverwrites.cache
                 .filter(o => o.id !== client.user.id && o.id !== message.author.id && o.id !== targetGuild.id)
                 .map(o => `<@${o.id}>`)
                 .join(' ');
 
-            await targetChannel.send(`⚠️ ATTENZIONE ${participants}: ${message.author} è entrato per osservare la vostra conversazione.`);
+            // Costruiamo il testo di notifica
+            let supervisorText = `${message.author}`;
+            if (supervisorSponsor) supervisorText += ` e il suo Sponsor <@${supervisorSponsor}>`;
+
+            await targetChannel.send(`⚠️ ATTENZIONE ${participants}: ${supervisorText} è entrato per osservare la vostra conversazione.`);
 
             letturaCounts.set(message.author.id, currentRead + 1);
             await syncDatabase();
@@ -576,7 +592,7 @@ client.on('messageCreate', async message => {
             const newEmbed = EmbedBuilder.from(targetEmbed)
                 .setColor(0xFFA500)
                 .spliceFields(0, 1, { name: 'Stato', value: '🟠 Supervisionato', inline: true })
-                .addFields({ name: '👮 Supervisore', value: `${message.author}`, inline: true });
+                .addFields({ name: '👮 Supervisore', value: supervisorText, inline: true });
 
             await repliedMsg.edit({ embeds: [newEmbed] });
             message.reply("👁️ **Accesso Garantito** (Utenti avvisati).");
