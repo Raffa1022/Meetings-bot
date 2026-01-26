@@ -4,7 +4,7 @@ const { Client, GatewayIntentBits, Partials, Options, PermissionsBitField, Chann
 // --- 1. SERVER KEEP-ALIVE ---
 http.createServer((req, res) => {
     res.writeHead(200);
-    res.end('Bot is alive - Low Memory Mode v5.2 (Fix Impostazioni GUI)');
+    res.end('Bot is alive - Low Memory Mode v5.3 (Fix Counters Display)');
 }).listen(8000);
 
 // --- 2. CONFIGURAZIONE CLIENT OTTIMIZZATA ---
@@ -216,7 +216,7 @@ client.on('messageCreate', async message => {
                 { name: '🔒 !chiusura (Overseer)', value: 'Archivia tabella nel DB.' },
                 { name: '⚠️ !azzeramento1 / !azzeramento2', value: 'Reset meeting / Reset letture.' }
             )
-            .setFooter({ text: 'Sistema v5.2 - Fix Cross-Role & GUI' });
+            .setFooter({ text: 'Sistema v5.3 - Fix Counters Display' });
 
         return message.channel.send({ embeds: [helpEmbed] });
     }
@@ -413,15 +413,20 @@ client.on('messageCreate', async message => {
                 
                 let cAuthor = meetingCounts.get(message.author.id) || 0;
                 let cGuest = meetingCounts.get(userToInvite.id) || 0;
-                if (cAuthor >= MAX_MEETINGS || cGuest >= MAX_MEETINGS) return reaction.message.reply("❌ Token finiti.");
+                
+                // --- 🔥 BLOCCO AL 4° MEETING (Se uno dei due ha già 3, si blocca) ---
+                if (cAuthor >= MAX_MEETINGS || cGuest >= MAX_MEETINGS) return reaction.message.reply("❌ Token finiti (Limite 3/3 raggiunto).");
 
                 const tableData = await retrieveLatestTable();
                 
                 const sponsorAuthor = tableData.slots.find(s => s.player === message.author.id)?.sponsor;
                 const sponsorGuest = tableData.slots.find(s => s.player === userToInvite.id)?.sponsor;
 
-                meetingCounts.set(message.author.id, cAuthor + 1);
-                meetingCounts.set(userToInvite.id, cGuest + 1);
+                // --- AGGIORNAMENTO CONTATORI ---
+                const newAuthorCount = cAuthor + 1;
+                const newGuestCount = cGuest + 1;
+                meetingCounts.set(message.author.id, newAuthorCount);
+                meetingCounts.set(userToInvite.id, newGuestCount);
                 activeUsers.add(message.author.id);
                 activeUsers.add(userToInvite.id);
                 await syncDatabase();
@@ -458,7 +463,11 @@ client.on('messageCreate', async message => {
                         .setDescription(`**Autore:** ${message.author.tag}\n**Ospite:** ${userToInvite.tag}\nℹ️ Rispondi con **!lettura** per osservare.`)
                         .setFooter({ text: `ID:${newChannel.id}` });
                     
-                    await reaction.message.reply({ content: "✅ Meeting creato!", embeds: [logEmbed] });
+                    // --- 🔥 MODIFICA VISUALE: FEEDBACK CONTATORI (es. 1/3) ---
+                    await reaction.message.reply({ 
+                        content: `✅ **Meeting creato!**\n📊 **Stato Meeting:**\n👤 ${message.author.username}: **${newAuthorCount}/${MAX_MEETINGS}**\n👤 ${userToInvite.username}: **${newGuestCount}/${MAX_MEETINGS}**`, 
+                        embeds: [logEmbed] 
+                    });
                     reaction.message.channel.messages.cache.delete(reaction.message.id);
 
                 } catch (e) { 
@@ -477,7 +486,9 @@ client.on('messageCreate', async message => {
         if (!message.member.roles.cache.has(ID_RUOLO_GIOCATORE_AUTO)) return message.reply("❌ Accesso Negato.");
 
         const currentRead = letturaCounts.get(message.author.id) || 0;
-        if (currentRead >= MAX_LETTURE) return message.reply("⛔ Limite supervisioni raggiunto.");
+        
+        // --- 🔥 BLOCCO ALLA 2° LETTURA (Se ha già 1, si blocca) ---
+        if (currentRead >= MAX_LETTURE) return message.reply("⛔ Limite supervisioni raggiunto (1/1).");
 
         try {
             const repliedMsg = await message.channel.messages.fetch(message.reference.messageId);
@@ -508,7 +519,9 @@ client.on('messageCreate', async message => {
 
             await targetChannel.send(`⚠️ ATTENZIONE ${participants}: ${supervisorText} è entrato per osservare.`);
 
-            letturaCounts.set(message.author.id, currentRead + 1);
+            // --- 🔥 MODIFICA VISUALE: FEEDBACK CONTATORE (es. 1/1) ---
+            const newReadCount = currentRead + 1;
+            letturaCounts.set(message.author.id, newReadCount);
             await syncDatabase();
 
             const newEmbed = EmbedBuilder.from(targetEmbed)
@@ -517,7 +530,7 @@ client.on('messageCreate', async message => {
                 .addFields({ name: '👮 Supervisore', value: supervisorText, inline: true });
 
             await repliedMsg.edit({ embeds: [newEmbed] });
-            message.reply("👁️ **Accesso Garantito**.");
+            message.reply(`👁️ **Accesso Garantito (${newReadCount}/${MAX_LETTURE})**.`);
             message.channel.messages.cache.delete(repliedMsg.id);
 
         } catch (e) { console.error(e); message.reply("❌ Errore tecnico."); }
