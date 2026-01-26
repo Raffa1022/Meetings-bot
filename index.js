@@ -106,9 +106,6 @@ async function syncDatabase() {
         });
 
         const sentMsg = await dbChannel.send(`📦 **BACKUP_DATI**\n\`\`\`json\n${dataString}\n\`\`\``);
-        // Pulizia immediata del messaggio precedente non è necessaria qui se gestita nel restore, 
-        // ma manteniamo la logica originale se c'era un sistema di clean custom.
-        // (Nota: nel codice originale cancellava sentMsg.channel... qui lasciamo standard)
         
     } catch (e) { console.error("Errore salvataggio DB:", e); }
 }
@@ -227,13 +224,13 @@ client.on('messageCreate', async message => {
             .setTitle('⚙️ Pannello Gestione Bot')
             .setColor(0x2B2D31)
             .addFields(
-                { name: '🔹 !meeting @giocatore', value: 'Invita un altro giocatore.' },
-                { name: '🛑 !fine', value: 'Chiude la chat privata.' },
-                { name: '👁️ !lettura', value: 'Supervisione chat attiva.' }, 
-                { name: '🚪 !entrata (Admin)', value: `Auto-ruolo ingresso (Stato: ${STATE.isAutoRoleActive ? 'ON' : 'OFF'})` },
-                { name: '📋 !tabella [num] (Admin)', value: 'Crea nuova tabella iscrizioni.' },
-                { name: '🚀 !assegna (Admin)', value: 'Assegna stanze, ruoli e ARCHIVIA tabella.' },
-                { name: '⚠️ !azzeramento (Admin)', value: 'Reset totale (meeting + letture).' }
+                { name: '🔹 !meeting @giocatore (Giocatori)', value: 'Invita un altro giocatore.' },
+                { name: '🛑 !fine (Giocatori)', value: 'Chiude la chat privata.' },
+                { name: '👁️ !lettura (Giocatori)', value: 'Supervisione chat attiva.' }, 
+                { name: '🚪 !entrata (Overseer)', value: `Auto-ruolo ingresso (Stato: ${STATE.isAutoRoleActive ? 'ON' : 'OFF'})` },
+                { name: '📋 !tabella [num] (Overseer)', value: 'Crea nuova tabella iscrizioni.' },
+                { name: '🚀 !assegna (Overseer)', value: 'Assegna stanze, ruoli e ARCHIVIA tabella.' },
+                { name: '⚠️ !azzeramento (Overseer)', value: 'Reset totale (meeting + letture).' }
             )
             .setFooter({ text: 'Sistema v5.4 Refactored' });
         return message.channel.send({ embeds: [helpEmbed] });
@@ -329,7 +326,9 @@ client.on('messageCreate', async message => {
                 }
 
                 if (utentiDaSalutare.length > 0) {
-                     await channel.send(`Benvenuti ${utentiDaSalutare.join(' e ')}!`);
+                     // Modifica: "Benvenuto" per 1 utente, "Benvenuti" per più utenti
+                     const saluto = utentiDaSalutare.length === 1 ? 'Benvenuto' : 'Benvenuti';
+                     await channel.send(`${saluto} ${utentiDaSalutare.join(' e ')}!`);
                 }
                 assegnati++;
             }
@@ -480,7 +479,15 @@ client.on('messageCreate', async message => {
             const tableData = await retrieveLatestTable();
             const supervisorSponsor = tableData.slots.find(s => s.player === message.author.id)?.sponsor;
 
-            const readPerms = { ViewChannel: true, SendMessages: false, CreatePublicThreads: false, CreatePrivateThreads: false };
+            // Modifica: Aggiunto AddReactions: false per impedire reazioni agli osservatori
+            const readPerms = { 
+                ViewChannel: true, 
+                SendMessages: false, 
+                CreatePublicThreads: false, 
+                CreatePrivateThreads: false,
+                AddReactions: false 
+            };
+            
             await targetChannel.permissionOverwrites.create(message.author.id, readPerms);
             if (supervisorSponsor) await targetChannel.permissionOverwrites.create(supervisorSponsor, readPerms);
 
@@ -520,10 +527,15 @@ client.on('messageCreate', async message => {
         await syncDatabase(); 
 
         await message.channel.send("🛑 **Chat Chiusa.**");
-        // Rimuove possibilità di scrivere a tutti tranne al bot
+        // Modifica: Rimuove possibilità di scrivere, reagire e creare thread a TUTTI (partecipanti e osservatori)
         message.channel.permissionOverwrites.cache.forEach(async (overwrite) => {
             if (overwrite.id !== client.user.id) {
-                await message.channel.permissionOverwrites.edit(overwrite.id, { SendMessages: false, AddReactions: false });
+                await message.channel.permissionOverwrites.edit(overwrite.id, { 
+                    SendMessages: false, 
+                    AddReactions: false,
+                    CreatePublicThreads: false,
+                    CreatePrivateThreads: false
+                });
             }
         });
     }
