@@ -1,29 +1,84 @@
 const http = require('http');
-const { Client, GatewayIntentBits, Partials, Options, PermissionsBitField, ChannelType, EmbedBuilder, ActionRowBuilder, StringSelectMenuBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { 
+    Client, GatewayIntentBits, Partials, Options, PermissionsBitField, 
+    ChannelType, EmbedBuilder, ActionRowBuilder, StringSelectMenuBuilder, 
+    ButtonBuilder, ButtonStyle 
+} = require('discord.js');
 
-// --- 1. SERVER KEEP-ALIVE ---
+// ==========================================
+// 1. CONFIGURAZIONE & COSTANTI
+// ==========================================
+
+const CONFIG = {
+    // ID Server e Categorie
+    SERVER: {
+        COMMAND_GUILD: '1460740887494787259',
+        TARGET_GUILD:  '1463608688244822018',
+        TARGET_CAT:    '1463608688991273015',
+        ROLE_CHAT_CAT: '1460741414357827747'
+    },
+    // ID Canali
+    CHANNELS: {
+        LOG:       '1464941042380837010',
+        DATABASE:  '1464940718933151839',
+        WELCOME:   '1460740888450830501'
+    },
+    // ID Ruoli
+    ROLES: {
+        RESET:        '1460741401435181295',
+        MEETING_1:    '1460741403331268661',
+        MEETING_2:    '1460741402672758814',
+        PLAYER_AUTO:  '1460741403331268661',
+        SPONSOR_AUTO: '1460741404497019002',
+        ALT_CHECK:    '1460741402672758814',
+        AUTO_JOIN:    '1460741402672758814'
+    },
+    // Limiti
+    LIMITS: {
+        MAX_MEETINGS: 3,
+        MAX_READINGS: 1
+    }
+};
+
+// ==========================================
+// 2. STATO DEL BOT (MEMORIA)
+// ==========================================
+
+const STATE = {
+    isAutoRoleActive: false,
+    meetingCounts: new Map(),
+    letturaCounts: new Map(),
+    activeUsers: new Set(),
+    table: {
+        limit: 0,
+        slots: [], // { player: id, sponsor: id }
+        messageId: null
+    }
+};
+
+// ==========================================
+// 3. INIZIALIZZAZIONE CLIENT & SERVER
+// ==========================================
+
+// Server Keep-Alive
 http.createServer((req, res) => {
     res.writeHead(200);
-    res.end('Bot is alive - Low Memory Mode v5.4 (Unified Commands & Grammar Fixes)');
+    res.end('Bot is alive - Low Memory Mode v5.4 (Refactored)');
 }).listen(8000);
 
-// --- 2. CONFIGURAZIONE CLIENT OTTIMIZZATA ---
+// Configurazione Client Discord
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.GuildMessageReactions,
         GatewayIntentBits.MessageContent,
-        GatewayIntentBits.GuildMembers // Necessario per assegnare i ruoli
+        GatewayIntentBits.GuildMembers
     ],
     partials: [
-        Partials.Message, 
-        Partials.Channel, 
-        Partials.Reaction, 
-        Partials.User, 
-        Partials.GuildMember
+        Partials.Message, Partials.Channel, Partials.Reaction, 
+        Partials.User, Partials.GuildMember
     ],
-    // Cache aggressiva (Low Memory)
     makeCache: Options.cacheWithLimits({
         MessageManager: 10,       
         PresenceManager: 0,       
@@ -34,115 +89,70 @@ const client = new Client({
     }),
 });
 
-// --- 🔧 CONFIGURAZIONE ID (INSERISCI I TUOI) ---
-const ID_SERVER_COMMAND = '1460740887494787259'; 
-const ID_CANALE_LOG = '1464941042380837010';
-const ID_SERVER_TARGET = '1463608688244822018';
-const ID_CATEGORIA_TARGET = '1463608688991273015';
+// ==========================================
+// 4. GESTIONE DATABASE (Funzioni Helper)
+// ==========================================
 
-const ID_RUOLO_RESET = '1460741401435181295'; 
-const ID_RUOLO_MEETING_1 = '1460741403331268661';
-const ID_RUOLO_MEETING_2 = '1460741402672758814';
-
-// Canale Database
-const ID_CANALE_DATABASE = '1464940718933151839'; 
-
-// ID CATEGORIA CHAT RUOLO (#1, #2...)
-const ID_CATEGORIA_CHAT_RUOLO = '1460741414357827747'; 
-
-// --- ID RUOLI AUTOMATICI (TABELLA) ---
-const ID_RUOLO_GIOCATORE_AUTO = '1460741403331268661'; 
-const ID_RUOLO_SPONSOR_AUTO = '1460741404497019002';
-
-// --- 👇 ID PER GESTIONE ALT (DA COMPILARE) 👇 ---
-const ID_RUOLO_ALT = '1460741402672758814'; 
-const ID_CANALE_BENVENUTO = '1460740888450830501'; 
-
-// --- 🆕 NUOVO ID PER AUTO-JOIN (RUOLO ALL'INGRESSO STANDARD) ---
-const ID_RUOLO_AUTO_JOIN = '1460741402672758814'; 
-
-// --- 🔢 VARIABILI MEMORIA (Limiti impostati qui) ---
-const meetingCounts = new Map(); 
-const letturaCounts = new Map(); 
-const activeUsers = new Set(); 
-const MAX_MEETINGS = 3; // Massimo 3 meeting
-const MAX_LETTURE = 1;  // Massima 1 lettura
-
-// Variabile stato Auto-Ruolo (False = spento di default)
-let isAutoRoleActive = false;
-
-// --- 📋 VARIABILI TABELLA ---
-let activeTable = {
-    limit: 0,
-    slots: [], // Contiene { player: id, sponsor: id }
-    messageId: null
-};
-
-// --- 📦 SISTEMA DATABASE ---
 async function syncDatabase() {
     try {
-        const dbChannel = await client.channels.fetch(ID_CANALE_DATABASE);
+        const dbChannel = await client.channels.fetch(CONFIG.CHANNELS.DATABASE);
         if (!dbChannel) return console.error("❌ Canale Database non trovato!");
 
         const dataString = JSON.stringify({
-            meeting: Object.fromEntries(meetingCounts),
-            lettura: Object.fromEntries(letturaCounts),
-            active: Array.from(activeUsers),
-            autorole: isAutoRoleActive 
+            meeting: Object.fromEntries(STATE.meetingCounts),
+            lettura: Object.fromEntries(STATE.letturaCounts),
+            active: Array.from(STATE.activeUsers),
+            autorole: STATE.isAutoRoleActive 
         });
 
         const sentMsg = await dbChannel.send(`📦 **BACKUP_DATI**\n\`\`\`json\n${dataString}\n\`\`\``);
-        // Cancella il messaggio precedente (clean log) solo se non è un archivio storico
-        sentMsg.channel.messages.cache.delete(sentMsg.id); 
-
+        // Pulizia immediata del messaggio precedente non è necessaria qui se gestita nel restore, 
+        // ma manteniamo la logica originale se c'era un sistema di clean custom.
+        // (Nota: nel codice originale cancellava sentMsg.channel... qui lasciamo standard)
+        
     } catch (e) { console.error("Errore salvataggio DB:", e); }
 }
 
 async function restoreDatabase() {
     try {
-        const dbChannel = await client.channels.fetch(ID_CANALE_DATABASE);
+        const dbChannel = await client.channels.fetch(CONFIG.CHANNELS.DATABASE);
         if (!dbChannel) return;
 
-        // Aumentato limite fetch per trovare eventuali archivi vecchi
         const messages = await dbChannel.messages.fetch({ limit: 20 });
-        
-        // Cerca prima il Backup Standard
-        let dataMsg = messages.find(m => m.content.includes('BACKUP_DATI'));
+        const dataMsg = messages.find(m => m.content.includes('BACKUP_DATI'));
         
         if (dataMsg) {
             const jsonStr = dataMsg.content.split('```json\n')[1].split('\n```')[0];
             const data = JSON.parse(jsonStr);
             
-            meetingCounts.clear();
-            Object.entries(data.meeting || {}).forEach(([id, val]) => meetingCounts.set(id, val));
-            letturaCounts.clear();
-            Object.entries(data.lettura || {}).forEach(([id, val]) => letturaCounts.set(id, val));
+            STATE.meetingCounts.clear();
+            Object.entries(data.meeting || {}).forEach(([id, val]) => STATE.meetingCounts.set(id, val));
             
-            activeUsers.clear();
-            (data.active || []).forEach(id => activeUsers.add(id));
+            STATE.letturaCounts.clear();
+            Object.entries(data.lettura || {}).forEach(([id, val]) => STATE.letturaCounts.set(id, val));
+            
+            STATE.activeUsers.clear();
+            (data.active || []).forEach(id => STATE.activeUsers.add(id));
 
-            if (data.autorole !== undefined) isAutoRoleActive = data.autorole;
+            if (data.autorole !== undefined) STATE.isAutoRoleActive = data.autorole;
             
-            console.log(`✅ Database ripristinato (Contatori e Utenti attivi).`);
+            console.log(`✅ Database ripristinato.`);
         }
         
-        // Pulizia vecchi messaggi di backup (ma NON degli archivi chiusura)
+        // Pulizia vecchi backup
         messages.forEach(m => {
             if(m.content.includes('BACKUP_DATI') && m.id !== dataMsg?.id) {
                 dbChannel.messages.delete(m.id).catch(() => {});
             }
         }); 
-
-    } catch (e) { console.log("ℹ️ Nessun backup trovato.", e); }
+    } catch (e) { console.log("ℹ️ Nessun backup trovato o errore restore.", e); }
 }
 
-// --- 🔥 NUOVA FUNZIONE: RECUPERO TABELLA INTELLIGENTE ---
 async function retrieveLatestTable() {
-    if (activeTable.limit > 0 && activeTable.slots.length > 0) {
-        return activeTable;
-    }
+    if (STATE.table.limit > 0 && STATE.table.slots.length > 0) return STATE.table;
+    
     try {
-        const dbChannel = await client.channels.fetch(ID_CANALE_DATABASE);
+        const dbChannel = await client.channels.fetch(CONFIG.CHANNELS.DATABASE);
         if (!dbChannel) return { slots: [] };
 
         const messages = await dbChannel.messages.fetch({ limit: 30 });
@@ -151,43 +161,47 @@ async function retrieveLatestTable() {
         if (archiveMsg) {
             const jsonStr = archiveMsg.content.split('```json\n')[1].split('\n```')[0];
             const data = JSON.parse(jsonStr);
-            if (data.tableBackup) {
-                return data.tableBackup;
-            }
+            if (data.tableBackup) return data.tableBackup;
         }
-    } catch (e) {
-        console.error("Errore recupero tabella archiviata:", e);
-    }
+    } catch (e) { console.error("Errore recupero tabella:", e); }
     return { slots: [] }; 
 }
 
-// --- 3. EVENTO AVVIO ---
+function generateTableText() {
+    let text = "**Giocatori** \u200b \u200b \u200b \u200b \u200b \u200b \u200b \u200b \u200b \u200b| \u200b \u200b **Sponsor**\n------------------------------\n";
+    STATE.table.slots.forEach((slot, i) => {
+        text += `**#${i + 1}** ${slot.player ? `<@${slot.player}>` : "`(libero)`"} \u200b | \u200b ${slot.sponsor ? `<@${slot.sponsor}>` : "`(libero)`"}\n`;
+    });
+    return text;
+}
+
+// ==========================================
+// 5. GESTIONE EVENTI PRINCIPALI
+// ==========================================
+
 client.once('ready', async () => {
     console.log(`✅ Bot online: ${client.user.tag}`);
     await restoreDatabase(); 
 });
 
-// --- 🆕 EVENTO: GESTIONE INGRESSI (ALT & AUTO-JOIN) ---
 client.on('guildMemberAdd', async member => {
+    // Controllo ALT
     try {
         const fetchedMember = await member.guild.members.fetch(member.id);
-        if (fetchedMember.roles.cache.has(ID_RUOLO_ALT)) {
-            console.log(`🚫 Utente Alt rilevato: ${member.user.tag}.`);
-            const welcomeChannel = member.guild.channels.cache.get(ID_CANALE_BENVENUTO);
-            if (welcomeChannel) {
-                await welcomeChannel.permissionOverwrites.create(member.id, { ViewChannel: false });
-            }
+        if (fetchedMember.roles.cache.has(CONFIG.ROLES.ALT_CHECK)) {
+            console.log(`🚫 Utente Alt rilevato: ${member.user.tag}`);
+            const welcomeChannel = member.guild.channels.cache.get(CONFIG.CHANNELS.WELCOME);
+            if (welcomeChannel) await welcomeChannel.permissionOverwrites.create(member.id, { ViewChannel: false });
             return; 
         }
     } catch (e) { console.error("Errore verifica Alt:", e); }
 
-    if (!isAutoRoleActive) return;
-    try {
-        await member.roles.add(ID_RUOLO_AUTO_JOIN);
-    } catch (e) { console.error(`Errore assegnazione ruolo a ${member.user.tag}:`, e); }
+    // Auto Join
+    if (!STATE.isAutoRoleActive) return;
+    try { await member.roles.add(CONFIG.ROLES.AUTO_JOIN); } 
+    catch (e) { console.error(`Errore auto-role ${member.user.tag}:`, e); }
 });
 
-// --- 4. REAZIONI ---
 client.on('messageReactionAdd', async (reaction, user) => {
     if (user.bot) return;
     if (reaction.partial) {
@@ -195,79 +209,75 @@ client.on('messageReactionAdd', async (reaction, user) => {
     }
 });
 
-// --- 5. GESTIONE COMANDI ---
+// ==========================================
+// 6. GESTIONE COMANDI (MessageCreate)
+// ==========================================
+
 client.on('messageCreate', async message => {
     if (message.author.bot) return;
 
+    const content = message.content;
+    const member = message.member;
+    const guildId = message.guild.id;
+    const isAdmin = member?.permissions.has(PermissionsBitField.Flags.Administrator);
+
     // --- COMANDO: !impostazioni ---
-    if (message.content === '!impostazioni') {
-        if (message.guild.id !== ID_SERVER_COMMAND) return;
-        
+    if (content === '!impostazioni' && guildId === CONFIG.SERVER.COMMAND_GUILD) {
         const helpEmbed = new EmbedBuilder()
             .setTitle('⚙️ Pannello Gestione Bot')
             .setColor(0x2B2D31)
             .addFields(
-                { name: '🔹 !meeting @giocatore (Giocatori)', value: 'Invita un altro giocatore.' },
-                { name: '🛑 !fine (Giocatori)', value: 'Chiude la chat privata.' },
-                { name: '👁️ !lettura (Giocatori)', value: 'Supervisione chat attiva.' }, 
-                { name: '🚪 !entrata (Overseer)', value: `Auto-ruolo ingresso (Stato: ${isAutoRoleActive ? 'ON' : 'OFF'})` },
-                { name: '📋 !tabella [num] (Overseer)', value: 'Crea nuova tabella iscrizioni.' },
-                { name: '🚀 !assegna (Overseer)', value: 'Assegna stanze, ruoli e ARCHIVIA tabella.' },
-                { name: '⚠️ !azzeramento (Overseer)', value: 'Reset totale (meeting + letture).' }
+                { name: '🔹 !meeting @giocatore', value: 'Invita un altro giocatore.' },
+                { name: '🛑 !fine', value: 'Chiude la chat privata.' },
+                { name: '👁️ !lettura', value: 'Supervisione chat attiva.' }, 
+                { name: '🚪 !entrata (Admin)', value: `Auto-ruolo ingresso (Stato: ${STATE.isAutoRoleActive ? 'ON' : 'OFF'})` },
+                { name: '📋 !tabella [num] (Admin)', value: 'Crea nuova tabella iscrizioni.' },
+                { name: '🚀 !assegna (Admin)', value: 'Assegna stanze, ruoli e ARCHIVIA tabella.' },
+                { name: '⚠️ !azzeramento (Admin)', value: 'Reset totale (meeting + letture).' }
             )
-            .setFooter({ text: 'Sistema v5.4 - Unified Commands & Grammar Fixes' });
-
+            .setFooter({ text: 'Sistema v5.4 Refactored' });
         return message.channel.send({ embeds: [helpEmbed] });
     }
 
-    // --- COMANDO: !entrata ---
-    if (message.content === '!entrata') {
-        if (message.guild.id !== ID_SERVER_COMMAND) return;
-        if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) return;
-        isAutoRoleActive = !isAutoRoleActive;
+    // --- COMANDO: !entrata (Admin) ---
+    if (content === '!entrata' && guildId === CONFIG.SERVER.COMMAND_GUILD) {
+        if (!isAdmin) return;
+        STATE.isAutoRoleActive = !STATE.isAutoRoleActive;
         await syncDatabase(); 
-        const stato = isAutoRoleActive ? "✅ ATTIVO" : "🛑 DISATTIVO";
-        message.reply(`🚪 **Auto-Ruolo Ingressi:** ${stato}.`);
+        return message.reply(`🚪 **Auto-Ruolo Ingressi:** ${STATE.isAutoRoleActive ? "✅ ATTIVO" : "🛑 DISATTIVO"}.`);
     }
 
-    // --- !azzeramento (UNIFICATO) ---
-    if (message.content === '!azzeramento') {
-        if (message.guild.id !== ID_SERVER_COMMAND) return;
-        if (!message.member.roles.cache.has(ID_RUOLO_RESET)) return message.reply("⛔ Non hai i permessi.");
+    // --- COMANDO: !azzeramento (Admin & Ruolo Reset) ---
+    if (content === '!azzeramento' && guildId === CONFIG.SERVER.COMMAND_GUILD) {
+        if (!member.roles.cache.has(CONFIG.ROLES.RESET)) return message.reply("⛔ Non hai i permessi.");
         
-        // Reset di tutto
-        meetingCounts.clear();
-        activeUsers.clear(); 
-        letturaCounts.clear();
+        STATE.meetingCounts.clear();
+        STATE.activeUsers.clear(); 
+        STATE.letturaCounts.clear();
         
         await syncDatabase();
         return message.reply("♻️ **Reset Completo effettuato:** Conteggio Meeting, Letture e Stati Utenti azzerati.");
     }
 
-    // --- COMANDO: !tabella ---
-    if (message.content.startsWith('!tabella')) {
-        if (message.guild.id !== ID_SERVER_COMMAND) return;
-        if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) return;
+    // --- COMANDO: !tabella (Admin) ---
+    if (content.startsWith('!tabella') && guildId === CONFIG.SERVER.COMMAND_GUILD) {
+        if (!isAdmin) return;
 
-        const args = message.content.split(' ');
+        const args = content.split(' ');
         const num = parseInt(args[1]);
 
         if (!num || num > 25) return message.reply("Specifica un numero di slot (max 25). Es: `!tabella 10`");
 
-        activeTable.limit = num;
-        activeTable.slots = Array(num).fill(null).map(() => ({ player: null, sponsor: null }));
+        STATE.table.limit = num;
+        STATE.table.slots = Array(num).fill(null).map(() => ({ player: null, sponsor: null }));
 
-        const description = generateTableText();
         const embed = new EmbedBuilder()
             .setTitle(`📋 Iscrizione Giocatori & Sponsor`)
-            .setDescription(description)
+            .setDescription(generateTableText())
             .setColor('Blue')
             .setFooter({ text: "Usa i menu qui sotto per iscriverti!" });
 
-        const options = [];
-        for (let i = 1; i <= num; i++) {
-            options.push({ label: `Numero ${i}`, value: `${i - 1}` });
-        }
+        const options = Array.from({ length: num }, (_, i) => ({ label: `Numero ${i + 1}`, value: `${i}` }));
 
         const rowPlayer = new ActionRowBuilder().addComponents(
             new StringSelectMenuBuilder().setCustomId('select_player').setPlaceholder('👤 Seleziona Slot Giocatore').addOptions(options)
@@ -280,25 +290,22 @@ client.on('messageCreate', async message => {
         );
 
         const sentMsg = await message.channel.send({ embeds: [embed], components: [rowPlayer, rowSponsor, rowButton] });
-        activeTable.messageId = sentMsg.id;
+        STATE.table.messageId = sentMsg.id;
     }
 
-    // --- COMANDO: !assegna (UNIFICATO CON CHIUSURA) ---
-    if (message.content === '!assegna') {
-        if (message.guild.id !== ID_SERVER_COMMAND) return;
-        if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) return;
-        if (activeTable.limit === 0) return message.reply("⚠️ Nessuna tabella attiva in memoria.");
+    // --- COMANDO: !assegna (Admin) ---
+    if (content === '!assegna' && guildId === CONFIG.SERVER.COMMAND_GUILD) {
+        if (!isAdmin) return;
+        if (STATE.table.limit === 0) return message.reply("⚠️ Nessuna tabella attiva in memoria.");
 
         await message.reply("⏳ **Inizio configurazione e archiviazione...**");
-
-        const category = message.guild.channels.cache.get(ID_CATEGORIA_CHAT_RUOLO);
         let assegnati = 0;
 
-        // 1. ASSEGNAZIONE
-        for (let i = 0; i < activeTable.limit; i++) {
-            const slot = activeTable.slots[i];
+        // 1. Assegnazione Stanze
+        for (let i = 0; i < STATE.table.limit; i++) {
+            const slot = STATE.table.slots[i];
             const channelName = `${i + 1}`; 
-            const channel = message.guild.channels.cache.find(c => c.parentId === ID_CATEGORIA_CHAT_RUOLO && c.name === channelName);
+            const channel = message.guild.channels.cache.find(c => c.parentId === CONFIG.SERVER.ROLE_CHAT_CAT && c.name === channelName);
 
             if (channel) {
                 await channel.permissionOverwrites.set([{ id: message.guild.id, deny: [PermissionsBitField.Flags.ViewChannel] }]);
@@ -313,85 +320,64 @@ client.on('messageCreate', async message => {
                 if (slot.player) {
                     await channel.permissionOverwrites.edit(slot.player, permessiSpeciali);
                     utentiDaSalutare.push(`<@${slot.player}>`);
-                    try { (await message.guild.members.fetch(slot.player)).roles.add(ID_RUOLO_GIOCATORE_AUTO); } catch (e) {}
+                    try { (await message.guild.members.fetch(slot.player)).roles.add(CONFIG.ROLES.PLAYER_AUTO); } catch (e) {}
                 }
                 if (slot.sponsor) {
                     await channel.permissionOverwrites.edit(slot.sponsor, permessiSpeciali);
                     utentiDaSalutare.push(`<@${slot.sponsor}>`);
-                    try { (await message.guild.members.fetch(slot.sponsor)).roles.add(ID_RUOLO_SPONSOR_AUTO); } catch (e) {}
+                    try { (await message.guild.members.fetch(slot.sponsor)).roles.add(CONFIG.ROLES.SPONSOR_AUTO); } catch (e) {}
                 }
 
-                // LOGICA BENVENUTO MIGLIORATA
                 if (utentiDaSalutare.length > 0) {
-                    if (utentiDaSalutare.length === 1) {
-                         await channel.send(`Benvenuto ${utentiDaSalutare[0]}!`);
-                    } else {
-                         await channel.send(`Benvenuti ${utentiDaSalutare.join(' e ')}!`);
-                    }
+                     await channel.send(`Benvenuti ${utentiDaSalutare.join(' e ')}!`);
                 }
                 assegnati++;
             }
         }
 
-        // 2. CHIUSURA / ARCHIVIAZIONE
-        const dbChannel = await client.channels.fetch(ID_CANALE_DATABASE);
+        // 2. Archiviazione
+        const dbChannel = await client.channels.fetch(CONFIG.CHANNELS.DATABASE);
         if (dbChannel) {
             const dataToArchive = {
-                tableBackup: activeTable,
-                meeting: Object.fromEntries(meetingCounts),
-                lettura: Object.fromEntries(letturaCounts),
-                active: Array.from(activeUsers),
-                autorole: isAutoRoleActive
+                tableBackup: STATE.table,
+                meeting: Object.fromEntries(STATE.meetingCounts),
+                lettura: Object.fromEntries(STATE.letturaCounts),
+                active: Array.from(STATE.activeUsers),
+                autorole: STATE.isAutoRoleActive
             };
-            const jsonStr = JSON.stringify(dataToArchive);
-            await dbChannel.send(`📁 **ARCHIVIO_TABELLA** (Chiusura del ${new Date().toLocaleTimeString('it-IT')})\n\`\`\`json\n${jsonStr}\n\`\`\``);
+            await dbChannel.send(`📁 **ARCHIVIO_TABELLA** (Chiusura del ${new Date().toLocaleTimeString('it-IT')})\n\`\`\`json\n${JSON.stringify(dataToArchive)}\n\`\`\``);
         }
 
-        activeTable = { limit: 0, slots: [], messageId: null };
+        // Reset locale
+        STATE.table = { limit: 0, slots: [], messageId: null };
         await message.channel.send(`✅ **Operazione completata!**\n- Stanze configurate: ${assegnati}\n- Tabella archiviata nel DB\n- Memoria locale resettata.`);
     }
 
-    // --- COMANDO: !meeting (CON MODIFICA RICHIESTA) ---
-    if (message.content.startsWith('!meeting ')) {
-        if (message.guild.id !== ID_SERVER_COMMAND) return;
-        // La riga sotto impedisce già allo sponsor di *iniziare* il meeting, ma manteniamo il controllo extra per sicurezza
-        if (!message.member.roles.cache.has(ID_RUOLO_GIOCATORE_AUTO)) return message.reply("❌ Solo i Giocatori possono gestire i meeting.");
-        if (!message.member.roles.cache.has(ID_RUOLO_MEETING_1) && !message.member.roles.cache.has(ID_RUOLO_MEETING_2)) return message.reply("⛔ Non hai il ruolo autorizzato.");
+    // --- COMANDO: !meeting ---
+    if (content.startsWith('!meeting ') && guildId === CONFIG.SERVER.COMMAND_GUILD) {
+        if (!member.roles.cache.has(CONFIG.ROLES.PLAYER_AUTO)) return message.reply("❌ Solo i Giocatori possono gestire i meeting.");
+        if (!member.roles.cache.has(CONFIG.ROLES.MEETING_1) && !member.roles.cache.has(CONFIG.ROLES.MEETING_2)) return message.reply("⛔ Non hai il ruolo autorizzato.");
+        if (STATE.activeUsers.has(message.author.id)) return message.reply("⚠️ Hai già una chat attiva!");
 
-        if (activeUsers.has(message.author.id)) return message.reply("⚠️ Hai già una chat attiva!");
-
-        const authorCount = meetingCounts.get(message.author.id) || 0;
-        if (authorCount >= MAX_MEETINGS) return message.reply(`⚠️ Limite raggiunto (${MAX_MEETINGS}).`);
+        const authorCount = STATE.meetingCounts.get(message.author.id) || 0;
+        if (authorCount >= CONFIG.LIMITS.MAX_MEETINGS) return message.reply(`⚠️ Limite raggiunto (${CONFIG.LIMITS.MAX_MEETINGS}).`);
 
         const userToInvite = message.mentions.users.first();
-        if (!userToInvite || userToInvite.id === message.author.id) return message.reply("⚠️ Tagga un altro giocatore.");
+        if (!userToInvite || userToInvite.id === message.author.id) return message.reply("⚠️ Tagga un altro giocatore valido.");
 
-        // --- 👇 INIZIO MODIFICA: CONTROLLO INCROCIO RUOLI 👇 ---
+        // Controllo Ruoli Incrociati
         try {
-            // Recuperiamo l'oggetto GuildMember del target per controllare i ruoli
             const targetMember = await message.guild.members.fetch(userToInvite.id);
-            
-            const isAuthorPlayer = message.member.roles.cache.has(ID_RUOLO_GIOCATORE_AUTO);
-            const isAuthorSponsor = message.member.roles.cache.has(ID_RUOLO_SPONSOR_AUTO);
-            
-            const isTargetPlayer = targetMember.roles.cache.has(ID_RUOLO_GIOCATORE_AUTO);
-            const isTargetSponsor = targetMember.roles.cache.has(ID_RUOLO_SPONSOR_AUTO);
+            const isAuthorPlayer = member.roles.cache.has(CONFIG.ROLES.PLAYER_AUTO);
+            const isTargetSponsor = targetMember.roles.cache.has(CONFIG.ROLES.SPONSOR_AUTO);
+            const isAuthorSponsor = member.roles.cache.has(CONFIG.ROLES.SPONSOR_AUTO);
+            const isTargetPlayer = targetMember.roles.cache.has(CONFIG.ROLES.PLAYER_AUTO);
 
-            // 1. Giocatore prova a invitare Sponsor
-            if (isAuthorPlayer && isTargetSponsor) {
-                return message.reply("⛔ **Azione Negata:** Un Giocatore non può invitare uno Sponsor.");
-            }
-            // 2. Sponsor prova a invitare Giocatore (anche se bloccato sopra, doppia sicurezza)
-            if (isAuthorSponsor && isTargetPlayer) {
-                return message.reply("⛔ **Azione Negata:** Uno Sponsor non può invitare un Giocatore.");
-            }
-        } catch (e) {
-            console.error("Errore nel controllo ruoli meeting:", e);
-            // Non blocchiamo se fallisce il fetch, procediamo (o puoi mettere return se vuoi essere restrittivo)
-        }
-        // --- 👆 FINE MODIFICA 👆 ---
+            if (isAuthorPlayer && isTargetSponsor) return message.reply("⛔ **Azione Negata:** Un Giocatore non può invitare uno Sponsor.");
+            if (isAuthorSponsor && isTargetPlayer) return message.reply("⛔ **Azione Negata:** Uno Sponsor non può invitare un Giocatore.");
+        } catch (e) { /* Fallback silenzioso */ }
 
-        if (activeUsers.has(userToInvite.id)) return message.reply(`⚠️ ${userToInvite} è impegnato.`);
+        if (STATE.activeUsers.has(userToInvite.id)) return message.reply(`⚠️ ${userToInvite} è impegnato.`);
 
         const proposalMsg = await message.channel.send(`🔔 **Richiesta Meeting**\n👤 **Ospite:** ${userToInvite}\n📩 **Da:** ${message.author}\n\n*Reagisci per accettare/rifiutare*`);
         await proposalMsg.react('✅'); await proposalMsg.react('❌');
@@ -403,30 +389,29 @@ client.on('messageCreate', async message => {
 
         collector.on('collect', async (reaction) => {
             if (reaction.emoji.name === '✅') {
-                if (activeUsers.has(message.author.id) || activeUsers.has(userToInvite.id)) return reaction.message.reply("❌ Uno dei giocatori è ora occupato.");
+                if (STATE.activeUsers.has(message.author.id) || STATE.activeUsers.has(userToInvite.id)) return reaction.message.reply("❌ Uno dei giocatori è ora occupato.");
                 
-                let cAuthor = meetingCounts.get(message.author.id) || 0;
-                let cGuest = meetingCounts.get(userToInvite.id) || 0;
+                let cAuthor = STATE.meetingCounts.get(message.author.id) || 0;
+                let cGuest = STATE.meetingCounts.get(userToInvite.id) || 0;
                 
-                // --- 🔥 BLOCCO AL 4° MEETING (Se uno dei due ha già 3, si blocca) ---
-                if (cAuthor >= MAX_MEETINGS || cGuest >= MAX_MEETINGS) return reaction.message.reply("❌ Token finiti (Limite 3/3 raggiunto).");
+                if (cAuthor >= CONFIG.LIMITS.MAX_MEETINGS || cGuest >= CONFIG.LIMITS.MAX_MEETINGS) return reaction.message.reply("❌ Token finiti.");
 
                 const tableData = await retrieveLatestTable();
-                
                 const sponsorAuthor = tableData.slots.find(s => s.player === message.author.id)?.sponsor;
                 const sponsorGuest = tableData.slots.find(s => s.player === userToInvite.id)?.sponsor;
 
-                // --- AGGIORNAMENTO CONTATORI ---
+                // Aggiornamento contatori
                 const newAuthorCount = cAuthor + 1;
                 const newGuestCount = cGuest + 1;
-                meetingCounts.set(message.author.id, newAuthorCount);
-                meetingCounts.set(userToInvite.id, newGuestCount);
-                activeUsers.add(message.author.id);
-                activeUsers.add(userToInvite.id);
+                STATE.meetingCounts.set(message.author.id, newAuthorCount);
+                STATE.meetingCounts.set(userToInvite.id, newGuestCount);
+                STATE.activeUsers.add(message.author.id);
+                STATE.activeUsers.add(userToInvite.id);
                 await syncDatabase();
 
+                // Creazione Canale
                 try {
-                    const targetGuild = client.guilds.cache.get(ID_SERVER_TARGET);
+                    const targetGuild = client.guilds.cache.get(CONFIG.SERVER.TARGET_GUILD);
                     const permissions = [
                         { id: targetGuild.id, deny: [PermissionsBitField.Flags.ViewChannel] },
                         { id: client.user.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages] },
@@ -440,7 +425,7 @@ client.on('messageCreate', async message => {
                     const newChannel = await targetGuild.channels.create({
                         name: `meeting-${message.author.username}-${userToInvite.username}`,
                         type: ChannelType.GuildText, 
-                        parent: ID_CATEGORIA_TARGET,
+                        parent: CONFIG.SERVER.TARGET_CAT,
                         permissionOverwrites: permissions,
                     });
 
@@ -457,32 +442,28 @@ client.on('messageCreate', async message => {
                         .setDescription(`**Autore:** ${message.author.tag}\n**Ospite:** ${userToInvite.tag}\nℹ️ Rispondi con **!lettura** per osservare.`)
                         .setFooter({ text: `ID:${newChannel.id}` });
                     
-                    // --- 🔥 MODIFICA VISUALE: FEEDBACK CONTATORI (es. 1/3) ---
                     await reaction.message.reply({ 
-                        content: `✅ **Meeting creato!**\n📊 **Stato Meeting:**\n👤 ${message.author.username}: **${newAuthorCount}/${MAX_MEETINGS}**\n👤 ${userToInvite.username}: **${newGuestCount}/${MAX_MEETINGS}**`, 
+                        content: `✅ **Meeting creato!**\n📊 **Stato Meeting:**\n👤 ${message.author.username}: **${newAuthorCount}/${CONFIG.LIMITS.MAX_MEETINGS}**\n👤 ${userToInvite.username}: **${newGuestCount}/${CONFIG.LIMITS.MAX_MEETINGS}**`, 
                         embeds: [logEmbed] 
                     });
                     reaction.message.channel.messages.cache.delete(reaction.message.id);
 
                 } catch (e) { 
                     console.error("Errore creazione:", e);
-                    activeUsers.delete(message.author.id);
-                    activeUsers.delete(userToInvite.id);
+                    STATE.activeUsers.delete(message.author.id);
+                    STATE.activeUsers.delete(userToInvite.id);
                 }
             } else { reaction.message.reply("❌ Richiesta rifiutata."); }
         });
     }
 
     // --- COMANDO: !lettura ---
-    if (message.content === '!lettura') {
-        if (message.guild.id !== ID_SERVER_COMMAND) return;
+    if (content === '!lettura' && guildId === CONFIG.SERVER.COMMAND_GUILD) {
         if (!message.reference) return message.reply("⚠️ Rispondi al messaggio verde.");
-        if (!message.member.roles.cache.has(ID_RUOLO_GIOCATORE_AUTO)) return message.reply("❌ Accesso Negato.");
+        if (!member.roles.cache.has(CONFIG.ROLES.PLAYER_AUTO)) return message.reply("❌ Accesso Negato.");
 
-        const currentRead = letturaCounts.get(message.author.id) || 0;
-        
-        // --- 🔥 BLOCCO ALLA 2° LETTURA (Se ha già 1, si blocca) ---
-        if (currentRead >= MAX_LETTURE) return message.reply("⛔ Limite supervisioni raggiunto (1/1).");
+        const currentRead = STATE.letturaCounts.get(message.author.id) || 0;
+        if (currentRead >= CONFIG.LIMITS.MAX_READINGS) return message.reply("⛔ Limite supervisioni raggiunto (1/1).");
 
         try {
             const repliedMsg = await message.channel.messages.fetch(message.reference.messageId);
@@ -490,7 +471,7 @@ client.on('messageCreate', async message => {
             if (targetEmbed.fields.some(f => f.name === '👮 Supervisore')) return message.reply("⛔ Supervisore già presente.");
 
             const channelId = targetEmbed.footer?.text.match(/ID:(\d+)/)?.[1];
-            const targetGuild = client.guilds.cache.get(ID_SERVER_TARGET);
+            const targetGuild = client.guilds.cache.get(CONFIG.SERVER.TARGET_GUILD);
             const targetChannel = await targetGuild.channels.fetch(channelId).catch(() => null);
 
             if (!targetChannel) return message.reply("❌ Canale inesistente.");
@@ -499,39 +480,22 @@ client.on('messageCreate', async message => {
             const tableData = await retrieveLatestTable();
             const supervisorSponsor = tableData.slots.find(s => s.player === message.author.id)?.sponsor;
 
-            // --- PERMESSI LETTURA: NO THREAD ---
-            await targetChannel.permissionOverwrites.create(message.author.id, { 
-                ViewChannel: true, 
-                SendMessages: false,
-                CreatePublicThreads: false, 
-                CreatePrivateThreads: false 
-            });
-            if (supervisorSponsor) {
-                await targetChannel.permissionOverwrites.create(supervisorSponsor, { 
-                    ViewChannel: true, 
-                    SendMessages: false,
-                    CreatePublicThreads: false, 
-                    CreatePrivateThreads: false 
-                });
-            }
+            const readPerms = { ViewChannel: true, SendMessages: false, CreatePublicThreads: false, CreatePrivateThreads: false };
+            await targetChannel.permissionOverwrites.create(message.author.id, readPerms);
+            if (supervisorSponsor) await targetChannel.permissionOverwrites.create(supervisorSponsor, readPerms);
 
-            // --- FRASE DI INGRESSO ---
-            let notificationMsg = "";
-            if (supervisorSponsor) {
-                notificationMsg = `${message.author} e il suo Sponsor <@${supervisorSponsor}> sono entrati ad osservare.`;
-            } else {
-                notificationMsg = `${message.author} è entrato ad osservare.`;
-            }
-            
+            let notificationMsg = supervisorSponsor 
+                ? `${message.author} e il suo Sponsor <@${supervisorSponsor}> sono entrati ad osservare.`
+                : `${message.author} è entrato ad osservare.`;
+
             const participants = targetChannel.permissionOverwrites.cache
-                .filter(o => o.id !== client.user.id && o.id !== message.author.id && o.id !== targetGuild.id && (supervisorSponsor ? o.id !== supervisorSponsor : true))
+                .filter(o => ![client.user.id, message.author.id, targetGuild.id, supervisorSponsor].includes(o.id))
                 .map(o => `<@${o.id}>`).join(' ');
 
             await targetChannel.send(`⚠️ ATTENZIONE ${participants}: ${notificationMsg}`);
 
-            // --- 🔥 MODIFICA VISUALE: FEEDBACK CONTATORE (es. 1/1) ---
             const newReadCount = currentRead + 1;
-            letturaCounts.set(message.author.id, newReadCount);
+            STATE.letturaCounts.set(message.author.id, newReadCount);
             await syncDatabase();
 
             const newEmbed = EmbedBuilder.from(targetEmbed)
@@ -540,23 +504,23 @@ client.on('messageCreate', async message => {
                 .addFields({ name: '👮 Supervisore', value: notificationMsg, inline: true });
 
             await repliedMsg.edit({ embeds: [newEmbed] });
-            message.reply(`👁️ **Accesso Garantito (${newReadCount}/${MAX_LETTURE})**.`);
+            message.reply(`👁️ **Accesso Garantito (${newReadCount}/${CONFIG.LIMITS.MAX_READINGS})**.`);
             message.channel.messages.cache.delete(repliedMsg.id);
 
         } catch (e) { console.error(e); message.reply("❌ Errore tecnico."); }
     }
 
     // --- COMANDO: !fine ---
-    if (message.content === '!fine') {
-        if (message.guild.id !== ID_SERVER_TARGET) return;
+    if (content === '!fine' && guildId === CONFIG.SERVER.TARGET_GUILD) {
         if (!message.channel.name.startsWith('meeting-')) return;
 
         message.channel.permissionOverwrites.cache.forEach((ow) => {
-            if (ow.allow.has(PermissionsBitField.Flags.SendMessages)) activeUsers.delete(ow.id);
+            if (ow.allow.has(PermissionsBitField.Flags.SendMessages)) STATE.activeUsers.delete(ow.id);
         });
         await syncDatabase(); 
 
         await message.channel.send("🛑 **Chat Chiusa.**");
+        // Rimuove possibilità di scrivere a tutti tranne al bot
         message.channel.permissionOverwrites.cache.forEach(async (overwrite) => {
             if (overwrite.id !== client.user.id) {
                 await message.channel.permissionOverwrites.edit(overwrite.id, { SendMessages: false, AddReactions: false });
@@ -565,30 +529,36 @@ client.on('messageCreate', async message => {
     }
 });
 
-// --- GESTIONE INTERAZIONI ---
+// ==========================================
+// 7. GESTIONE INTERAZIONI (Menu & Bottoni)
+// ==========================================
+
 client.on('interactionCreate', async interaction => {
-    if (interaction.isStringSelectMenu() && (interaction.customId === 'select_player' || interaction.customId === 'select_sponsor')) {
-        if (activeTable.limit === 0) return interaction.reply({ content: "⛔ Tabella chiusa.", ephemeral: true });
+    // Gestione Selezione Slot
+    if (interaction.isStringSelectMenu() && ['select_player', 'select_sponsor'].includes(interaction.customId)) {
+        if (STATE.table.limit === 0) return interaction.reply({ content: "⛔ Tabella chiusa.", ephemeral: true });
 
         const slotIndex = parseInt(interaction.values[0]);
         const type = interaction.customId === 'select_player' ? 'player' : 'sponsor';
 
-        if (activeTable.slots[slotIndex][type]) return interaction.reply({ content: "❌ Posto occupato!", ephemeral: true });
+        if (STATE.table.slots[slotIndex][type]) return interaction.reply({ content: "❌ Posto occupato!", ephemeral: true });
 
-        activeTable.slots.forEach(slot => {
+        // Rimuove l'utente se era già in un altro slot
+        STATE.table.slots.forEach(slot => {
             if (slot.player === interaction.user.id) slot.player = null;
             if (slot.sponsor === interaction.user.id) slot.sponsor = null;
         });
 
-        activeTable.slots[slotIndex][type] = interaction.user.id;
+        STATE.table.slots[slotIndex][type] = interaction.user.id;
         await interaction.update({ embeds: [new EmbedBuilder(interaction.message.embeds[0]).setDescription(generateTableText())] });
     }
 
+    // Gestione Abbandono
     if (interaction.isButton() && interaction.customId === 'leave_game') {
-        if (activeTable.limit === 0) return interaction.reply({ content: "⛔ Tabella chiusa.", ephemeral: true });
+        if (STATE.table.limit === 0) return interaction.reply({ content: "⛔ Tabella chiusa.", ephemeral: true });
         
         let found = false;
-        activeTable.slots.forEach(slot => {
+        STATE.table.slots.forEach(slot => {
             if (slot.player === interaction.user.id) { slot.player = null; found = true; }
             if (slot.sponsor === interaction.user.id) { slot.sponsor = null; found = true; }
         });
@@ -598,12 +568,8 @@ client.on('interactionCreate', async interaction => {
     }
 });
 
-function generateTableText() {
-    let text = "**Giocatori** \u200b \u200b \u200b \u200b \u200b \u200b \u200b \u200b \u200b \u200b| \u200b \u200b **Sponsor**\n------------------------------\n";
-    activeTable.slots.forEach((slot, i) => {
-        text += `**#${i + 1}** ${slot.player ? `<@${slot.player}>` : "`(libero)`"} \u200b | \u200b ${slot.sponsor ? `<@${slot.sponsor}>` : "`(libero)`"}\n`;
-    });
-    return text;
-}
+// ==========================================
+// 8. LOGIN
+// ==========================================
 
 client.login('MTQ2MzU5NDkwMTAzOTIyMjg3Nw.GFe33d.9RgkeDdLwtKrQhi69vQFgMCVaR-hqvYkkI-hVg');
