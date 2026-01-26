@@ -63,7 +63,7 @@ const STATE = {
 // Server Keep-Alive
 http.createServer((req, res) => {
     res.writeHead(200);
-    res.end('Bot is alive - Low Memory Mode v5.4 (Refactored)');
+    res.end('Bot is alive - Low Memory Mode v5.5 (Split Menu Update)');
 }).listen(8000);
 
 // Configurazione Client Discord
@@ -105,6 +105,8 @@ async function syncDatabase() {
             autorole: STATE.isAutoRoleActive 
         });
 
+        // NOTA: Se il JSON supera i 2000 caratteri, questo andrà in errore.
+        // Per 40-50 giocatori è consigliabile monitorare se serve passare all'invio di file.
         const sentMsg = await dbChannel.send(`📦 **BACKUP_DATI**\n\`\`\`json\n${dataString}\n\`\`\``);
         
     } catch (e) { console.error("Errore salvataggio DB:", e); }
@@ -228,11 +230,11 @@ client.on('messageCreate', async message => {
                 { name: '🛑 !fine (Giocatori)', value: 'Chiude la chat privata.' },
                 { name: '👁️ !lettura (Giocatori)', value: 'Supervisione chat attiva.' }, 
                 { name: '🚪 !entrata (Overseer)', value: `Auto-ruolo ingresso (Stato: ${STATE.isAutoRoleActive ? 'ON' : 'OFF'})` },
-                { name: '📋 !tabella [num] (Overseer)', value: 'Crea nuova tabella iscrizioni.' },
+                { name: '📋 !tabella [num] (Overseer)', value: 'Crea nuova tabella iscrizioni (Max 50).' },
                 { name: '🚀 !assegna (Overseer)', value: 'Assegna stanze, ruoli e ARCHIVIA tabella.' },
                 { name: '⚠️ !azzeramento (Overseer)', value: 'Reset totale (meeting + letture).' }
             )
-            .setFooter({ text: 'Sistema v5.4 Refactored' });
+            .setFooter({ text: 'Sistema v5.5 Split-Menu' });
         return message.channel.send({ embeds: [helpEmbed] });
     }
 
@@ -263,7 +265,8 @@ client.on('messageCreate', async message => {
         const args = content.split(' ');
         const num = parseInt(args[1]);
 
-        if (!num || num > 25) return message.reply("Specifica un numero di slot (max 25). Es: `!tabella 10`");
+        // MODIFICA: Limite aumentato a 50
+        if (!num || num > 50) return message.reply("Specifica un numero di slot (max 50). Es: `!tabella 40`");
 
         STATE.table.limit = num;
         STATE.table.slots = Array(num).fill(null).map(() => ({ player: null, sponsor: null }));
@@ -274,19 +277,44 @@ client.on('messageCreate', async message => {
             .setColor('Blue')
             .setFooter({ text: "Usa i menu qui sotto per iscriverti!" });
 
+        // Creazione Opzioni (0 a 49)
         const options = Array.from({ length: num }, (_, i) => ({ label: `Numero ${i + 1}`, value: `${i}` }));
 
-        const rowPlayer = new ActionRowBuilder().addComponents(
-            new StringSelectMenuBuilder().setCustomId('select_player').setPlaceholder('👤 Seleziona Slot Giocatore').addOptions(options)
-        );
-        const rowSponsor = new ActionRowBuilder().addComponents(
-            new StringSelectMenuBuilder().setCustomId('select_sponsor').setPlaceholder('💰 Seleziona Slot Sponsor').addOptions(options)
-        );
-        const rowButton = new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId('leave_game').setLabel('🏃 Abbandona Gioco').setStyle(ButtonStyle.Danger)
-        );
+        const components = [];
 
-        const sentMsg = await message.channel.send({ embeds: [embed], components: [rowPlayer, rowSponsor, rowButton] });
+        // MODIFICA: Split dei menu Player (Max 25 per menu)
+        const playerOptions1 = options.slice(0, 25);
+        components.push(new ActionRowBuilder().addComponents(
+            new StringSelectMenuBuilder().setCustomId('select_player').setPlaceholder('👤 Giocatori 1-25').addOptions(playerOptions1)
+        ));
+
+        if (num > 25) {
+            const playerOptions2 = options.slice(25, 50);
+            components.push(new ActionRowBuilder().addComponents(
+                new StringSelectMenuBuilder().setCustomId('select_player_2').setPlaceholder(`👤 Giocatori 26-${num}`).addOptions(playerOptions2)
+            ));
+        }
+
+        // MODIFICA: Split dei menu Sponsor
+        const sponsorOptions1 = options.slice(0, 25);
+        components.push(new ActionRowBuilder().addComponents(
+            new StringSelectMenuBuilder().setCustomId('select_sponsor').setPlaceholder('💰 Sponsor 1-25').addOptions(sponsorOptions1)
+        ));
+
+        if (num > 25) {
+            const sponsorOptions2 = options.slice(25, 50);
+            components.push(new ActionRowBuilder().addComponents(
+                new StringSelectMenuBuilder().setCustomId('select_sponsor_2').setPlaceholder(`💰 Sponsor 26-${num}`).addOptions(sponsorOptions2)
+            ));
+        }
+
+        // Bottone Leave
+        components.push(new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId('leave_game').setLabel('🏃 Abbandona Gioco').setStyle(ButtonStyle.Danger)
+        ));
+
+        // Invio messaggio con componenti multipli
+        const sentMsg = await message.channel.send({ embeds: [embed], components: components });
         STATE.table.messageId = sentMsg.id;
     }
 
@@ -326,7 +354,6 @@ client.on('messageCreate', async message => {
                 }
 
                 if (utentiDaSalutare.length > 0) {
-                     // Modifica: "Benvenuto" per 1 utente, "Benvenuti" per più utenti
                      const saluto = utentiDaSalutare.length === 1 ? 'Benvenuto' : 'Benvenuti';
                      await channel.send(`${saluto} ${utentiDaSalutare.join(' e ')}!`);
                 }
@@ -381,6 +408,7 @@ client.on('messageCreate', async message => {
         const proposalMsg = await message.channel.send(`🔔 **Richiesta Meeting**\n👤 **Ospite:** ${userToInvite}\n📩 **Da:** ${message.author}\n\n*Reagisci per accettare/rifiutare*`);
         await proposalMsg.react('✅'); await proposalMsg.react('❌');
 
+        // MODIFICA: Consigliabile ridurre il tempo se si hanno molti utenti per risparmiare RAM (qui è ancora 3h)
         const collector = proposalMsg.createReactionCollector({ 
             filter: (r, u) => ['✅', '❌'].includes(r.emoji.name) && u.id === userToInvite.id, 
             time: 3 * 60 * 60 * 1000, max: 1 
@@ -479,7 +507,6 @@ client.on('messageCreate', async message => {
             const tableData = await retrieveLatestTable();
             const supervisorSponsor = tableData.slots.find(s => s.player === message.author.id)?.sponsor;
 
-            // Modifica: Aggiunto AddReactions: false per impedire reazioni agli osservatori
             const readPerms = { 
                 ViewChannel: true, 
                 SendMessages: false, 
@@ -527,7 +554,6 @@ client.on('messageCreate', async message => {
         await syncDatabase(); 
 
         await message.channel.send("🛑 **Chat Chiusa.**");
-        // Modifica: Rimuove possibilità di scrivere, reagire e creare thread a TUTTI (partecipanti e osservatori)
         message.channel.permissionOverwrites.cache.forEach(async (overwrite) => {
             if (overwrite.id !== client.user.id) {
                 await message.channel.permissionOverwrites.edit(overwrite.id, { 
@@ -546,12 +572,13 @@ client.on('messageCreate', async message => {
 // ==========================================
 
 client.on('interactionCreate', async interaction => {
-    // Gestione Selezione Slot
-    if (interaction.isStringSelectMenu() && ['select_player', 'select_sponsor'].includes(interaction.customId)) {
+    // MODIFICA: Riconoscimento di ID multipli (select_player_2, etc.)
+    if (interaction.isStringSelectMenu() && (interaction.customId.startsWith('select_player') || interaction.customId.startsWith('select_sponsor'))) {
         if (STATE.table.limit === 0) return interaction.reply({ content: "⛔ Tabella chiusa.", ephemeral: true });
 
         const slotIndex = parseInt(interaction.values[0]);
-        const type = interaction.customId === 'select_player' ? 'player' : 'sponsor';
+        // Identifica il tipo basandosi sulla prima parte dell'ID
+        const type = interaction.customId.startsWith('select_player') ? 'player' : 'sponsor';
 
         if (STATE.table.slots[slotIndex][type]) return interaction.reply({ content: "❌ Posto occupato!", ephemeral: true });
 
@@ -583,8 +610,4 @@ client.on('interactionCreate', async interaction => {
 // ==========================================
 // 8. LOGIN
 // ==========================================
-
 client.login('MTQ2MzU5NDkwMTAzOTIyMjg3Nw.GFe33d.9RgkeDdLwtKrQhi69vQFgMCVaR-hqvYkkI-hVg');
-
-
-
