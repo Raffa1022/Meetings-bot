@@ -1,4 +1,5 @@
 const http = require('http');
+const mongoose = require('mongoose'); //
 const { 
     Client, GatewayIntentBits, Partials, Options, PermissionsBitField, 
     ChannelType, EmbedBuilder, ActionRowBuilder, StringSelectMenuBuilder, 
@@ -41,6 +42,26 @@ const CONFIG = {
 };
 
 // ==========================================
+// SETUP MONGODB (Nuova aggiunta)
+// ==========================================
+const MONGO_URI = 'mongodb+srv://raffaelewwo_db_user:1aQhI8Khm1f83IAa@cluster0.7snmgc1.mongodb.net/botDatabase?retryWrites=true&w=majority';
+
+mongoose.connect(MONGO_URI)
+    .then(() => console.log('✅ MongoDB Connesso!'))
+    .catch(err => console.error('❌ Errore MongoDB:', err));
+
+// Schema per salvare esattamente la struttura del tuo STATE
+const botSchema = new mongoose.Schema({
+    id: { type: String, default: 'main' },
+    isAutoRoleActive: Boolean,
+    meetingCounts: Object, // Salveremo le Map come Oggetti
+    letturaCounts: Object,
+    activeUsers: Array,    // Salveremo il Set come Array
+    table: Object
+});
+const BotModel = mongoose.model('BotData', botSchema);
+
+// ==========================================
 // 2. STATO DEL BOT (MEMORIA)
 // ==========================================
 
@@ -63,7 +84,7 @@ const STATE = {
 // Server Keep-Alive
 http.createServer((req, res) => {
     res.writeHead(200);
-    res.end('Bot is alive - Low Memory Mode v5.5 (Split Menu Update)');
+    res.end('Bot is alive - MongoDB Edition v5.6');
 }).listen(8000);
 
 // Configurazione Client Discord
@@ -90,80 +111,50 @@ const client = new Client({
 });
 
 // ==========================================
-// 4. GESTIONE DATABASE (Funzioni Helper)
+// 4. GESTIONE DATABASE (Aggiornato per Mongo)
 // ==========================================
 
 async function syncDatabase() {
     try {
-        const dbChannel = await client.channels.fetch(CONFIG.CHANNELS.DATABASE);
-        if (!dbChannel) return console.error("❌ Canale Database non trovato!");
-
-        const dataString = JSON.stringify({
-            meeting: Object.fromEntries(STATE.meetingCounts),
-            lettura: Object.fromEntries(STATE.letturaCounts),
-            active: Array.from(STATE.activeUsers),
-            autorole: STATE.isAutoRoleActive 
-        });
-
-        // NOTA: Se il JSON supera i 2000 caratteri, questo andrà in errore.
-        // Per 40-50 giocatori è consigliabile monitorare se serve passare all'invio di file.
-        const sentMsg = await dbChannel.send(`📦 **BACKUP_DATI**\n\`\`\`json\n${dataString}\n\`\`\``);
-        
-    } catch (e) { console.error("Errore salvataggio DB:", e); }
+        // Invece di mandare un messaggio, salviamo su Mongo
+        await BotModel.findOneAndUpdate(
+            { id: 'main' },
+            {
+                isAutoRoleActive: STATE.isAutoRoleActive,
+                meetingCounts: Object.fromEntries(STATE.meetingCounts), // Converte Map in Oggetto
+                letturaCounts: Object.fromEntries(STATE.letturaCounts),
+                activeUsers: Array.from(STATE.activeUsers),             // Converte Set in Array
+                table: STATE.table
+            },
+            { upsert: true } // Crea se non esiste
+        );
+        // Rimosso il codice che intasava il canale Discord
+    } catch (e) { console.error("Errore salvataggio Mongo:", e); }
 }
 
 async function restoreDatabase() {
     try {
-        const dbChannel = await client.channels.fetch(CONFIG.CHANNELS.DATABASE);
-        if (!dbChannel) return;
-
-        const messages = await dbChannel.messages.fetch({ limit: 20 });
-        const dataMsg = messages.find(m => m.content.includes('BACKUP_DATI'));
+        // Legge da Mongo invece che dal canale
+        const data = await BotModel.findOne({ id: 'main' });
         
-        if (dataMsg) {
-            const jsonStr = dataMsg.content.split('```json\n')[1].split('\n```')[0];
-            const data = JSON.parse(jsonStr);
+        if (data) {
+            STATE.isAutoRoleActive = data.isAutoRoleActive;
             
-            STATE.meetingCounts.clear();
-            Object.entries(data.meeting || {}).forEach(([id, val]) => STATE.meetingCounts.set(id, val));
-            
-            STATE.letturaCounts.clear();
-            Object.entries(data.lettura || {}).forEach(([id, val]) => STATE.letturaCounts.set(id, val));
-            
-            STATE.activeUsers.clear();
-            (data.active || []).forEach(id => STATE.activeUsers.add(id));
+            // Ripristina Map e Set
+            STATE.meetingCounts = new Map(Object.entries(data.meetingCounts || {}));
+            STATE.letturaCounts = new Map(Object.entries(data.letturaCounts || {}));
+            STATE.activeUsers = new Set(data.activeUsers || []);
+            STATE.table = data.table || { limit: 0, slots: [], messageId: null };
 
-            if (data.autorole !== undefined) STATE.isAutoRoleActive = data.autorole;
-            
-            console.log(`✅ Database ripristinato.`);
+            console.log(`✅ Database MongoDB ripristinato.`);
         }
-        
-        // Pulizia vecchi backup
-        messages.forEach(m => {
-            if(m.content.includes('BACKUP_DATI') && m.id !== dataMsg?.id) {
-                dbChannel.messages.delete(m.id).catch(() => {});
-            }
-        }); 
-    } catch (e) { console.log("ℹ️ Nessun backup trovato o errore restore.", e); }
+    } catch (e) { console.log("ℹ️ Errore restore Mongo:", e); }
 }
 
 async function retrieveLatestTable() {
-    if (STATE.table.limit > 0 && STATE.table.slots.length > 0) return STATE.table;
-    
-    try {
-        const dbChannel = await client.channels.fetch(CONFIG.CHANNELS.DATABASE);
-        if (!dbChannel) return { slots: [] };
-
-        const messages = await dbChannel.messages.fetch({ limit: 30 });
-        const archiveMsg = messages.find(m => m.content.includes('ARCHIVIO_TABELLA'));
-
-        if (archiveMsg) {
-            const jsonStr = archiveMsg.content.split('```json\n')[1].split('\n```')[0];
-            const data = JSON.parse(jsonStr);
-            if (data.tableBackup) return data.tableBackup;
-        }
-    } catch (e) { console.error("Errore recupero tabella:", e); }
-    return { slots: [] }; 
+    // Helper semplice: restituisce la tabella attuale in memoria (che è sincronizzata con Mongo)
+    // Non serve più cercare messaggi vecchi "ARCHIVIO_TABELLA"
+    return STATE.table;
 }
 
 function generateTableText() {
