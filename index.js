@@ -4,7 +4,7 @@ const { Client, GatewayIntentBits, Partials, Options, PermissionsBitField, Chann
 // --- 1. SERVER KEEP-ALIVE ---
 http.createServer((req, res) => {
     res.writeHead(200);
-    res.end('Bot is alive - Low Memory Mode v5.3 (Fix Counters Display)');
+    res.end('Bot is alive - Low Memory Mode v5.4 (Unified Commands & Grammar Fixes)');
 }).listen(8000);
 
 // --- 2. CONFIGURAZIONE CLIENT OTTIMIZZATA ---
@@ -212,11 +212,10 @@ client.on('messageCreate', async message => {
                 { name: '👁️ !lettura (Giocatori)', value: 'Supervisione chat attiva.' }, 
                 { name: '🚪 !entrata (Overseer)', value: `Auto-ruolo ingresso (Stato: ${isAutoRoleActive ? 'ON' : 'OFF'})` },
                 { name: '📋 !tabella [num] (Overseer)', value: 'Crea nuova tabella iscrizioni.' },
-                { name: '🚀 !assegna (Overseer)', value: 'Assegna stanze e ruoli.' },
-                { name: '🔒 !chiusura (Overseer)', value: 'Archivia tabella nel DB.' },
-                { name: '⚠️ !azzeramento1 / !azzeramento2', value: 'Reset meeting / Reset letture.' }
+                { name: '🚀 !assegna (Overseer)', value: 'Assegna stanze, ruoli e ARCHIVIA tabella.' },
+                { name: '⚠️ !azzeramento (Overseer)', value: 'Reset totale (meeting + letture).' }
             )
-            .setFooter({ text: 'Sistema v5.3 - Fix Counters Display' });
+            .setFooter({ text: 'Sistema v5.4 - Unified Commands & Grammar Fixes' });
 
         return message.channel.send({ embeds: [helpEmbed] });
     }
@@ -231,23 +230,18 @@ client.on('messageCreate', async message => {
         message.reply(`🚪 **Auto-Ruolo Ingressi:** ${stato}.`);
     }
 
-    // --- !azzeramento1 ---
-    if (message.content === '!azzeramento1') {
+    // --- !azzeramento (UNIFICATO) ---
+    if (message.content === '!azzeramento') {
         if (message.guild.id !== ID_SERVER_COMMAND) return;
         if (!message.member.roles.cache.has(ID_RUOLO_RESET)) return message.reply("⛔ Non hai i permessi.");
+        
+        // Reset di tutto
         meetingCounts.clear();
         activeUsers.clear(); 
-        await syncDatabase();
-        return message.reply("♻️ Conteggio **Meeting** azzerato e utenti sbloccati.");
-    }
-
-    // --- !azzeramento2 ---
-    if (message.content === '!azzeramento2') {
-        if (message.guild.id !== ID_SERVER_COMMAND) return;
-        if (!message.member.roles.cache.has(ID_RUOLO_RESET)) return message.reply("⛔ Non hai i permessi.");
         letturaCounts.clear();
+        
         await syncDatabase();
-        return message.reply("♻️ Conteggio **Letture** azzerato per tutti.");
+        return message.reply("♻️ **Reset Completo effettuato:** Conteggio Meeting, Letture e Stati Utenti azzerati.");
     }
 
     // --- COMANDO: !tabella ---
@@ -289,17 +283,18 @@ client.on('messageCreate', async message => {
         activeTable.messageId = sentMsg.id;
     }
 
-    // --- COMANDO: !assegna ---
+    // --- COMANDO: !assegna (UNIFICATO CON CHIUSURA) ---
     if (message.content === '!assegna') {
         if (message.guild.id !== ID_SERVER_COMMAND) return;
         if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) return;
         if (activeTable.limit === 0) return message.reply("⚠️ Nessuna tabella attiva in memoria.");
 
-        await message.reply("⏳ **Inizio configurazione Stanze e Ruoli...**");
+        await message.reply("⏳ **Inizio configurazione e archiviazione...**");
 
         const category = message.guild.channels.cache.get(ID_CATEGORIA_CHAT_RUOLO);
         let assegnati = 0;
 
+        // 1. ASSEGNAZIONE
         for (let i = 0; i < activeTable.limit; i++) {
             const slot = activeTable.slots[i];
             const channelName = `${i + 1}`; 
@@ -326,20 +321,19 @@ client.on('messageCreate', async message => {
                     try { (await message.guild.members.fetch(slot.sponsor)).roles.add(ID_RUOLO_SPONSOR_AUTO); } catch (e) {}
                 }
 
+                // LOGICA BENVENUTO MIGLIORATA
                 if (utentiDaSalutare.length > 0) {
-                    await channel.send(`Benvenuti ${utentiDaSalutare.join(' ')}!`);
+                    if (utentiDaSalutare.length === 1) {
+                         await channel.send(`Benvenuto ${utentiDaSalutare[0]}!`);
+                    } else {
+                         await channel.send(`Benvenuti ${utentiDaSalutare.join(' e ')}!`);
+                    }
                 }
                 assegnati++;
             }
         }
-        await message.channel.send(`✅ **Operazione completata!** Stanze configurate: ${assegnati}.`);
-    }
 
-    // --- COMANDO: !chiusura ---
-    if (message.content === '!chiusura') {
-        if (message.guild.id !== ID_SERVER_COMMAND) return;
-        if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) return;
-
+        // 2. CHIUSURA / ARCHIVIAZIONE
         const dbChannel = await client.channels.fetch(ID_CANALE_DATABASE);
         if (dbChannel) {
             const dataToArchive = {
@@ -354,7 +348,7 @@ client.on('messageCreate', async message => {
         }
 
         activeTable = { limit: 0, slots: [], messageId: null };
-        message.reply("🔒 **Tabella archiviata nel DB e memoria locale resettata.**");
+        await message.channel.send(`✅ **Operazione completata!**\n- Stanze configurate: ${assegnati}\n- Tabella archiviata nel DB\n- Memoria locale resettata.`);
     }
 
     // --- COMANDO: !meeting (CON MODIFICA RICHIESTA) ---
@@ -505,19 +499,35 @@ client.on('messageCreate', async message => {
             const tableData = await retrieveLatestTable();
             const supervisorSponsor = tableData.slots.find(s => s.player === message.author.id)?.sponsor;
 
-            await targetChannel.permissionOverwrites.create(message.author.id, { ViewChannel: true, SendMessages: false });
+            // --- PERMESSI LETTURA: NO THREAD ---
+            await targetChannel.permissionOverwrites.create(message.author.id, { 
+                ViewChannel: true, 
+                SendMessages: false,
+                CreatePublicThreads: false, 
+                CreatePrivateThreads: false 
+            });
             if (supervisorSponsor) {
-                await targetChannel.permissionOverwrites.create(supervisorSponsor, { ViewChannel: true, SendMessages: false });
+                await targetChannel.permissionOverwrites.create(supervisorSponsor, { 
+                    ViewChannel: true, 
+                    SendMessages: false,
+                    CreatePublicThreads: false, 
+                    CreatePrivateThreads: false 
+                });
             }
 
-            let supervisorText = `${message.author}`;
-            if (supervisorSponsor) supervisorText += ` e il suo Sponsor <@${supervisorSponsor}>`;
+            // --- FRASE DI INGRESSO ---
+            let notificationMsg = "";
+            if (supervisorSponsor) {
+                notificationMsg = `${message.author} e il suo Sponsor <@${supervisorSponsor}> sono entrati ad osservare.`;
+            } else {
+                notificationMsg = `${message.author} è entrato ad osservare.`;
+            }
             
             const participants = targetChannel.permissionOverwrites.cache
                 .filter(o => o.id !== client.user.id && o.id !== message.author.id && o.id !== targetGuild.id && (supervisorSponsor ? o.id !== supervisorSponsor : true))
                 .map(o => `<@${o.id}>`).join(' ');
 
-            await targetChannel.send(`⚠️ ATTENZIONE ${participants}: ${supervisorText} è entrato per osservare.`);
+            await targetChannel.send(`⚠️ ATTENZIONE ${participants}: ${notificationMsg}`);
 
             // --- 🔥 MODIFICA VISUALE: FEEDBACK CONTATORE (es. 1/1) ---
             const newReadCount = currentRead + 1;
@@ -527,7 +537,7 @@ client.on('messageCreate', async message => {
             const newEmbed = EmbedBuilder.from(targetEmbed)
                 .setColor(0xFFA500)
                 .spliceFields(0, 1, { name: 'Stato', value: '🟠 Supervisionato', inline: true })
-                .addFields({ name: '👮 Supervisore', value: supervisorText, inline: true });
+                .addFields({ name: '👮 Supervisore', value: notificationMsg, inline: true });
 
             await repliedMsg.edit({ embeds: [newEmbed] });
             message.reply(`👁️ **Accesso Garantito (${newReadCount}/${MAX_LETTURE})**.`);
@@ -597,4 +607,3 @@ function generateTableText() {
 }
 
 client.login('MTQ2MzU5NDkwMTAzOTIyMjg3Nw.GFe33d.9RgkeDdLwtKrQhi69vQFgMCVaR-hqvYkkI-hVg');
-
