@@ -179,13 +179,13 @@ client.on('messageCreate', async message => {
             .setTitle('⚙️ Pannello Gestione Bot')
             .setColor(0x2B2D31)
             .addFields(
-                { name: '🔹 !meeting @giocatore', value: 'Invita un giocatore (Sponsor inclusi).' },
-                { name: '🛑 !fine', value: 'Chiude la chat.' },
-                { name: '👁️ !lettura', value: 'Supervisione (Sponsor incluso).' }, 
-                { name: '🚪 !entrata', value: `Auto-ruolo (Stato: ${data.isAutoRoleActive ? 'ON' : 'OFF'})` },
-                { name: '📋 !tabella [num]', value: 'Crea tabella iscrizioni.' },
-                { name: '🚀 !assegna', value: 'Assegna ruoli/stanze e salva gioco.' },
-                { name: '⚠️ !azzeramento', value: 'Reset totale database.' }
+                { name: '🔹 !meeting @giocatore (Giocatori)', value: 'Invita un giocatore. Sponsor inclusi.' },
+                { name: '🛑 !fine (Giocatori)', value: 'Chiude la chat.' },
+                { name: '👁️ !lettura (Giocatori)', value: 'Supervisione. Sponsor inclusi.' }, 
+                { name: '🚪 !entrata (Overseer)', value: `Auto-ruolo (Stato: ${data.isAutoRoleActive ? 'ON' : 'OFF'})` },
+                { name: '📋 !tabella [num] (Overseer)', value: 'Crea tabella iscrizioni.' },
+                { name: '🚀 !assegna (Overseer)', value: 'Assegna ruoli/stanze e salva gioco.' },
+                { name: '⚠️ !azzeramento (Overseer)', value: 'Reset totale conteggi meeting/lettura' }
             )
             .setFooter({ text: 'Sistema Mongo-Only' });
         return message.channel.send({ embeds: [helpEmbed] });
@@ -204,15 +204,13 @@ client.on('messageCreate', async message => {
     if (content === '!azzeramento' && guildId === CONFIG.SERVER.COMMAND_GUILD) {
         if (!member.roles.cache.has(CONFIG.ROLES.RESET)) return message.reply("⛔ Non hai i permessi.");
         
+        // MODIFICA: Ora azzera SOLO meetingCounts e letturaCounts, mantenendo il resto del DB intatto
         await BotModel.findOneAndUpdate({ id: 'main' }, {
             meetingCounts: {},
-            letturaCounts: {},
-            activeUsers: [],
-            activeGameSlots: [],
-            table: { limit: 0, slots: [], messageId: null }
+            letturaCounts: {}
         });
         
-        return message.reply("♻️ **Reset Completo effettuato nel Database.**");
+        return message.reply("♻️ **Reset effettuato:** Conteggi Meeting e Letture azzerati.");
     }
 
     // --- COMANDO: !tabella (Admin) ---
@@ -565,4 +563,4 @@ client.on('interactionCreate', async interaction => {
 // ==========================================
 // LOGIN
 // ==========================================
-client.login('MTQ2MzU5NDkwMTAzOTIyMjg3Nw.G5f3KX.jSoE3kJ35DzPIAVbigJ6sor0qAgY4c6ukMokJ4');
+client.login(MTQ2MzU5NDkwMTAzOTIyMjg3Nw.G5f3KX.jSoE3kJ35DzPIAVbigJ6sor0qAgY4c6ukMokJ4);
