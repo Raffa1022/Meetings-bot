@@ -44,7 +44,8 @@ const CONFIG = {
 // ==========================================
 // SETUP MONGODB (Nuova aggiunta)
 // ==========================================
-const MONGO_URI = 'mongodb+srv://raffaelewwo_db_user:1aQhI8Khm1f83IAa@cluster0.7snmgc1.mongodb.net/botDatabase?retryWrites=true&w=majority';
+// MODIFICA: Ora prende la password in sicurezza dalle impostazioni di Koyeb
+const MONGO_URI = process.env.MONGO_URI;
 
 mongoose.connect(MONGO_URI)
     .then(() => console.log('✅ MongoDB Connesso!'))
