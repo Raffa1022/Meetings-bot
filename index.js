@@ -4,7 +4,7 @@ const { Client, GatewayIntentBits, Partials, Options, PermissionsBitField, Chann
 // --- 1. SERVER KEEP-ALIVE ---
 http.createServer((req, res) => {
     res.writeHead(200);
-    res.end('Bot is alive - Low Memory Mode v5.1 (Fix Cross-Role Check)');
+    res.end('Bot is alive - Low Memory Mode v5.2 (Fix Impostazioni GUI)');
 }).listen(8000);
 
 // --- 2. CONFIGURAZIONE CLIENT OTTIMIZZATA ---
@@ -61,12 +61,12 @@ const ID_CANALE_BENVENUTO = '1460740888450830501';
 // --- 🆕 NUOVO ID PER AUTO-JOIN (RUOLO ALL'INGRESSO STANDARD) ---
 const ID_RUOLO_AUTO_JOIN = '1460741402672758814'; 
 
-// --- 🔢 VARIABILI MEMORIA ---
+// --- 🔢 VARIABILI MEMORIA (Limiti impostati qui) ---
 const meetingCounts = new Map(); 
 const letturaCounts = new Map(); 
 const activeUsers = new Set(); 
-const MAX_MEETINGS = 3;
-const MAX_LETTURE = 1;
+const MAX_MEETINGS = 3; // Massimo 3 meeting
+const MAX_LETTURE = 1;  // Massima 1 lettura
 
 // Variabile stato Auto-Ruolo (False = spento di default)
 let isAutoRoleActive = false;
@@ -207,16 +207,16 @@ client.on('messageCreate', async message => {
             .setTitle('⚙️ Pannello Gestione Bot')
             .setColor(0x2B2D31)
             .addFields(
-                { name: '🔹 !meeting @giocatore', value: 'Invita un altro giocatore.' },
-                { name: '🛑 !fine', value: 'Chiude la chat privata.' },
-                { name: '👁️ !lettura', value: 'Supervisione chat attiva.' }, 
+                { name: '🔹 !meeting @giocatore (Giocatori)', value: 'Invita un altro giocatore.' },
+                { name: '🛑 !fine (Giocatori)', value: 'Chiude la chat privata.' },
+                { name: '👁️ !lettura (Giocatori)', value: 'Supervisione chat attiva.' }, 
                 { name: '🚪 !entrata (Overseer)', value: `Auto-ruolo ingresso (Stato: ${isAutoRoleActive ? 'ON' : 'OFF'})` },
                 { name: '📋 !tabella [num] (Overseer)', value: 'Crea nuova tabella iscrizioni.' },
                 { name: '🚀 !assegna (Overseer)', value: 'Assegna stanze e ruoli.' },
                 { name: '🔒 !chiusura (Overseer)', value: 'Archivia tabella nel DB.' },
                 { name: '⚠️ !azzeramento1 / !azzeramento2', value: 'Reset meeting / Reset letture.' }
             )
-            .setFooter({ text: 'Sistema v5.1 - Fix Cross-Role' });
+            .setFooter({ text: 'Sistema v5.2 - Fix Cross-Role & GUI' });
 
         return message.channel.send({ embeds: [helpEmbed] });
     }
