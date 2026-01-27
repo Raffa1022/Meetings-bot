@@ -45,7 +45,7 @@ const pendingKnocks = new Map();
 
 const PREFIX = '!';
 const OVERSEER_ROLE_ID = '1460741401435181295'; // ⚠️ IMPORTANTE
-};
+
 // ==========================================
 // SETUP MONGODB (Database Unico)
 // ==========================================
@@ -194,12 +194,14 @@ client.on('messageCreate', async message => {
     const member = message.member;
     const guildId = message.guild.id;
     const isAdmin = member?.permissions.has(PermissionsBitField.Flags.Administrator);
+    
     //--- COMANDI OVERSEER
-     if (message.author.bot || !message.content.startsWith(PREFIX)) return;
+    if (message.author.bot || !message.content.startsWith(PREFIX)) return;
 
     const args = message.content.slice(PREFIX.length).trim().split(/ +/);
     const command = args.shift().toLowerCase();
- // SEZIONE: AMMINISTRAZIONE (OVERSEER)
+    
+    // SEZIONE: AMMINISTRAZIONE (OVERSEER)
     // ==========================================
 
     /**
@@ -266,6 +268,7 @@ client.on('messageCreate', async message => {
         message.reply(`✅ Visite massime per ${targetUser.username} impostate a **${amount}**.`);
         return;
     }
+    
     // ==========================================
     // COMANDO: !reset (Azzera conteggi per nuovo giorno)
     // ==========================================
@@ -285,7 +288,9 @@ client.on('messageCreate', async message => {
             console.error(err);
             message.reply("❌ Errore durante il reset.");
         }
- // SEZIONE: GIOCATORI (GAMEPLAY)
+    } // <--- QUESTA PARENTESI MANCAVA!
+
+    // SEZIONE: GIOCATORI (GAMEPLAY)
     // ==========================================
 
     /**
@@ -309,7 +314,8 @@ client.on('messageCreate', async message => {
         if (knockerData.usedVisits >= knockerData.maxVisits) {
             return message.reply(`⛔ Visite terminate per oggi (${knockerData.usedVisits}/${knockerData.maxVisits}).`);
         }
-  // Recupera canale fisico
+        
+        // Recupera canale fisico
         const targetChannel = client.channels.cache.get(targetHouse.channelId);
         if (!targetChannel) return message.reply("❌ Errore tecnico: Canale casa non trovato.");
 
@@ -343,7 +349,7 @@ client.on('messageCreate', async message => {
             const knockerHome = await House.findOne({ channelId: knockerData.homeChannelId });
             if (knockerHome) knockerSponsorTag = `<@${knockerHome.sponsorId}>`;
         }
-// AGGIORNA DB: Scala visita e cambia posizione
+        // AGGIORNA DB: Scala visita e cambia posizione
         await Player.findOneAndUpdate(
             { userId: knockData.knockerId },
             { $inc: { usedVisits: 1 }, currentChannelId: message.channel.id }
@@ -816,7 +822,3 @@ client.on('interactionCreate', async interaction => {
 // LOGIN
 // ==========================================
 client.login('MTQ2MzU5NDkwMTAzOTIyMjg3Nw.G5f3KX.jSoE3kJ35DzPIAVbigJ6sor0qAgY4c6ukMokJ4');
-
-
-
-
