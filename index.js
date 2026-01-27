@@ -331,5 +331,6 @@ async function movePlayer(member, oldCh, newCh, action) {
 // GLOBAL ERROR HANDLING
 process.on('unhandledRejection', e => console.error('Rejection:', e));
 process.on('uncaughtException', e => console.error('Exception:', e));
-
+const TOKEN =
 client.login('MTQ2MzU5NDkwMTAzOTIyMjg3Nw.GESAgq.BHN1CNeNhQSfnQVs6D0hjnhtVi2GDwCjTTcnQs');
+
