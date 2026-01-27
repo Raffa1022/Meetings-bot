@@ -54,9 +54,7 @@ async function getData(key) {
         const dbMsg = msgs.find(m => m.author.id === client.user.id && m.embeds[0]?.title === '💾 DATABASE GDR');
         if (!dbMsg) return null;
         
-        const content = dbMsg.embeds[0].description.replace(/```(?:json)?
-?|
-?```/g, '');
+        const content = dbMsg.embeds[0].description.replace(/^```(?:json)?s*|s*```$/g, '').trim();
         const data = JSON.parse(content);
         return data[key] ?? null;
     } catch (e) { console.error('Get error:', e); return null; }
@@ -333,6 +331,7 @@ process.on('unhandledRejection', e => console.error('Rejection:', e));
 process.on('uncaughtException', e => console.error('Exception:', e));
 const TOKEN =
 client.login('MTQ2MzU5NDkwMTAzOTIyMjg3Nw.GESAgq.BHN1CNeNhQSfnQVs6D0hjnhtVi2GDwCjTTcnQs');
+
 
 
 
