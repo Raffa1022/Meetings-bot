@@ -20,12 +20,12 @@ const TOKEN = 'MTQ2MzU5NDkwMTAzOTIyMjg3Nw.G2ZqJU.HRxjqWMs2fIwblzW2B2SUXcYhUZ8Bke
 const PREFIX = '!';
 
 // ID UTILI
-const ID_CATEGORIA_PUBBLICA = '1460741412466331799'; 
 const ID_CATEGORIA_CASE = '1460741413388947528';
 const ID_CANALE_DB = '1465768646906220700'; // Canale privato dove il bot salva i dati
 
 // RUOLI CHE POSSONO RISPONDERE AL BUSSARE (ID Ruoli Discord)
 // Inserisci qui gli ID dei ruoli che, se presenti in casa, devono approvare l'ingresso
+// Questi ruoli sono anche quelli abilitati al comando !rimaste
 const RUOLI_PERMESSI = [
     '1460741403331268661', 
     '1460741404497019002', 
@@ -160,7 +160,10 @@ client.on('messageCreate', async message => {
             ]);
 
             message.reply(`✅ Casa assegnata a ${targetUser}.`);
-            targetChannel.send(`🔑 **${targetUser}**, questa è la tua dimora privata.`);
+            
+            // MODIFICA: Messaggio inviato e subito pinnato
+            const pinnedMsg = await targetChannel.send(`🔑 **${targetUser}**, questa è la tua dimora privata.`);
+            await pinnedMsg.pin();
         }
 
         // !setmaxvisite @Utente 5
@@ -189,11 +192,24 @@ client.on('messageCreate', async message => {
         // 👤 COMANDI GIOCATORE
         // ---------------------------------------------------------
 
+        // !rimaste
+        if (command === 'rimaste') {
+            // Verifica se l'utente ha uno dei ruoli permessi
+            if (message.member.roles.cache.hasAny(...RUOLI_PERMESSI)) {
+                const limit = dbCache.maxVisits[message.author.id] || DEFAULT_MAX_VISITS;
+                const used = dbCache.playerVisits[message.author.id] || 0;
+                
+                message.reply(`Visite effettuate ${used}/${limit}`);
+            }
+            // Se non ha i ruoli, il bot ignora (o puoi mettere un return)
+            return;
+        }
+
         if (command === 'torna') {
             message.delete().catch(()=>{}); // CANCELLA SUBITO IL COMANDO
 
             const homeId = dbCache.playerHomes[message.author.id];
-            if (!homeId) return message.reply("❌ Non hai una casa registrata."); // Messaggio effimero ideale, ma reply va bene qui
+            if (!homeId) return message.reply("❌ Non hai una casa registrata."); 
             
             const homeChannel = message.guild.channels.cache.get(homeId);
             if (!homeChannel) return message.reply("❌ La tua casa non esiste più.");
@@ -201,29 +217,6 @@ client.on('messageCreate', async message => {
 
             // Ritorno a casa
             await movePlayer(message.member, message.channel, homeChannel, `🏠 ${message.member} è ritornato.`);
-        }
-
-        if (command === 'viaggio') {
-            // Nota: Viaggio è per luoghi pubblici, non cancelliamo necessariamente il comando qui a meno che non richiesto,
-            // ma per coerenza con bussa/torna spesso si fa. Lascio standard.
-            
-            const canaliPubblici = message.guild.channels.cache.filter(c => 
-                c.parentId === ID_CATEGORIA_PUBBLICA && c.type === ChannelType.GuildText
-            );
-
-            if (canaliPubblici.size === 0) return message.reply("❌ Nessun luogo pubblico trovato.");
-
-            const select = new StringSelectMenuBuilder()
-                .setCustomId('public_travel')
-                .setPlaceholder('Dove vuoi andare?')
-                .addOptions(canaliPubblici.map(c => 
-                    new StringSelectMenuOptionBuilder()
-                        .setLabel(formatName(c.name))
-                        .setValue(c.id)
-                        .setEmoji('🌍')
-                ).slice(0, 25));
-
-            await message.reply({ components: [new ActionRowBuilder().addComponents(select)], ephemeral: true });
         }
 
         if (command === 'bussa') {
@@ -290,9 +283,7 @@ client.on('interactionCreate', async interaction => {
     try {
         // 1. SELEZIONE PAGINA
         if (interaction.customId === 'knock_page_select') {
-            // Nota: Se usiamo message.channel.send sopra (non ephemeral), qui dobbiamo gestire i permessi di chi clicca
             if (interaction.message.content.includes(interaction.user.id) === false && !interaction.message.interaction) {
-                // Controllo blando per evitare che altri usino il menu
                 return interaction.reply({ content: "Non è il tuo menu.", ephemeral: true });
             }
 
@@ -328,38 +319,30 @@ client.on('interactionCreate', async interaction => {
             const targetChannel = interaction.guild.channels.cache.get(targetChannelId);
             const knocker = interaction.member;
 
-            // Ricontrollo Limite
             const userLimit = dbCache.maxVisits[knocker.id] || DEFAULT_MAX_VISITS;
             const used = dbCache.playerVisits[knocker.id] || 0;
             if (used >= userLimit) return interaction.reply({ content: "⛔ Visite finite!", ephemeral: true });
 
             if (!targetChannel) return interaction.reply({ content: "Casa inesistente.", ephemeral: true });
 
-            // BLOCCO PENDING: L'utente sta aspettando risposta da ora
             pendingKnocks.add(knocker.id);
 
-            // Elimina il menu di selezione per pulizia
             await interaction.message.delete().catch(()=>{});
 
-            // 🔍 CONTROLLO CHI È IN CASA
             const membersWithAccess = targetChannel.members.filter(member => 
                 !member.user.bot && 
                 member.id !== knocker.id &&
                 member.roles.cache.hasAny(...RUOLI_PERMESSI)
             );
 
-            // LOGICA DI INGRESSO
             if (membersWithAccess.size === 0) {
-                // --> NESSUNO IN CASA -> ENTRA SUBITO
-                // Sblocco pending
+                // --> NESSUNO IN CASA
                 pendingKnocks.delete(knocker.id);
-
                 await interaction.channel.send({ content: `🔓 La porta è aperta/incustodita. ${knocker} entra...` }).then(m => setTimeout(() => m.delete(), 5000));
-                
                 await enterHouse(knocker, interaction.channel, targetChannel, `👋 **${knocker.displayName}** è entrato.`);
                 
             } else {
-                // --> QUALCUNO È IN CASA -> TOC TOC
+                // --> QUALCUNO È IN CASA
                 await interaction.channel.send({ content: `✊ ${knocker} ha bussato a **${formatName(targetChannel.name)}**. Aspetta una risposta...` });
                 
                 const mentions = membersWithAccess.map(m => m.toString()).join(' ');
@@ -370,7 +353,6 @@ client.on('interactionCreate', async interaction => {
                 await msg.react('✅');
                 await msg.react('❌');
 
-                // Collector
                 const filter = (reaction, user) => {
                     return ['✅', '❌'].includes(reaction.emoji.name) && 
                            membersWithAccess.has(user.id);
@@ -380,35 +362,20 @@ client.on('interactionCreate', async interaction => {
 
                 collector.on('collect', async (reaction, user) => {
                     if (reaction.emoji.name === '✅') {
-                        // APRE
                         msg.edit(`✅ **${user.displayName}** ha aperto la porta.`);
-                        
-                        // Sblocco pending
                         pendingKnocks.delete(knocker.id);
-
-                        // MODIFICA RICHIESTA: Narrazione ingresso con chi ha accettato
                         await enterHouse(knocker, interaction.channel, targetChannel, `👋 **${knocker}** è entrato (accolto da ${user}).`);
                     } else {
-                        // RIFIUTA
                         msg.edit(`❌ **${user.displayName}** ha rifiutato l'ingresso.`);
-                        
-                        // Sblocco pending
                         pendingKnocks.delete(knocker.id);
-                        
-                        // MODIFICA RICHIESTA: Messaggio nel canale del knocker con la lista di TUTTI i presenti
                         const namesList = membersWithAccess.map(m => `${m} `).join(', ');
-                        
-                        await interaction.channel.send(
-                            `⛔ ${knocker}, sei stato rifiutato da ${namesList} (membri presenti in casa).`
-                        );
+                        await interaction.channel.send(`⛔ ${knocker}, sei stato rifiutato da ${namesList} (membri presenti in casa).`);
                     }
                 });
 
                 collector.on('end', async (collected) => {
                     if (collected.size === 0) {
-                        // Timeout -> Entra forzando (o logica a scelta, qui mantengo "forzata" come da script originale)
                         pendingKnocks.delete(knocker.id);
-
                         await targetChannel.send("⏳ Nessuno ha risposto in tempo. La porta viene forzata/aperta.");
                         await enterHouse(knocker, interaction.channel, targetChannel, `👋 **${knocker.displayName}** è entrato (porta forzata).`);
                     }
@@ -416,19 +383,8 @@ client.on('interactionCreate', async interaction => {
             }
         }
 
-        // 3. VIAGGIO
-        if (interaction.customId === 'public_travel') {
-            const target = interaction.guild.channels.cache.get(interaction.values[0]);
-            await interaction.deferReply({ ephemeral: true });
-            
-            // Viaggio pubblico
-            await movePlayer(interaction.member, interaction.channel, target, `👋 **${interaction.member.displayName}** è arrivato.`);
-            await interaction.editReply(`✅ Arrivato.`);
-        }
-
     } catch (error) {
         console.error("Errore interazione:", error);
-        // Pulizia pending in caso di errore
         if (interaction.member) pendingKnocks.delete(interaction.member.id);
     }
 });
@@ -443,7 +399,6 @@ function formatName(name) {
 
 // Funzione unificata per entrare e scalare visite
 async function enterHouse(member, fromChannel, toChannel, entryMessage) {
-    // Aggiorna DB Visite
     const current = dbCache.playerVisits[member.id] || 0;
     dbCache.playerVisits[member.id] = current + 1;
     await saveDB();
@@ -456,14 +411,13 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage) {
 
     // Gestione uscita vecchio canale
     if (oldChannel && oldChannel.id !== newChannel.id) {
-        const myHome = dbCache.playerHomes[member.id];
         
-        // Narrazione uscita nascosta
+        // Narrazione uscita
         oldChannel.send(`🚪 ${member} è uscito.`);
         
-        // MODIFICA RICHIESTA: Quando visiti un'altra casa, vieni rimosso dalla precedente.
-        // Se il canale precedente è una casa privata (Categoria CASE) e NON è casa tua, togli permessi.
-        if (oldChannel.id !== myHome && oldChannel.parentId === ID_CATEGORIA_CASE) {
+        // MODIFICA RICHIESTA: Se il canale di uscita fa parte delle CASE (inclusa la propria), rimuovi i permessi
+        // Così l'utente vede SOLO la nuova casa
+        if (oldChannel.parentId === ID_CATEGORIA_CASE) {
              await oldChannel.permissionOverwrites.delete(member.id).catch(() => console.log("Impossibile togliere permessi o già tolti."));
         }
     }
