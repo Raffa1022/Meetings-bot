@@ -194,7 +194,8 @@ client.on('messageCreate', async message => {
             if (!homeChannel) return message.reply("❌ La tua casa non esiste più.");
             if (message.channel.id === homeId) return message.reply("🏠 Sei già a casa.");
 
-            await movePlayer(message.member, message.channel, homeChannel, "rientra a casa");
+            // Modifica: Passiamo il messaggio specifico per il ritorno a casa
+            await movePlayer(message.member, message.channel, homeChannel, `🏠 ${message.member} è ritornato.`);
             message.delete().catch(()=>{});
         }
 
@@ -227,10 +228,11 @@ client.on('messageCreate', async message => {
                 return message.reply(`⛔ **Sei stanco.** Hai usato tutte le tue ${userLimit} visite per oggi.`);
             }
 
-            // Prendi tutte le case e ordina in modo naturale (Casa 1, Casa 2, Casa 10)
+            // MODIFICA: Ordinamento per rawPosition (posizione nella lista canali) invece che nome
+            // Questo permette di rinominare "casa-10" in "taverna-10" mantenendo l'ordine
             const tutteLeCase = message.guild.channels.cache
                 .filter(c => c.parentId === ID_CATEGORIA_CASE && c.type === ChannelType.GuildText)
-                .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+                .sort((a, b) => a.rawPosition - b.rawPosition); 
 
             if (tutteLeCase.size === 0) return message.reply("❌ Non ci sono case.");
 
@@ -280,9 +282,10 @@ client.on('interactionCreate', async interaction => {
             const pageIndex = parseInt(interaction.values[0].split('_')[1]);
             const PAGE_SIZE = 25;
 
+            // MODIFICA: Anche qui ordinamento per rawPosition per coerenza
             const tutteLeCase = interaction.guild.channels.cache
                 .filter(c => c.parentId === ID_CATEGORIA_CASE && c.type === ChannelType.GuildText)
-                .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+                .sort((a, b) => a.rawPosition - b.rawPosition);
 
             const start = pageIndex * PAGE_SIZE;
             const caseSlice = Array.from(tutteLeCase.values()).slice(start, start + PAGE_SIZE);
@@ -317,10 +320,6 @@ client.on('interactionCreate', async interaction => {
             if (!targetChannel) return interaction.reply({ content: "Casa inesistente.", ephemeral: true });
 
             // 🔍 CONTROLLO CHI È IN CASA
-            // Otteniamo chi ha i permessi di vedere il canale ED è effettivamente presente nella lista membri (o nel canale se voice, ma qui assumiamo text permission + presence generica in gdr)
-            // Nota: Discord non dice se un utente sta "guardando" un canale testuale. 
-            // Controlleremo chi ha il permesso di VIEW_CHANNEL nel canale e possiede uno dei RUOLI_PERMESSI.
-            
             const membersWithAccess = targetChannel.members.filter(member => 
                 !member.user.bot && 
                 member.id !== knocker.id &&
@@ -329,15 +328,15 @@ client.on('interactionCreate', async interaction => {
 
             // LOGICA DI INGRESSO
             if (membersWithAccess.size === 0) {
-                // --> NESSUNO IN CASA (o nessuno coi ruoli giusti) -> ENTRA SUBITO
+                // --> NESSUNO IN CASA -> ENTRA SUBITO
                 await interaction.reply({ content: `🔓 La porta è aperta/incustodita. Entri...`, ephemeral: true });
-                await enterHouse(knocker, interaction.channel, targetChannel, "entra (incustodita)");
+                // Passiamo un messaggio generico di ingresso
+                await enterHouse(knocker, interaction.channel, targetChannel, `👋 **${knocker.displayName}** è entrato.`);
                 
             } else {
                 // --> QUALCUNO È IN CASA -> TOC TOC
                 await interaction.reply({ content: `✊ Hai bussato a **${formatName(targetChannel.name)}**. Aspetta una risposta...`, ephemeral: true });
                 
-                // Tagga solo chi è presente coi ruoli
                 const mentions = membersWithAccess.map(m => m.toString()).join(' ');
                 
                 const msg = await targetChannel.send(
@@ -349,21 +348,20 @@ client.on('interactionCreate', async interaction => {
                 // Collector
                 const filter = (reaction, user) => {
                     return ['✅', '❌'].includes(reaction.emoji.name) && 
-                           membersWithAccess.has(user.id); // Solo chi era dentro coi ruoli può rispondere
+                           membersWithAccess.has(user.id);
                 };
 
-                const collector = msg.createReactionCollector({ filter, time: 300000, max: 1 }); // 5 minuti (300k ms)
+                const collector = msg.createReactionCollector({ filter, time: 300000, max: 1 });
 
                 collector.on('collect', async (reaction, user) => {
                     if (reaction.emoji.name === '✅') {
                         // APRE
                         msg.edit(`✅ **${user.displayName}** ha aperto la porta.`);
-                        await enterHouse(knocker, interaction.channel, targetChannel, "entra (invitato)");
+                        await enterHouse(knocker, interaction.channel, targetChannel, `👋 **${knocker.displayName}** è entrato (accolto da ${user.displayName}).`);
                     } else {
                         // RIFIUTA
                         msg.edit(`❌ **${user.displayName}** ha rifiutato l'ingresso.`);
                         
-                        // Lista di chi c'era dentro (ID Discord e Nomi)
                         const namesList = membersWithAccess.map(m => `${m.displayName} (${m.user.tag})`).join('\n');
                         
                         try {
@@ -376,9 +374,8 @@ client.on('interactionCreate', async interaction => {
 
                 collector.on('end', async (collected) => {
                     if (collected.size === 0) {
-                        // TEMPO SCADUTO -> ENTRA AUTOMATICAMENTE
                         await targetChannel.send("⏳ Nessuno ha risposto in tempo. La porta viene forzata/aperta.");
-                        await enterHouse(knocker, interaction.channel, targetChannel, "entra (tempo scaduto)");
+                        await enterHouse(knocker, interaction.channel, targetChannel, `👋 **${knocker.displayName}** è entrato (porta forzata).`);
                     }
                 });
             }
@@ -388,7 +385,8 @@ client.on('interactionCreate', async interaction => {
         if (interaction.customId === 'public_travel') {
             const target = interaction.guild.channels.cache.get(interaction.values[0]);
             await interaction.deferReply({ ephemeral: true });
-            await movePlayer(interaction.member, interaction.channel, target, "si dirige verso");
+            // Messaggio generico per i luoghi pubblici
+            await movePlayer(interaction.member, interaction.channel, target, `👋 **${interaction.member.displayName}** è arrivato.`);
             await interaction.editReply(`✅ Arrivato.`);
         }
 
@@ -407,23 +405,25 @@ function formatName(name) {
 }
 
 // Funzione unificata per entrare e scalare visite
-async function enterHouse(member, fromChannel, toChannel, narrativeAction) {
+async function enterHouse(member, fromChannel, toChannel, entryMessage) {
     // Aggiorna DB Visite
     const current = dbCache.playerVisits[member.id] || 0;
     dbCache.playerVisits[member.id] = current + 1;
     await saveDB();
 
-    await movePlayer(member, fromChannel, toChannel, narrativeAction);
+    await movePlayer(member, fromChannel, toChannel, entryMessage);
 }
 
-async function movePlayer(member, oldChannel, newChannel, actionText) {
+// MODIFICA: entryMessage è ora il messaggio completo che appare nel NUOVO canale
+async function movePlayer(member, oldChannel, newChannel, entryMessage) {
     if (!member || !newChannel) return;
 
     // Gestione uscita vecchio canale
     if (oldChannel && oldChannel.id !== newChannel.id) {
         const myHome = dbCache.playerHomes[member.id];
         
-        oldChannel.send(`🚶 **${member.displayName}** esce e ${actionText} **${formatName(newChannel.name)}**.`);
+        // MODIFICA: Narrazione uscita nascosta (non dice dove va)
+        oldChannel.send(`🚪 ${member} è uscito.`);
         
         // Toglie permessi se esce da una casa privata non sua
         if (oldChannel.id !== myHome && oldChannel.parentId === ID_CATEGORIA_CASE) {
@@ -434,15 +434,13 @@ async function movePlayer(member, oldChannel, newChannel, actionText) {
     // Gestione entrata nuovo canale
     await newChannel.permissionOverwrites.create(member.id, { ViewChannel: true, SendMessages: true });
 
-    const embed = new EmbedBuilder()
-        .setColor(0x00FF00)
-        .setDescription(`👋 **${member.displayName}** è entrato.`)
+    // MODIFICA: Usa il messaggio di ingresso personalizzato passato dalla funzione chiamante
+    // (es. "è ritornato" per il comando !torna, o "è entrato" per le visite)
+    await newChannel.send(entryMessage);
     
-    await newChannel.send({ embeds: [embed] });
-    // Ping fantasma
+    // Ping fantasma (rimane invariato)
     const p = await newChannel.send(`${member}`);
     setTimeout(() => p.delete(), 500);
 }
 
 client.login(TOKEN);
-
