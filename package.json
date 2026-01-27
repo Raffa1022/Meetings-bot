@@ -1,24 +1,20 @@
 {
-  "name": "roleplay_houses_bot",
-  "version": "7.2.0",
-  "description": "Discord Roleplay Houses Bot v7.2 - No Lobby/Stats, Direct to House",
-  "main": "roleplay_houses_v7.2_NO_LOBBY_CLEAN.js",
+  "name": "bot-gdr-discord",
+  "version": "1.0.0",
+  "description": "Bot per GDR Villaggio",
+  "main": "index.js",
   "scripts": {
-    "start": "node roleplay_houses_v7.2_NO_LOBBY_CLEAN.js",
-    "dev": "nodemon roleplay_houses_v7.2_NO_LOBBY_CLEAN.js"
+    "start": "node index.js"
   },
-  "author": "Roleplay Dev",
+  "keywords": [],
+  "author": "",
   "license": "ISC",
   "dependencies": {
-    "discord.js": "^14.15.3",
-    "mongoose": "^8.6.1"
-  },
-  "devDependencies": {
-    "nodemon": "^3.1.4"
+    "discord.js": "^14.14.1"
   },
   "engines": {
-    "node": ">=20.0.0",
-    "npm": ">=10.0.0"
-  },
-  "packageManager": "npm@10.8.3"
+    "node": ">=16.9.0"
+  }
 }
+
+
