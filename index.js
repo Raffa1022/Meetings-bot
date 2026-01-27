@@ -22,7 +22,7 @@ const PREFIX = '!';
 // ID UTILI
 const ID_CATEGORIA_PUBBLICA = '1460741412466331799'; 
 const ID_CATEGORIA_CASE = '1460741413388947528';
-const ID_CANALE_DB = '1464940718933151839'; // Canale privato dove il bot salva i dati
+const ID_CANALE_DB = '1465768646906220700'; // Canale privato dove il bot salva i dati
 
 // RUOLI CHE POSSONO RISPONDERE AL BUSSARE (ID Ruoli Discord)
 // Inserisci qui gli ID dei ruoli che, se presenti in casa, devono approvare l'ingresso
@@ -445,3 +445,4 @@ async function movePlayer(member, oldChannel, newChannel, actionText) {
 }
 
 client.login(TOKEN);
+
