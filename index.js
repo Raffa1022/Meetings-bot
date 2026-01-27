@@ -40,6 +40,11 @@ const CONFIG = {
         MAX_READINGS: 1
     }
 };
+// Memoria temporanea per le bussate (si resetta al riavvio, non serve nel DB)
+const pendingKnocks = new Map(); 
+
+const PREFIX = '!';
+const OVERSEER_ROLE_ID = '1460741401435181295'; // ⚠️ IMPORTANTE
 
 // ==========================================
 // SETUP MONGODB (Database Unico)
@@ -64,6 +69,24 @@ const botSchema = new mongoose.Schema({
     activeGameSlots: { type: Array, default: [] } // Memoria persistente Giocatori/Sponsor
 });
 const BotModel = mongoose.model('BotData', botSchema);
+const HouseSchema = new mongoose.Schema({
+    channelId: { type: String, required: true, unique: true }, // ID Canale Discord
+    alias: { type: String, required: true },                   // Nome (es. casa-1)
+    ownerId: { type: String, required: true },                 // ID Utente Proprietario
+    sponsorId: { type: String, required: true }                // ID Utente Sponsor
+});
+
+// Schema GIOCATORE: Gestisce posizione e visite
+const PlayerSchema = new mongoose.Schema({
+    userId: { type: String, required: true, unique: true },
+    homeChannelId: { type: String, required: true },    // ID Casa Base
+    currentChannelId: { type: String, default: null },  // Dove si trova ora
+    maxVisits: { type: Number, default: 3 },            // Visite totali disponibili
+    usedVisits: { type: Number, default: 0 }            // Visite usate oggi
+});
+
+const House = mongoose.model('House', HouseSchema);
+const Player = mongoose.model('Player', PlayerSchema);
 
 // ==========================================
 // FUNZIONI HELPER (Interazione DB)
@@ -171,8 +194,230 @@ client.on('messageCreate', async message => {
     const member = message.member;
     const guildId = message.guild.id;
     const isAdmin = member?.permissions.has(PermissionsBitField.Flags.Administrator);
+    //--- COMANDI OVERSEER
+     if (message.author.bot || !message.content.startsWith(PREFIX)) return;
 
-    // --- COMANDO: !impostazioni ---
+    const args = message.content.slice(PREFIX.length).trim().split(/ +/);
+    const command = args.shift().toLowerCase();
+ // SEZIONE: AMMINISTRAZIONE (OVERSEER)
+    // ==========================================
+
+    /**
+     * Comando: !proprietario <nome_casa> @giocatore @sponsor
+     * Funzione: Registra una casa, imposta proprietario e sponsor fisico.
+     */
+    if (command === 'proprietario') {
+        // Controllo Permessi
+        if (!message.member.roles.cache.has(OVERSEER_ROLE_ID) && !message.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
+            return message.reply("⛔ Comando riservato all'Overseer.");
+        }
+
+        const alias = args[0];
+        const mentions = message.mentions.users.first(2); // Prende i primi 2 utenti taggati
+
+        if (!alias || mentions.length < 2) {
+            return message.reply("⚠️ Uso: `!proprietario <nome_casa> @giocatore @sponsor`");
+        }
+
+        const ownerUser = mentions[0];
+        const sponsorUser = mentions[1];
+
+        // 1. Salva la Casa
+        await House.findOneAndUpdate(
+            { channelId: message.channel.id },
+            { alias: alias, ownerId: ownerUser.id, sponsorId: sponsorUser.id },
+            { upsert: true, new: true }
+        );
+
+        // 2. Inizializza il Giocatore (Proprietario)
+        await Player.findOneAndUpdate(
+            { userId: ownerUser.id },
+            { 
+                homeChannelId: message.channel.id, 
+                currentChannelId: message.channel.id,
+                maxVisits: 3, 
+                usedVisits: 0 
+            },
+            { upsert: true }
+        );
+
+        const msg = await message.channel.send(`✅ **Casa Registrata**\n🏠 Nome: **${alias}**\n👤 Proprietario: ${ownerUser}\n🤝 Sponsor: ${sponsorUser}`);
+        await msg.pin();
+        return;
+    }
+
+    /**
+     * Comando: !visite <numero> @giocatore
+     * Funzione: Cambia il numero massimo di visite di un giocatore.
+     */
+    if (command === 'visite') {
+        if (!message.member.roles.cache.has(OVERSEER_ROLE_ID)) return;
+
+        const amount = parseInt(args[0]);
+        const targetUser = message.mentions.users.first();
+
+        if (isNaN(amount) || !targetUser) return message.reply("⚠️ Uso: `!visite <numero> @giocatore`");
+
+        await Player.findOneAndUpdate(
+            { userId: targetUser.id },
+            { maxVisits: amount },
+            { upsert: true }
+        );
+        message.reply(`✅ Visite massime per ${targetUser.username} impostate a **${amount}**.`);
+        return;
+    }
+    // ==========================================
+    // COMANDO: !reset (Azzera conteggi per nuovo giorno)
+    // ==========================================
+    if (command === 'reset') {
+        // Controllo Overseer (Solo chi ha il ruolo può usarlo)
+        if (!message.member.roles.cache.has(OVERSEER_ROLE_ID)) {
+             return message.reply("⛔ Solo l'Overseer può resettare le visite giornaliere.");
+        }
+
+        try {
+            // Mette "usedVisits" a 0 per TUTTI i giocatori nel database
+            await Player.updateMany({}, { usedVisits: 0 });
+            
+            message.reply("🌅 **Giorno resettato!**\nTutti i giocatori hanno di nuovo le loro visite disponibili.");
+            
+        } catch (err) {
+            console.error(err);
+            message.reply("❌ Errore durante il reset.");
+        }
+ // SEZIONE: GIOCATORI (GAMEPLAY)
+    // ==========================================
+
+    /**
+     * Comando: !bussare <nome_casa>
+     * Funzione: Chiede il permesso di entrare.
+     */
+    if (command === 'bussare') {
+        const targetAlias = args[0];
+        if (!targetAlias) return message.reply("⚠️ Specifica dove bussare: `!bussare casa-1`");
+
+        // Cerca la casa target nel DB
+        const targetHouse = await House.findOne({ $or: [{ alias: targetAlias }, { channelId: targetAlias }] });
+        
+        if (!targetHouse) return message.reply("❌ Casa inesistente.");
+        if (targetHouse.channelId === message.channel.id) return message.reply("❌ Sei già dentro!");
+
+        // Controlla status giocatore
+        const knockerData = await Player.findOne({ userId: message.author.id });
+        if (!knockerData) return message.reply("❌ Non sei registrato nel gioco.");
+
+        if (knockerData.usedVisits >= knockerData.maxVisits) {
+            return message.reply(`⛔ Visite terminate per oggi (${knockerData.usedVisits}/${knockerData.maxVisits}).`);
+        }
+  // Recupera canale fisico
+        const targetChannel = client.channels.cache.get(targetHouse.channelId);
+        if (!targetChannel) return message.reply("❌ Errore tecnico: Canale casa non trovato.");
+
+        // Registra la bussata in attesa
+        pendingKnocks.set(targetHouse.channelId, {
+            knockerId: message.author.id,
+            sourceChannelId: message.channel.id
+        });
+
+        message.reply(`✊ Hai bussato a **${targetHouse.alias}**. Attendi risposta...`);
+        
+        // Notifica ai residenti
+        targetChannel.send(`🔔 **DRIN DRIN!**\n<@${targetHouse.ownerId}> e <@${targetHouse.sponsorId}>, c'è qualcuno alla porta!\nDigitate \`!apri\` o \`!rifiuta\`.`);
+        return;
+    }
+
+    /**
+     * Comando: !apri
+     * Funzione: Fa entrare chi ha bussato.
+     */
+    if (command === 'apri') {
+        const knockData = pendingKnocks.get(message.channel.id);
+        if (!knockData) return message.reply("🤷‍♂️ Nessuno sta bussando qui.");
+
+        const knockerUser = await client.users.fetch(knockData.knockerId);
+        const knockerData = await Player.findOne({ userId: knockData.knockerId });
+
+        // Trova lo sponsor del visitatore per la narrazione
+        let knockerSponsorTag = "il suo Sponsor";
+        if (knockerData) {
+            const knockerHome = await House.findOne({ channelId: knockerData.homeChannelId });
+            if (knockerHome) knockerSponsorTag = `<@${knockerHome.sponsorId}>`;
+        }
+// AGGIORNA DB: Scala visita e cambia posizione
+        await Player.findOneAndUpdate(
+            { userId: knockData.knockerId },
+            { $inc: { usedVisits: 1 }, currentChannelId: message.channel.id }
+        );
+
+        // Narrazione Entrata
+        message.channel.send(`🔓 **Porta Aperta**\n${knockerUser} entra in casa accompagnato da ${knockerSponsorTag}.`);
+
+        // Avviso al visitatore
+        const sourceChannel = client.channels.cache.get(knockData.sourceChannelId);
+        if (sourceChannel) sourceChannel.send(`➡️ ${knockerUser}, ti hanno aperto! Sei entrato.`);
+
+        pendingKnocks.delete(message.channel.id);
+        return;
+    }
+
+    /**
+     * Comando: !rifiuta
+     * Funzione: Rifiuta ingresso e rivela identità interni (DOXXING).
+     */
+    if (command === 'rifiuta') {
+        const knockData = pendingKnocks.get(message.channel.id);
+        if (!knockData) return message.reply("🤷‍♂️ Nessuno sta bussando.");
+
+        const knockerUser = await client.users.fetch(knockData.knockerId);
+        const sourceChannel = client.channels.cache.get(knockData.sourceChannelId);
+        const currentHouse = await House.findOne({ channelId: message.channel.id });
+
+        message.channel.send(`🔒 Hai rifiutato di aprire a ${knockerUser}.`);
+
+        // Rivelazione identità al visitatore
+        if (sourceChannel && currentHouse) {
+            sourceChannel.send(
+                `⛔ **Rifiutato!**\n${knockerUser}, la porta rimane chiusa.\n` +
+                `👀 *Sbirciando dalla serratura, hai riconosciuto:*\n` +
+                `> 🏠 Proprietario: <@${currentHouse.ownerId}>\n` +
+                `> 🤝 Sponsor: <@${currentHouse.sponsorId}>`
+            );
+        }
+
+        pendingKnocks.delete(message.channel.id);
+        return;
+    }
+
+    /**
+     * Comando: !ritorno
+     * Funzione: Riporta il giocatore alla sua casa base.
+     */
+    if (command === 'ritorno') {
+        const playerData = await Player.findOne({ userId: message.author.id });
+
+        if (!playerData) return message.reply("❌ Non hai una casa.");
+        if (playerData.currentChannelId === playerData.homeChannelId) return message.reply("🏠 Sei già a casa tua.");
+
+        // Info Sponsor per narrazione
+        const homeHouse = await House.findOne({ channelId: playerData.homeChannelId });
+        const sponsorTag = homeHouse ? `<@${homeHouse.sponsorId}>` : "Sponsor";
+
+        // Messaggio uscita
+        message.channel.send(`👋 ${message.author} e ${sponsorTag} salutano e se ne vanno.`);
+
+        // Aggiorna posizione DB
+        playerData.currentChannelId = playerData.homeChannelId;
+        await playerData.save();
+
+        // Messaggio arrivo a casa
+        const homeChannel = client.channels.cache.get(playerData.homeChannelId);
+        if (homeChannel) {
+            homeChannel.send(`🏠 **Bentornato**\n${message.author} e ${sponsorTag} sono rientrati.`);
+        }
+        return;
+    }
+
+  // --- COMANDO: !impostazioni ---
     if (content === '!impostazioni' && guildId === CONFIG.SERVER.COMMAND_GUILD) {
         const data = await getData();
         const helpEmbed = new EmbedBuilder()
@@ -182,10 +427,17 @@ client.on('messageCreate', async message => {
                 { name: '🔹 !meeting @giocatore (Giocatori)', value: 'Invita un giocatore. Sponsor inclusi.' },
                 { name: '🛑 !fine (Giocatori)', value: 'Chiude la chat.' },
                 { name: '👁️ !lettura (Giocatori)', value: 'Supervisione. Sponsor inclusi.' }, 
+                { name: '🏠 !bussare (Giocatori)', value: 'Da utilizzare in chat ruolo facendo !bussare casa-num' },
+                { name: '🏠 !apri (Giocatori)', value: 'Da utilizzare in chat casa se qualcuno sta bussando' },
+                { name: '🏠 !rifiuta (Giocatori)', value: 'Da utilizzare in chat casa se qualcuno sta bussando' },
+                { name: '🏠 !ritorno (Giocatori)', value: 'Vi riporta a casa, da utilizzare in chat ruolo' },
                 { name: '🚪 !entrata (Overseer)', value: `Auto-ruolo (Stato: ${data.isAutoRoleActive ? 'ON' : 'OFF'})` },
                 { name: '📋 !tabella [num] (Overseer)', value: 'Crea tabella iscrizioni.' },
                 { name: '🚀 !assegna (Overseer)', value: 'Assegna ruoli/stanze e salva gioco.' },
-                { name: '⚠️ !azzeramento (Overseer)', value: 'Reset totale conteggi meeting/lettura' }
+                { name: '⚠️ !azzeramento (Overseer)', value: 'Reset totale conteggi meeting/lettura' },
+                { name: '🏠 !proprietario (Overseer)', value: 'Si utilizza scrivendo casa-num @giocatore @sponsor' },
+                { name: '👟 !visite (Overseer)', value: 'Si utilizza scrivendo num visite e @giocatore' },
+                { name: '🚧 !reset (Overseer)', value: 'Reset visite notturne' },
             )
             .setFooter({ text: 'Sistema Mongo-Only' });
         return message.channel.send({ embeds: [helpEmbed] });
@@ -564,5 +816,6 @@ client.on('interactionCreate', async interaction => {
 // LOGIN
 // ==========================================
 client.login('MTQ2MzU5NDkwMTAzOTIyMjg3Nw.G5f3KX.jSoE3kJ35DzPIAVbigJ6sor0qAgY4c6ukMokJ4');
+
 
 
