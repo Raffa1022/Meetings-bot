@@ -33,7 +33,7 @@ async function saveData(key, value) {
         const embed = new EmbedBuilder()
             .setTitle('💾 DATABASE GDR')
             .setColor(Colors.Blue)
-            .setDescription('```json)
+            .setDescription('```json```')
 ' + JSON.stringify(data, null, 2) + '
 ```')
             .setTimestamp();
@@ -333,5 +333,6 @@ process.on('unhandledRejection', e => console.error('Rejection:', e));
 process.on('uncaughtException', e => console.error('Exception:', e));
 const TOKEN =
 client.login('MTQ2MzU5NDkwMTAzOTIyMjg3Nw.GESAgq.BHN1CNeNhQSfnQVs6D0hjnhtVi2GDwCjTTcnQs');
+
 
 
