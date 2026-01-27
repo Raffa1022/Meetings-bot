@@ -228,4 +228,5 @@ function safe(fn) {
 }
 
 // ================== LOGIN ==================
-client.login('MTQ2MzU5NDkwMTAzOTIyMjg3Nw.G2ZqJU.HRxjqWMs2fIwblzW2B2SUXcYhUZ8BkeWioLmss);
+client.login(TOKEN);
+
