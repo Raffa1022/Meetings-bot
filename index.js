@@ -45,7 +45,7 @@ const pendingKnocks = new Map();
 
 const PREFIX = '!';
 const OVERSEER_ROLE_ID = '1460741401435181295'; // ⚠️ IMPORTANTE
-
+};
 // ==========================================
 // SETUP MONGODB (Database Unico)
 // ==========================================
@@ -816,6 +816,7 @@ client.on('interactionCreate', async interaction => {
 // LOGIN
 // ==========================================
 client.login('MTQ2MzU5NDkwMTAzOTIyMjg3Nw.G5f3KX.jSoE3kJ35DzPIAVbigJ6sor0qAgY4c6ukMokJ4');
+
 
 
 
