@@ -458,3 +458,4 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage) {
 }
 
 client.login(TOKEN);
+
