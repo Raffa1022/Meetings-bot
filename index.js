@@ -27,6 +27,7 @@ const ID_CANALE_DB = '1465768646906220700'; // Canale privato dove il bot salva 
 const ID_CATEGORIA_CHAT_PRIVATE = '1460741414357827747'; 
 
 // RUOLI CHE POSSONO RISPONDERE AL BUSSARE (ID Ruoli Discord)
+// Il primo ruolo (index 0) verrà usato anche per il comando !chi
 const RUOLI_PERMESSI = [
     '1460741403331268661', 
     '1460741404497019002'
@@ -79,9 +80,9 @@ let dbCache = {
     baseVisits: {},    // { userID: limit (limite visite normali) }
     extraVisits: {},   // { userID: extra (visite normali aggiuntive una tantum) }
     
-    // [MODIFICATO] Gestione Limiti e Contatori per Forzate/Nascoste
-    forcedLimits: {},  // { userID: limit (limite fisso impostato da !visite) }
-    hiddenLimits: {},  // { userID: limit (limite fisso impostato da !visite) }
+    // Gestione Limiti e Contatori per Forzate/Nascoste
+    forcedLimits: {},  // { userID: limit }
+    hiddenLimits: {},  // { userID: limit }
     
     forcedVisits: {},  // { userID: count (disponibili attuali) }
     hiddenVisits: {},  // { userID: count (disponibili attuali) }
@@ -104,18 +105,14 @@ async function loadDB() {
                 const jsonContent = lastMsg.content.replace(/```json|```/g, '');
                 const data = JSON.parse(jsonContent);
                 
-                // Merge per compatibilità
                 dbCache = { ...dbCache, ...data };
                 
-                // Inizializzazione campi se mancanti
                 if (!dbCache.baseVisits) dbCache.baseVisits = {};
                 if (!dbCache.extraVisits) dbCache.extraVisits = {};
                 if (!dbCache.hiddenVisits) dbCache.hiddenVisits = {};
                 if (!dbCache.forcedVisits) dbCache.forcedVisits = {};
-                
-                if (!dbCache.forcedLimits) dbCache.forcedLimits = {}; // [NUOVO]
-                if (!dbCache.hiddenLimits) dbCache.hiddenLimits = {}; // [NUOVO]
-                
+                if (!dbCache.forcedLimits) dbCache.forcedLimits = {};
+                if (!dbCache.hiddenLimits) dbCache.hiddenLimits = {};
                 if (!dbCache.playerModes) dbCache.playerModes = {};
                 
                 console.log("💾 Database caricato con successo!");
@@ -132,7 +129,6 @@ async function saveDB() {
         const channel = await client.channels.fetch(ID_CANALE_DB);
         const jsonString = JSON.stringify(dbCache, null, 2);
         
-        // Cancella vecchi messaggi per pulizia
         const messages = await channel.messages.fetch({ limit: 5 });
         if (messages.size > 0) await channel.bulkDelete(messages);
 
@@ -147,9 +143,6 @@ function resetCounters() {
     dbCache.playerVisits = {}; // Resetta le usate normali a 0
     dbCache.extraVisits = {};  // Rimuove gli extra normali
     
-    // Ripristina Forced e Hidden ai valori impostati in forcedLimits/hiddenLimits
-    // Se un utente non ha limiti impostati, default a 0
-    // Iteriamo su tutti gli utenti conosciuti nel DB
     const allUsers = new Set([
         ...Object.keys(dbCache.playerHomes),
         ...Object.keys(dbCache.forcedLimits),
@@ -210,8 +203,6 @@ client.on('messageCreate', async message => {
             await pinnedMsg.pin();
         }
 
-        // [MODIFICATO] !visite @utente base forzate nascoste
-        // Imposta i LIMITI che verranno usati nel reset
         if (command === 'visite') {
             if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) return message.reply("⛔ Non sei admin.");
             
@@ -224,12 +215,10 @@ client.on('messageCreate', async message => {
                 return message.reply("❌ Uso: `!visite @Utente [Base] [Forzate] [Nascoste]` (es: `!visite @tizio 3 0 1`)");
             }
 
-            // Imposta i limiti (configurazione permanente)
             dbCache.baseVisits[targetUser.id] = baseInput;
             dbCache.forcedLimits[targetUser.id] = forcedInput;
             dbCache.hiddenLimits[targetUser.id] = hiddenInput;
 
-            // Aggiorna subito i contatori attuali ai nuovi limiti
             dbCache.forcedVisits[targetUser.id] = forcedInput;
             dbCache.hiddenVisits[targetUser.id] = hiddenInput;
             
@@ -267,7 +256,6 @@ client.on('messageCreate', async message => {
             await saveDB();
         }
 
-        // [MODIFICATO] Reset che ripristina ai valori impostati da !visite
         if (command === 'resetvisite') {
             if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) return message.reply("⛔ Non sei admin.");
             
@@ -280,7 +268,70 @@ client.on('messageCreate', async message => {
         // 👤 COMANDI GIOCATORE
         // ---------------------------------------------------------
 
+        // [RICHIESTA 5] Comando !chi
+        if (command === 'chi') {
+            message.delete().catch(()=>{});
+
+            // Funziona solo nella categoria CASE
+            if (message.channel.parentId !== ID_CATEGORIA_CASE) {
+                return message.channel.send("⛔ Questo comando funziona solo all'interno di una casa.").then(m => setTimeout(() => m.delete(), 5000));
+            }
+
+            // Trova il proprietario della casa corrente
+            // La chiave è l'ID utente, il valore è l'ID canale. Cerchiamo la chiave che corrisponde a questo canale.
+            const ownerId = Object.keys(dbCache.playerHomes).find(key => dbCache.playerHomes[key] === message.channel.id);
+            let ownerName = "Nessuno";
+            
+            if (ownerId) {
+                const ownerMember = message.guild.members.cache.get(ownerId);
+                if (ownerMember) ownerName = ownerMember.displayName;
+            }
+
+            // Trova tutti i giocatori presenti che hanno il ruolo IDrole1 (Usiamo il primo ruolo di RUOLI_PERMESSI)
+            // Filtra solo chi è fisicamente nel canale (ha permessi di visualizzazione e non è un bot)
+            // Nota: Discord non ha una lista "live" di chi guarda il canale testo, quindi ci basiamo sui membri che hanno permessi
+            // OPPURE possiamo listare chi ha il ruolo ed è nel server se intendiamo "chi abita qui". 
+            // Interpretando "giocatori presenti in casa": Elenchiamo chi ha il permesso di vedere il canale e ha il ruolo.
+            
+            const targetRoleID = RUOLI_PERMESSI[0]; // Prende il primo ID ruolo
+
+            const playersInHouse = message.channel.members.filter(member => 
+                !member.user.bot && 
+                member.roles.cache.has(targetRoleID)
+            );
+
+            let description = "";
+            if (playersInHouse.size > 0) {
+                playersInHouse.forEach(p => {
+                    description += `👤 ${p}\n`; // Menziona o scrive il nome
+                });
+            } else {
+                description = "Nessuno presente.";
+            }
+
+            const embed = new EmbedBuilder()
+                .setTitle(`👥 Persone in casa`)
+                .setDescription(description)
+                .addFields(
+                    { name: '🔑 Proprietario', value: `**${ownerName}**`, inline: false }
+                )
+                .setColor('#2b2d31')
+                .setTimestamp();
+
+            // Invia e cancella dopo 5 minuti (300000 ms)
+            message.channel.send({ embeds: [embed] }).then(msg => {
+                setTimeout(() => msg.delete().catch(() => {}), 300000);
+            });
+        }
+
         if (command === 'rimaste') {
+            message.delete().catch(()=>{}); // Pulizia comando
+
+            // [RICHIESTA 3] Il comando funziona solo nelle chat private
+            if (message.channel.parentId !== ID_CATEGORIA_CHAT_PRIVATE) {
+                return message.channel.send("⛔ Questo comando funziona solo nelle chat private!").then(m => setTimeout(() => m.delete(), 5000));
+            }
+
             if (message.member.roles.cache.hasAny(...RUOLI_PERMESSI)) {
                 const base = dbCache.baseVisits[message.author.id] || DEFAULT_MAX_VISITS;
                 const extra = dbCache.extraVisits[message.author.id] || 0;
@@ -290,7 +341,8 @@ client.on('messageCreate', async message => {
                 const hidden = dbCache.hiddenVisits[message.author.id] || 0;
                 const forced = dbCache.forcedVisits[message.author.id] || 0;
                 
-                message.reply(`📊 **Le tue visite:**\n🏠 Normali: ${used}/${totalLimit}\n🧨 Forzate: ${forced}\n🕵️ Nascoste: ${hidden}`);
+                // Nota: Non usiamo reply ma send normale nelle private per pulizia
+                message.channel.send(`📊 **Le tue visite:**\n🏠 Normali: ${used}/${totalLimit}\n🧨 Forzate: ${forced}\n🕵️ Nascoste: ${hidden}`).then(m => setTimeout(() => m.delete(), 30000));
             }
             return;
         }
@@ -298,39 +350,33 @@ client.on('messageCreate', async message => {
         if (command === 'torna') {
             message.delete().catch(()=>{}); 
 
-            // [RICHIESTA 1] Il comando !torna può essere effettuato solamente all'interno della categoria chat private
             if (message.channel.parentId !== ID_CATEGORIA_CHAT_PRIVATE) {
                 return message.channel.send("⛔ Questo comando funziona solo nelle chat private!").then(m => setTimeout(() => m.delete(), 5000));
             }
 
             const homeId = dbCache.playerHomes[message.author.id];
-            if (!homeId) return message.reply("❌ Non hai una casa registrata."); 
+            if (!homeId) return message.channel.send("❌ Non hai una casa registrata."); 
             
             const homeChannel = message.guild.channels.cache.get(homeId);
-            if (!homeChannel) return message.reply("❌ La tua casa non esiste più.");
+            if (!homeChannel) return message.channel.send("❌ La tua casa non esiste più.");
 
-            // [RICHIESTA 2] Il comando !torna non può essere effettuato se si è già nella casa di cui si è proprietari
-            // Verifica: Se l'utente NON vede nessun'altra casa (tranne la propria), significa che è già a casa.
-            // Cerchiamo una casa DIVERSA dalla propria che l'utente può vedere.
             const isVisitingSomeone = message.guild.channels.cache.some(c => 
                 c.parentId === ID_CATEGORIA_CASE && 
                 c.type === ChannelType.GuildText && 
-                c.id !== homeId && // Non è la sua casa
-                c.permissionsFor(message.member).has(PermissionsBitField.Flags.ViewChannel) // La può vedere
+                c.id !== homeId && 
+                c.permissionsFor(message.member).has(PermissionsBitField.Flags.ViewChannel) 
             );
 
             if (!isVisitingSomeone) {
                 return message.channel.send("🏠 Sei già a casa (o non stai visitando nessuno).").then(m => setTimeout(() => m.delete(), 5000));
             }
 
-            // Ritorno a casa
             await movePlayer(message.member, message.channel, homeChannel, `🏠 ${message.member} è ritornato.`, false);
         }
 
         if (command === 'bussa') {
             message.delete().catch(()=>{}); 
 
-            // [RICHIESTA] Limitare il comando solo alla categoria chat private
             if (message.channel.parentId !== ID_CATEGORIA_CHAT_PRIVATE) {
                 return message.channel.send(`⛔ Puoi usare questo comando solo nelle chat private!`).then(m => setTimeout(() => m.delete(), 5000));
             }
@@ -360,16 +406,13 @@ client.on('messageCreate', async message => {
                         .setEmoji('🕵️')
                 );
 
-            // [RICHIESTA 4] Il messaggio con la tendina si elimina dopo 5 minuti (300000ms)
             const menuMessage = await message.channel.send({ 
                 content: `🎭 **${message.author}, scegli la modalità di visita:**`, 
                 components: [new ActionRowBuilder().addComponents(selectMode)]
             });
             
-            // Timer di autodistruzione del menu
             setTimeout(() => {
                 menuMessage.delete().catch(() => {});
-                // Rimuove anche dal set di chi sta bussando se il menu scade
                 pendingKnocks.delete(message.author.id); 
             }, 300000);
         }
@@ -396,8 +439,6 @@ client.on('interactionCreate', async interaction => {
             const selectedMode = interaction.values[0]; 
             const userHomeId = dbCache.playerHomes[interaction.user.id];
             
-            // [RICHIESTA] Filtrare casa attuale (dove sono fisicamente, non la chat privata)
-            // Cerchiamo un canale nella categoria CASE dove l'utente ha il permesso di vedere (ViewChannel)
             const currentHouseChannel = interaction.guild.channels.cache.find(c => 
                 c.parentId === ID_CATEGORIA_CASE && 
                 c.type === ChannelType.GuildText &&
@@ -409,8 +450,8 @@ client.on('interactionCreate', async interaction => {
                 .filter(c => 
                     c.parentId === ID_CATEGORIA_CASE && 
                     c.type === ChannelType.GuildText &&
-                    c.id !== userHomeId &&      // Rimuove casa proprietario
-                    c.id !== currentHouseId     // [NUOVO] Rimuove casa in cui si trova attualmente
+                    c.id !== userHomeId &&      
+                    c.id !== currentHouseId     
                 )
                 .sort((a, b) => a.rawPosition - b.rawPosition);
 
@@ -453,7 +494,6 @@ client.on('interactionCreate', async interaction => {
 
             const userHomeId = dbCache.playerHomes[interaction.user.id];
             
-            // Ripetiamo il filtro per coerenza
             const currentHouseChannel = interaction.guild.channels.cache.find(c => 
                 c.parentId === ID_CATEGORIA_CASE && 
                 c.type === ChannelType.GuildText &&
@@ -515,13 +555,13 @@ client.on('interactionCreate', async interaction => {
 
                 await interaction.message.delete().catch(()=>{});
                 
-                // [RICHIESTA] Narrazione modificata con i ruoli
                 const roleMentions = RUOLI_PERMESSI.map(id => `<@&${id}>`).join(', ');
                 const narrazioneForzata = `${roleMentions}, ${knocker} ha sfondato la porta ed è entrato`;
 
                 await enterHouse(knocker, interaction.channel, targetChannel, narrazioneForzata, false);
                 
-                return interaction.channel.send({ content: `🧨 ${knocker} ha forzato l'ingresso!` }).then(m => setTimeout(() => m.delete(), 3000));
+                // [RICHIESTA 2] Messaggio aggiornato e SENZA cancellazione automatica
+                return interaction.channel.send({ content: `🧨 ${knocker} ha forzato l'ingresso in 🏡 | CASA ${formatName(targetChannel.name)}` });
             }
 
             // ==========================================
@@ -539,7 +579,8 @@ client.on('interactionCreate', async interaction => {
                 await interaction.message.delete().catch(()=>{});
                 await enterHouse(knocker, interaction.channel, targetChannel, "", true); 
                 
-                return interaction.channel.send({ content: `🕵️ ${knocker} sei entrato in modalità nascosta.` }).then(m => setTimeout(() => m.delete(), 3000));
+                // [RICHIESTA 2] Messaggio aggiornato e SENZA cancellazione automatica
+                return interaction.channel.send({ content: `🕵️ ${knocker} sei entrato in modalità nascosta in 🏡 | CASA ${formatName(targetChannel.name)}` });
             }
 
             // ==========================================
@@ -563,18 +604,17 @@ client.on('interactionCreate', async interaction => {
             );
 
             if (membersWithAccess.size === 0) {
-                // Nessuno in casa
                 pendingKnocks.delete(knocker.id);
                 await interaction.channel.send({ content: `🔓 La porta è aperta/incustodita. ${knocker} entra...` }).then(m => setTimeout(() => m.delete(), 5000));
                 await enterHouse(knocker, interaction.channel, targetChannel, `👋 ${knocker} è entrato.`, false);
             } else {
-                // Qualcuno è in casa
                 await interaction.channel.send({ content: `✊ ${knocker} ha bussato a **${formatName(targetChannel.name)}**. Aspetta una risposta...` });
                 
                 const roleMentions = RUOLI_PERMESSI.map(id => `<@&${id}>`).join(' ');
                 
+                // [RICHIESTA 1] "❌ = Rifiuta"
                 const msg = await targetChannel.send(
-                    `🔔 **TOC TOC!** ${roleMentions}\n**Qualcuno** sta bussando!\nAvete **5 minuti** per rispondere.\n\n✅ = Apri | ❌ = Ignora`
+                    `🔔 **TOC TOC!** ${roleMentions}\n**Qualcuno** sta bussando!\nAvete **5 minuti** per rispondere.\n\n✅ = Apri | ❌ = Rifiuta`
                 );
                 await msg.react('✅');
                 await msg.react('❌');
@@ -592,10 +632,15 @@ client.on('interactionCreate', async interaction => {
                         pendingKnocks.delete(knocker.id);
                         await enterHouse(knocker, interaction.channel, targetChannel, `👋 **${knocker}** è entrato.`, false);
                     } else {
+                        // [RICHIESTA 4] Se rifiutato, perde comunque la visita
+                        const currentRefused = dbCache.playerVisits[knocker.id] || 0;
+                        dbCache.playerVisits[knocker.id] = currentRefused + 1;
+                        await saveDB();
+
                         msg.edit(`❌ **${user.displayName}** ha rifiutato l'ingresso.`);
                         pendingKnocks.delete(knocker.id);
                         const namesList = membersWithAccess.map(m => `${m} `).join(', ');
-                        await interaction.channel.send(`⛔ ${knocker}, sei stato rifiutato da ${namesList} (membri presenti in casa).`);
+                        await interaction.channel.send(`⛔ ${knocker}, sei stato rifiutato da ${namesList} (membri presenti in casa). Hai perso la visita.`);
                     }
                 });
 
@@ -603,9 +648,6 @@ client.on('interactionCreate', async interaction => {
                     if (collected.size === 0) {
                         pendingKnocks.delete(knocker.id);
                         await targetChannel.send("⏳ Nessuno ha risposto in tempo. La porta viene forzata/aperta.");
-                        
-                        // [RICHIESTA 3] Modificato messaggio forzato: "👋 @utente è entrato"
-                        // ${knocker} crea automaticamente il tag @utente
                         await enterHouse(knocker, interaction.channel, targetChannel, `👋 ${knocker} è entrato.`, false);
                     }
                 });
@@ -645,7 +687,6 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
 
     let channelToLeave = oldChannel;
 
-    // Se stiamo usando il comando da una chat privata, dobbiamo trovare la casa reale da cui uscire
     if (oldChannel && oldChannel.parentId === ID_CATEGORIA_CHAT_PRIVATE) {
         const currentHouse = oldChannel.guild.channels.cache.find(c => 
             c.parentId === ID_CATEGORIA_CASE && 
@@ -657,19 +698,16 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
         }
     }
 
-    // Rimuovi permessi dalla vecchia casa (se diversa dalla nuova)
     if (channelToLeave && channelToLeave.id !== newChannel.id) {
         if (channelToLeave.parentId === ID_CATEGORIA_CASE) {
             const prevMode = dbCache.playerModes[member.id];
             if (prevMode !== 'HIDDEN') {
                 await channelToLeave.send(`🚪 ${member} è uscito.`);
             }
-            // Rimuovi permessi
             await channelToLeave.permissionOverwrites.delete(member.id).catch(() => console.log("Permessi già tolti."));
         }
     }
 
-    // Aggiungi permessi alla nuova casa
     await newChannel.permissionOverwrites.create(member.id, { ViewChannel: true, SendMessages: true });
 
     dbCache.playerModes[member.id] = isSilent ? 'HIDDEN' : 'NORMAL';
