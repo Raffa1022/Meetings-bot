@@ -298,12 +298,30 @@ client.on('messageCreate', async message => {
         if (command === 'torna') {
             message.delete().catch(()=>{}); 
 
+            // [RICHIESTA 1] Il comando !torna può essere effettuato solamente all'interno della categoria chat private
+            if (message.channel.parentId !== ID_CATEGORIA_CHAT_PRIVATE) {
+                return message.channel.send("⛔ Questo comando funziona solo nelle chat private!").then(m => setTimeout(() => m.delete(), 5000));
+            }
+
             const homeId = dbCache.playerHomes[message.author.id];
             if (!homeId) return message.reply("❌ Non hai una casa registrata."); 
             
             const homeChannel = message.guild.channels.cache.get(homeId);
             if (!homeChannel) return message.reply("❌ La tua casa non esiste più.");
-            if (message.channel.id === homeId) return message.reply("🏠 Sei già a casa.");
+
+            // [RICHIESTA 2] Il comando !torna non può essere effettuato se si è già nella casa di cui si è proprietari
+            // Verifica: Se l'utente NON vede nessun'altra casa (tranne la propria), significa che è già a casa.
+            // Cerchiamo una casa DIVERSA dalla propria che l'utente può vedere.
+            const isVisitingSomeone = message.guild.channels.cache.some(c => 
+                c.parentId === ID_CATEGORIA_CASE && 
+                c.type === ChannelType.GuildText && 
+                c.id !== homeId && // Non è la sua casa
+                c.permissionsFor(message.member).has(PermissionsBitField.Flags.ViewChannel) // La può vedere
+            );
+
+            if (!isVisitingSomeone) {
+                return message.channel.send("🏠 Sei già a casa (o non stai visitando nessuno).").then(m => setTimeout(() => m.delete(), 5000));
+            }
 
             // Ritorno a casa
             await movePlayer(message.member, message.channel, homeChannel, `🏠 ${message.member} è ritornato.`, false);
@@ -342,10 +360,18 @@ client.on('messageCreate', async message => {
                         .setEmoji('🕵️')
                 );
 
-            await message.channel.send({ 
+            // [RICHIESTA 4] Il messaggio con la tendina si elimina dopo 5 minuti (300000ms)
+            const menuMessage = await message.channel.send({ 
                 content: `🎭 **${message.author}, scegli la modalità di visita:**`, 
                 components: [new ActionRowBuilder().addComponents(selectMode)]
             });
+            
+            // Timer di autodistruzione del menu
+            setTimeout(() => {
+                menuMessage.delete().catch(() => {});
+                // Rimuove anche dal set di chi sta bussando se il menu scade
+                pendingKnocks.delete(message.author.id); 
+            }, 300000);
         }
 
     } catch (error) {
@@ -577,7 +603,10 @@ client.on('interactionCreate', async interaction => {
                     if (collected.size === 0) {
                         pendingKnocks.delete(knocker.id);
                         await targetChannel.send("⏳ Nessuno ha risposto in tempo. La porta viene forzata/aperta.");
-                        await enterHouse(knocker, interaction.channel, targetChannel, `👋 **${knocker.displayName}** è entrato (porta forzata).`, false);
+                        
+                        // [RICHIESTA 3] Modificato messaggio forzato: "👋 @utente è entrato"
+                        // ${knocker} crea automaticamente il tag @utente
+                        await enterHouse(knocker, interaction.channel, targetChannel, `👋 ${knocker} è entrato.`, false);
                     }
                 });
             }
@@ -652,4 +681,3 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
 }
 
 client.login(TOKEN);
-
