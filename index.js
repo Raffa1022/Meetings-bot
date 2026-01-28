@@ -32,7 +32,8 @@ const ID_CATEGORIA_CHAT_PRIVATE = '1460741414357827747';
 const RUOLI_PERMESSI = [
     '1460741403331268661', 
     '1460741404497019002', 
-    '1460741402672758814'
+    '1460741402672758814',
+    '1460741405722022151' // <--- [MODIFICA] Aggiungi qui il 4° ID ruolo
 ]; 
 
 const DEFAULT_MAX_VISITS = 3;
@@ -79,8 +80,10 @@ const client = new Client({
 let dbCache = {
     playerHomes: {},   // { userID: channelID }
     playerVisits: {},  // { userID: count }
-    baseVisits: {},    // { userID: limit } [MODIFICATO: Da maxVisits a baseVisits]
-    extraVisits: {},   // { userID: extra } [NUOVO: Visite aggiuntive]
+    baseVisits: {},    // { userID: limit }
+    extraVisits: {},   // { userID: extra }
+    hiddenVisits: {},  // { userID: count } [NUOVO: Visite Nascoste Disponibili]
+    playerModes: {},   // { userID: 'NORMAL' | 'HIDDEN' } [NUOVO: Traccia come è entrato l'utente]
     lastReset: null
 };
 
@@ -100,9 +103,11 @@ async function loadDB() {
                 
                 // Merge per compatibilità
                 dbCache = { ...dbCache, ...data };
-                // Se caricando un vecchio DB mancano i campi nuovi, li inizializzo
+                // Inizializzazione campi se mancanti
                 if (!dbCache.baseVisits) dbCache.baseVisits = dbCache.maxVisits || {};
                 if (!dbCache.extraVisits) dbCache.extraVisits = {};
+                if (!dbCache.hiddenVisits) dbCache.hiddenVisits = {};
+                if (!dbCache.playerModes) dbCache.playerModes = {};
                 
                 console.log("💾 Database caricato con successo!");
             }
@@ -136,7 +141,10 @@ client.once('ready', async () => {
     const today = new Date().toDateString();
     if (dbCache.lastReset !== today) {
         dbCache.playerVisits = {};
-        dbCache.extraVisits = {}; // [MODIFICA] Resetta anche le visite aggiuntive al nuovo giorno
+        dbCache.extraVisits = {}; 
+        // Nota: Le hiddenVisits NON si resettano giornalmente di solito, 
+        // ma se vuoi resettarle scommenta la riga sotto:
+        // dbCache.hiddenVisits = {}; 
         dbCache.lastReset = today;
         await saveDB();
         console.log("🔄 Contatori visite e extra resettati per nuovo giorno.");
@@ -173,12 +181,10 @@ client.on('messageCreate', async message => {
 
             message.reply(`✅ Casa assegnata a ${targetUser}.`);
             
-            // Messaggio inviato e subito pinnato
             const pinnedMsg = await targetChannel.send(`🔑 **${targetUser}**, questa è la tua dimora privata.`);
             await pinnedMsg.pin();
         }
 
-        // [MODIFICA RICHIESTA] !base @Utente numero
         if (command === 'base') {
             if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) return message.reply("⛔ Non sei admin.");
             
@@ -192,7 +198,6 @@ client.on('messageCreate', async message => {
             message.reply(`✅ Visite **BASE** per **${targetUser.displayName}** impostate a **${limit}**.`);
         }
 
-        // [NUOVO] !aggiunta @Utente numero
         if (command === 'aggiunta') {
             if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) return message.reply("⛔ Non sei admin.");
             
@@ -207,36 +212,50 @@ client.on('messageCreate', async message => {
             message.reply(`✅ Aggiunte **${extra}** visite a **${targetUser.displayName}**. (Totale Extra: ${currentExtra + extra})`);
         }
 
-        // [MODIFICA RICHIESTA] !resetvisite
+        // [NUOVO COMANDO] !nascosto @Utente numero
+        if (command === 'nascosto') {
+            if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) return message.reply("⛔ Non sei admin.");
+            
+            const targetUser = message.mentions.members.first();
+            const hiddenCount = parseInt(args[1]);
+
+            if (!targetUser || isNaN(hiddenCount)) return message.reply("❌ Uso: `!nascosto @Utente Numero`");
+            
+            const currentHidden = dbCache.hiddenVisits[targetUser.id] || 0;
+            dbCache.hiddenVisits[targetUser.id] = currentHidden + hiddenCount;
+            await saveDB();
+            message.reply(`✅ Aggiunte **${hiddenCount}** visite NASCOSTE a **${targetUser.displayName}**. (Totale Nascoste: ${currentHidden + hiddenCount})`);
+        }
+
         if (command === 'resetvisite') {
             if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) return message.reply("⛔ Non sei admin.");
             
             dbCache.playerVisits = {};
-            dbCache.extraVisits = {}; // Resetta anche le aggiuntive, si riparte dalla base
+            dbCache.extraVisits = {}; 
+            dbCache.hiddenVisits = {}; // [MODIFICA] Resetta anche le nascoste
             await saveDB();
-            message.reply("🔄 Tutti i contatori resettati (visite usate azzerate, visite extra rimosse). Si riparte dalle visite BASE.");
+            message.reply("🔄 Tutti i contatori resettati (visite usate, extra e nascoste). Si riparte dalle visite BASE.");
         }
 
         // ---------------------------------------------------------
         // 👤 COMANDI GIOCATORE
         // ---------------------------------------------------------
 
-        // [MODIFICA RICHIESTA] !rimaste (Conta Base + Aggiuntive)
         if (command === 'rimaste') {
             if (message.member.roles.cache.hasAny(...RUOLI_PERMESSI)) {
                 const base = dbCache.baseVisits[message.author.id] || DEFAULT_MAX_VISITS;
                 const extra = dbCache.extraVisits[message.author.id] || 0;
+                const hidden = dbCache.hiddenVisits[message.author.id] || 0;
                 const totalLimit = base + extra;
-                
                 const used = dbCache.playerVisits[message.author.id] || 0;
                 
-                message.reply(`Visite effettuate ${used}/${totalLimit} (Base: ${base} + Extra: ${extra})`);
+                message.reply(`Visite Norm: ${used}/${totalLimit} (Base: ${base} + Extra: ${extra})\nVisite Nascoste disponibili: ${hidden}`);
             }
             return;
         }
 
         if (command === 'torna') {
-            message.delete().catch(()=>{}); // CANCELLA SUBITO IL COMANDO
+            message.delete().catch(()=>{}); 
 
             const homeId = dbCache.playerHomes[message.author.id];
             if (!homeId) return message.reply("❌ Non hai una casa registrata."); 
@@ -245,59 +264,38 @@ client.on('messageCreate', async message => {
             if (!homeChannel) return message.reply("❌ La tua casa non esiste più.");
             if (message.channel.id === homeId) return message.reply("🏠 Sei già a casa.");
 
-            // Ritorno a casa
-            await movePlayer(message.member, message.channel, homeChannel, `🏠 ${message.member} è ritornato.`);
+            // Ritorno a casa (Modalità normale, quindi silent=false)
+            await movePlayer(message.member, message.channel, homeChannel, `🏠 ${message.member} è ritornato.`, false);
         }
 
         if (command === 'bussa') {
-            message.delete().catch(()=>{}); // CANCELLA SUBITO IL COMANDO
+            message.delete().catch(()=>{}); 
 
             // Controllo se sta già aspettando
             if (pendingKnocks.has(message.author.id)) {
                 return message.channel.send(`${message.author}, stai già bussando o aspettando una risposta!`).then(m => setTimeout(() => m.delete(), 5000));
             }
 
-            // [MODIFICA] Calcolo Limit con Extra
-            const base = dbCache.baseVisits[message.author.id] || DEFAULT_MAX_VISITS;
-            const extra = dbCache.extraVisits[message.author.id] || 0;
-            const userLimit = base + extra;
-            
-            const used = dbCache.playerVisits[message.author.id] || 0;
-            
-            if (used >= userLimit) {
-                return message.channel.send(`${message.author}, ⛔ **Sei stanco.** Hai usato tutte le tue ${userLimit} visite per oggi.`).then(m => setTimeout(() => m.delete(), 5000));
-            }
-
-            const tutteLeCase = message.guild.channels.cache
-                .filter(c => c.parentId === ID_CATEGORIA_CASE && c.type === ChannelType.GuildText)
-                .sort((a, b) => a.rawPosition - b.rawPosition); 
-
-            if (tutteLeCase.size === 0) return message.channel.send("❌ Non ci sono case.").then(m => setTimeout(() => m.delete(), 5000));
-
-            // Paginazione
-            const PAGE_SIZE = 25;
-            const totalPages = Math.ceil(tutteLeCase.size / PAGE_SIZE);
-            const pageOptions = [];
-
-            for (let i = 0; i < totalPages; i++) {
-                const start = i * PAGE_SIZE + 1;
-                const end = Math.min((i + 1) * PAGE_SIZE, tutteLeCase.size);
-                pageOptions.push(new StringSelectMenuOptionBuilder()
-                    .setLabel(`Case ${start} - ${end}`)
-                    .setValue(`page_${i}`)
-                    .setEmoji('🏘️')
+            // [MODIFICA RICHIESTA] Prima selezione: Modalità
+            const selectMode = new StringSelectMenuBuilder()
+                .setCustomId('knock_mode_select')
+                .setPlaceholder('Come vuoi entrare?')
+                .addOptions(
+                    new StringSelectMenuOptionBuilder()
+                        .setLabel('Visita Normale')
+                        .setValue('mode_normal')
+                        .setDescription('Bussi alla porta e attendi')
+                        .setEmoji('👋'),
+                    new StringSelectMenuOptionBuilder()
+                        .setLabel('Visita Nascosta')
+                        .setValue('mode_hidden')
+                        .setDescription('Entri senza farti vedere (Richiede Punti Nascosti)')
+                        .setEmoji('🕵️')
                 );
-            }
 
-            const selectGroup = new StringSelectMenuBuilder()
-                .setCustomId('knock_page_select')
-                .setPlaceholder('Seleziona zona...')
-                .addOptions(pageOptions);
-
-            // Risposta effimera così non intasa la chat
             await message.channel.send({ 
-                content: `🏠 **${message.author}, scegli dove andare (Visite rimaste: ${userLimit - used})**`, 
-                components: [new ActionRowBuilder().addComponents(selectGroup)]
+                content: `🎭 **${message.author}, scegli la modalità di visita:**`, 
+                components: [new ActionRowBuilder().addComponents(selectMode)]
             });
         }
 
@@ -314,15 +312,54 @@ client.on('interactionCreate', async interaction => {
     if (!interaction.isStringSelectMenu() && !interaction.isButton()) return;
 
     try {
-        // 1. SELEZIONE PAGINA
-        if (interaction.customId === 'knock_page_select') {
+        // 1. SELEZIONE MODALITÀ (Normale vs Nascosta)
+        if (interaction.customId === 'knock_mode_select') {
             if (interaction.message.content.includes(interaction.user.id) === false && !interaction.message.interaction) {
                 return interaction.reply({ content: "Non è il tuo menu.", ephemeral: true });
             }
 
-            const pageIndex = parseInt(interaction.values[0].split('_')[1]);
-            const PAGE_SIZE = 25;
+            const selectedMode = interaction.values[0]; // 'mode_normal' o 'mode_hidden'
+            
+            // Logica Paginazione Case
+            const tutteLeCase = interaction.guild.channels.cache
+                .filter(c => c.parentId === ID_CATEGORIA_CASE && c.type === ChannelType.GuildText)
+                .sort((a, b) => a.rawPosition - b.rawPosition);
 
+            if (tutteLeCase.size === 0) return interaction.reply({ content: "❌ Non ci sono case.", ephemeral: true });
+
+            const PAGE_SIZE = 25;
+            const totalPages = Math.ceil(tutteLeCase.size / PAGE_SIZE);
+            const pageOptions = [];
+
+            for (let i = 0; i < totalPages; i++) {
+                const start = i * PAGE_SIZE + 1;
+                const end = Math.min((i + 1) * PAGE_SIZE, tutteLeCase.size);
+                pageOptions.push(new StringSelectMenuOptionBuilder()
+                    .setLabel(`Case ${start} - ${end}`)
+                    // Passiamo la modalità nella value della pagina per ricordarcela
+                    .setValue(`page_${i}_${selectedMode}`) 
+                    .setEmoji('🏘️')
+                );
+            }
+
+            const selectGroup = new StringSelectMenuBuilder()
+                .setCustomId('knock_page_select')
+                .setPlaceholder('Seleziona zona...')
+                .addOptions(pageOptions);
+
+            await interaction.update({ 
+                content: `🏘️ **Modalità: ${selectedMode === 'mode_normal' ? 'Normale' : 'Nascosta'}**. Scegli zona:`, 
+                components: [new ActionRowBuilder().addComponents(selectGroup)]
+            });
+        }
+
+        // 2. SELEZIONE PAGINA
+        if (interaction.customId === 'knock_page_select') {
+            const parts = interaction.values[0].split('_'); // ['page', '0', 'mode', 'normal']
+            const pageIndex = parseInt(parts[1]);
+            const currentMode = parts[2] + '_' + parts[3]; // 'mode_normal' o 'mode_hidden'
+
+            const PAGE_SIZE = 25;
             const tutteLeCase = interaction.guild.channels.cache
                 .filter(c => c.parentId === ID_CATEGORIA_CASE && c.type === ChannelType.GuildText)
                 .sort((a, b) => a.rawPosition - b.rawPosition);
@@ -332,23 +369,27 @@ client.on('interactionCreate', async interaction => {
 
             const selectHouse = new StringSelectMenuBuilder()
                 .setCustomId('knock_house_select')
-                .setPlaceholder('A quale porta bussi?')
+                .setPlaceholder('Dove vuoi andare?')
                 .addOptions(caseSlice.map(c => 
                     new StringSelectMenuOptionBuilder()
                         .setLabel(formatName(c.name))
-                        .setValue(c.id)
-                        .setEmoji('🚪')
+                        // Passiamo ID Casa + Modalità
+                        .setValue(`${c.id}_${currentMode}`) 
+                        .setEmoji(currentMode === 'mode_hidden' ? '🕵️' : '🚪')
                 ));
 
             await interaction.update({ 
-                content: `📂 **Scegli la casa:**`, 
+                content: `📂 **Scegli la casa (${currentMode === 'mode_hidden' ? 'Nascosta' : 'Normale'}):**`, 
                 components: [new ActionRowBuilder().addComponents(selectHouse)] 
             });
         }
 
-        // 2. BUSSATA E LOGICA INGRESSO
+        // 3. BUSSATA E LOGICA INGRESSO
         if (interaction.customId === 'knock_house_select') {
-            const targetChannelId = interaction.values[0];
+            const parts = interaction.values[0].split('_'); // [ID_CASA, 'mode', 'normal/hidden']
+            const targetChannelId = parts[0];
+            const mode = parts[1] + '_' + parts[2]; // 'mode_normal' o 'mode_hidden'
+            
             const targetChannel = interaction.guild.channels.cache.get(targetChannelId);
             const knocker = interaction.member;
 
@@ -363,13 +404,36 @@ client.on('interactionCreate', async interaction => {
                 });
             }
 
-            // [MODIFICA] Controllo limiti con Extra
+            // ==========================================
+            // 🕵️ GESTIONE MODALITÀ NASCOSTA
+            // ==========================================
+            if (mode === 'mode_hidden') {
+                const hiddenAvailable = dbCache.hiddenVisits[knocker.id] || 0;
+                if (hiddenAvailable <= 0) {
+                    return interaction.reply({ content: "⛔ Non hai visite nascoste disponibili! Chiedi a un admin o usa !rimaste.", ephemeral: true });
+                }
+
+                // Scala visita nascosta
+                dbCache.hiddenVisits[knocker.id] = hiddenAvailable - 1;
+                await saveDB();
+
+                await interaction.message.delete().catch(()=>{});
+                // Entra in modalità SILENZIOSA (true)
+                await enterHouse(knocker, interaction.channel, targetChannel, "", true); 
+                
+                // Feedback effimero all'utente
+                return interaction.channel.send({ content: `🕵️ ${knocker} sei entrato in modalità nascosta.` }).then(m => setTimeout(() => m.delete(), 3000));
+            }
+
+            // ==========================================
+            // 👋 GESTIONE MODALITÀ NORMALE
+            // ==========================================
             const base = dbCache.baseVisits[knocker.id] || DEFAULT_MAX_VISITS;
             const extra = dbCache.extraVisits[knocker.id] || 0;
             const userLimit = base + extra;
             const used = dbCache.playerVisits[knocker.id] || 0;
             
-            if (used >= userLimit) return interaction.reply({ content: "⛔ Visite finite!", ephemeral: true });
+            if (used >= userLimit) return interaction.reply({ content: "⛔ Visite normali finite!", ephemeral: true });
 
             pendingKnocks.add(knocker.id);
 
@@ -382,20 +446,23 @@ client.on('interactionCreate', async interaction => {
             );
 
             if (membersWithAccess.size === 0) {
-                // --> NESSUNO IN CASA
+                // --> NESSUNO IN CASA (Porta aperta)
                 pendingKnocks.delete(knocker.id);
                 await interaction.channel.send({ content: `🔓 La porta è aperta/incustodita. ${knocker} entra...` }).then(m => setTimeout(() => m.delete(), 5000));
-                await enterHouse(knocker, interaction.channel, targetChannel, `👋 **${knocker.displayName}** è entrato.`);
+                
+                // [MODIFICA RICHIESTA] Messaggio con menzione (@utente)
+                await enterHouse(knocker, interaction.channel, targetChannel, `👋 ${knocker} è entrato.`, false);
                 
             } else {
                 // --> QUALCUNO È IN CASA
                 await interaction.channel.send({ content: `✊ ${knocker} ha bussato a **${formatName(targetChannel.name)}**. Aspetta una risposta...` });
                 
-                const mentions = membersWithAccess.map(m => m.toString()).join(' ');
+                // [MODIFICA RICHIESTA] Tag Ruoli invece di Utenti
+                const roleMentions = RUOLI_PERMESSI.map(id => `<@&${id}>`).join(' ');
                 
-                // [MODIFICA RICHIESTA] "Qualcuno sta bussando"
+                // [MODIFICA RICHIESTA] Formattazione TOC TOC
                 const msg = await targetChannel.send(
-                    `🔔 **TOC TOC!** ${mentions}\n**Qualcuno** sta bussando!\nAvete **5 minuti** per rispondere.\n\n✅ = Apri | ❌ = Ignora`
+                    `🔔 **TOC TOC!** ${roleMentions}\n**Qualcuno** sta bussando!\nAvete **5 minuti** per rispondere.\n\n✅ = Apri | ❌ = Ignora`
                 );
                 await msg.react('✅');
                 await msg.react('❌');
@@ -412,8 +479,7 @@ client.on('interactionCreate', async interaction => {
                         msg.edit(`✅ **${user.displayName}** ha aperto la porta.`);
                         pendingKnocks.delete(knocker.id);
                         
-                        // [MODIFICA RICHIESTA] Rimosso "(accolto da...)"
-                        await enterHouse(knocker, interaction.channel, targetChannel, `👋 **${knocker}** è entrato.`);
+                        await enterHouse(knocker, interaction.channel, targetChannel, `👋 **${knocker}** è entrato.`, false);
                     } else {
                         msg.edit(`❌ **${user.displayName}** ha rifiutato l'ingresso.`);
                         pendingKnocks.delete(knocker.id);
@@ -426,7 +492,7 @@ client.on('interactionCreate', async interaction => {
                     if (collected.size === 0) {
                         pendingKnocks.delete(knocker.id);
                         await targetChannel.send("⏳ Nessuno ha risposto in tempo. La porta viene forzata/aperta.");
-                        await enterHouse(knocker, interaction.channel, targetChannel, `👋 **${knocker.displayName}** è entrato (porta forzata).`);
+                        await enterHouse(knocker, interaction.channel, targetChannel, `👋 **${knocker.displayName}** è entrato (porta forzata).`, false);
                     }
                 });
             }
@@ -446,31 +512,32 @@ function formatName(name) {
     return name.replace(/-/g, ' ').toUpperCase().substring(0, 25);
 }
 
-// Funzione unificata per entrare e scalare visite
-async function enterHouse(member, fromChannel, toChannel, entryMessage) {
-    const current = dbCache.playerVisits[member.id] || 0;
-    dbCache.playerVisits[member.id] = current + 1;
+// Funzione unificata per entrare e scalare visite (Solo Normali)
+// Le visite nascoste vengono scalate PRIMA di chiamare questa funzione
+async function enterHouse(member, fromChannel, toChannel, entryMessage, isSilent) {
+    // Se non è silent (quindi è normale), scala la visita normale
+    if (!isSilent) {
+        const current = dbCache.playerVisits[member.id] || 0;
+        dbCache.playerVisits[member.id] = current + 1;
+    }
     await saveDB();
 
-    await movePlayer(member, fromChannel, toChannel, entryMessage);
+    await movePlayer(member, fromChannel, toChannel, entryMessage, isSilent);
 }
 
-// Funzione Move Player aggiornata per le chat private
-async function movePlayer(member, oldChannel, newChannel, entryMessage) {
+// Funzione Move Player aggiornata
+async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent) {
     if (!member || !newChannel) return;
 
     let channelToLeave = oldChannel;
 
-    // SE L'UTENTE DIGITA DALLA CATEGORIA PRIVATE, DOBBIAMO TROVARE LA SUA VERA POSIZIONE NELLE CASE
+    // SE L'UTENTE DIGITA DALLA CATEGORIA PRIVATE
     if (oldChannel && oldChannel.parentId === ID_CATEGORIA_CHAT_PRIVATE) {
-        // Cerca il canale nella categoria CASE dove l'utente ha il permesso di vedere
         const currentHouse = oldChannel.guild.channels.cache.find(c => 
             c.parentId === ID_CATEGORIA_CASE && 
             c.type === ChannelType.GuildText && 
             c.permissionsFor(member).has(PermissionsBitField.Flags.ViewChannel)
         );
-
-        // Se troviamo una casa, impostiamo quella come canale da cui uscire
         if (currentHouse) {
             channelToLeave = currentHouse;
         }
@@ -478,10 +545,15 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage) {
 
     // Gestione uscita vecchio canale
     if (channelToLeave && channelToLeave.id !== newChannel.id) {
-        
-        // Narrazione uscita e rimozione permessi SOLO se il canale da cui si esce è una Casa
         if (channelToLeave.parentId === ID_CATEGORIA_CASE) {
-            await channelToLeave.send(`🚪 ${member} è uscito.`);
+            
+            // [MODIFICA] Controlla se la modalità precedente era HIDDEN. 
+            // Se era hidden, NON mandare messaggio di uscita.
+            const prevMode = dbCache.playerModes[member.id];
+            if (prevMode !== 'HIDDEN') {
+                await channelToLeave.send(`🚪 ${member} è uscito.`);
+            }
+            
             await channelToLeave.permissionOverwrites.delete(member.id).catch(() => console.log("Impossibile togliere permessi o già tolti."));
         }
     }
@@ -489,11 +561,16 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage) {
     // Gestione entrata nuovo canale
     await newChannel.permissionOverwrites.create(member.id, { ViewChannel: true, SendMessages: true });
 
-    await newChannel.send(entryMessage);
-    
-    // Ping fantasma
-    const p = await newChannel.send(`${member}`);
-    setTimeout(() => p.delete(), 500);
+    // Salva la nuova modalità
+    dbCache.playerModes[member.id] = isSilent ? 'HIDDEN' : 'NORMAL';
+    await saveDB();
+
+    // Se NON è silent, manda il messaggio
+    if (!isSilent) {
+        await newChannel.send(entryMessage);
+    }
+
+    // [MODIFICA RICHIESTA] Rimosso il Ghost Ping (p.delete)
 }
 
 client.login(TOKEN);
