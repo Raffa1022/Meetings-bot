@@ -27,13 +27,10 @@ const ID_CANALE_DB = '1465768646906220700'; // Canale privato dove il bot salva 
 const ID_CATEGORIA_CHAT_PRIVATE = '1460741414357827747'; 
 
 // RUOLI CHE POSSONO RISPONDERE AL BUSSARE (ID Ruoli Discord)
-// Inserisci qui gli ID dei ruoli che, se presenti in casa, devono approvare l'ingresso
-// Questi ruoli sono anche quelli abilitati al comando !rimaste
+// [MODIFICATO] Rimossi 2 ID come richiesto
 const RUOLI_PERMESSI = [
     '1460741403331268661', 
-    '1460741404497019002', 
-    '1460741402672758814',
-    '1460741405722022151' // <--- [MODIFICA] Aggiungi qui il 4° ID ruolo
+    '1460741404497019002'
 ]; 
 
 const DEFAULT_MAX_VISITS = 3;
@@ -79,11 +76,12 @@ const client = new Client({
 
 let dbCache = {
     playerHomes: {},   // { userID: channelID }
-    playerVisits: {},  // { userID: count }
+    playerVisits: {},  // { userID: count (visite normali usate) }
     baseVisits: {},    // { userID: limit }
     extraVisits: {},   // { userID: extra }
-    hiddenVisits: {},  // { userID: count } [NUOVO: Visite Nascoste Disponibili]
-    playerModes: {},   // { userID: 'NORMAL' | 'HIDDEN' } [NUOVO: Traccia come è entrato l'utente]
+    hiddenVisits: {},  // { userID: count } [Visite Nascoste Disponibili]
+    forcedVisits: {},  // { userID: count } [NUOVO: Visite Forzate Disponibili]
+    playerModes: {},   // { userID: 'NORMAL' | 'HIDDEN' }
     lastReset: null
 };
 
@@ -107,6 +105,7 @@ async function loadDB() {
                 if (!dbCache.baseVisits) dbCache.baseVisits = dbCache.maxVisits || {};
                 if (!dbCache.extraVisits) dbCache.extraVisits = {};
                 if (!dbCache.hiddenVisits) dbCache.hiddenVisits = {};
+                if (!dbCache.forcedVisits) dbCache.forcedVisits = {}; // [NUOVO]
                 if (!dbCache.playerModes) dbCache.playerModes = {};
                 
                 console.log("💾 Database caricato con successo!");
@@ -142,9 +141,10 @@ client.once('ready', async () => {
     if (dbCache.lastReset !== today) {
         dbCache.playerVisits = {};
         dbCache.extraVisits = {}; 
-        // Nota: Le hiddenVisits NON si resettano giornalmente di solito, 
-        // ma se vuoi resettarle scommenta la riga sotto:
+        // Le visite Nascoste e Forzate non si resettano automaticamente (cumulabili)
+        // Se vuoi resettarle, scommenta:
         // dbCache.hiddenVisits = {}; 
+        // dbCache.forcedVisits = {};
         dbCache.lastReset = today;
         await saveDB();
         console.log("🔄 Contatori visite e extra resettati per nuovo giorno.");
@@ -185,46 +185,58 @@ client.on('messageCreate', async message => {
             await pinnedMsg.pin();
         }
 
-        if (command === 'base') {
+        // [NUOVO COMANDO UNICO] !visite @utente base forzate nascoste
+        if (command === 'visite') {
             if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) return message.reply("⛔ Non sei admin.");
             
             const targetUser = message.mentions.members.first();
-            const limit = parseInt(args[1]);
+            // args[0] è il tag utente, quindi i numeri partono da 1
+            const baseInput = parseInt(args[1]);
+            const forcedInput = parseInt(args[2]);
+            const hiddenInput = parseInt(args[3]);
 
-            if (!targetUser || isNaN(limit)) return message.reply("❌ Uso: `!base @Utente Numero`");
+            if (!targetUser || isNaN(baseInput) || isNaN(forcedInput) || isNaN(hiddenInput)) {
+                return message.reply("❌ Uso: `!visite @Utente [Base] [Forzate] [Nascoste]` (es: `!visite @tizio 3 2 1`)");
+            }
+
+            dbCache.baseVisits[targetUser.id] = baseInput;
+            dbCache.forcedVisits[targetUser.id] = forcedInput;
+            dbCache.hiddenVisits[targetUser.id] = hiddenInput;
             
-            dbCache.baseVisits[targetUser.id] = limit;
             await saveDB();
-            message.reply(`✅ Visite **BASE** per **${targetUser.displayName}** impostate a **${limit}**.`);
+            message.reply(`✅ Impostate per **${targetUser.displayName}**:\n🏠 Base: ${baseInput}\n🧨 Forzate: ${forcedInput}\n🕵️ Nascoste: ${hiddenInput}`);
         }
 
+        // [MODIFICATO] !aggiunta tipo @utente numero
         if (command === 'aggiunta') {
             if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) return message.reply("⛔ Non sei admin.");
             
+            const type = args[0] ? args[0].toLowerCase() : null;
             const targetUser = message.mentions.members.first();
-            const extra = parseInt(args[1]);
+            const amount = parseInt(args[2]);
 
-            if (!targetUser || isNaN(extra)) return message.reply("❌ Uso: `!aggiunta @Utente Numero`");
+            if (!type || !targetUser || isNaN(amount) || !['base', 'nascosta', 'forzata'].includes(type)) {
+                return message.reply("❌ Uso: `!aggiunta base/nascosta/forzata @Utente Numero`");
+            }
             
-            const currentExtra = dbCache.extraVisits[targetUser.id] || 0;
-            dbCache.extraVisits[targetUser.id] = currentExtra + extra;
+            if (type === 'base') {
+                // "Aggiunta base" qui intendo come Extra visite normali giornaliere
+                const current = dbCache.extraVisits[targetUser.id] || 0;
+                dbCache.extraVisits[targetUser.id] = current + amount;
+                message.reply(`✅ Aggiunte **${amount}** visite EXTRA a **${targetUser.displayName}**.`);
+            } 
+            else if (type === 'nascosta') {
+                const current = dbCache.hiddenVisits[targetUser.id] || 0;
+                dbCache.hiddenVisits[targetUser.id] = current + amount;
+                message.reply(`✅ Aggiunte **${amount}** visite NASCOSTE a **${targetUser.displayName}**.`);
+            }
+            else if (type === 'forzata') {
+                const current = dbCache.forcedVisits[targetUser.id] || 0;
+                dbCache.forcedVisits[targetUser.id] = current + amount;
+                message.reply(`✅ Aggiunte **${amount}** visite FORZATE a **${targetUser.displayName}**.`);
+            }
+
             await saveDB();
-            message.reply(`✅ Aggiunte **${extra}** visite a **${targetUser.displayName}**. (Totale Extra: ${currentExtra + extra})`);
-        }
-
-        // [NUOVO COMANDO] !nascosto @Utente numero
-        if (command === 'nascosto') {
-            if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) return message.reply("⛔ Non sei admin.");
-            
-            const targetUser = message.mentions.members.first();
-            const hiddenCount = parseInt(args[1]);
-
-            if (!targetUser || isNaN(hiddenCount)) return message.reply("❌ Uso: `!nascosto @Utente Numero`");
-            
-            const currentHidden = dbCache.hiddenVisits[targetUser.id] || 0;
-            dbCache.hiddenVisits[targetUser.id] = currentHidden + hiddenCount;
-            await saveDB();
-            message.reply(`✅ Aggiunte **${hiddenCount}** visite NASCOSTE a **${targetUser.displayName}**. (Totale Nascoste: ${currentHidden + hiddenCount})`);
         }
 
         if (command === 'resetvisite') {
@@ -232,9 +244,10 @@ client.on('messageCreate', async message => {
             
             dbCache.playerVisits = {};
             dbCache.extraVisits = {}; 
-            dbCache.hiddenVisits = {}; // [MODIFICA] Resetta anche le nascoste
+            dbCache.hiddenVisits = {}; 
+            dbCache.forcedVisits = {}; // Resetta anche le forzate
             await saveDB();
-            message.reply("🔄 Tutti i contatori resettati (visite usate, extra e nascoste). Si riparte dalle visite BASE.");
+            message.reply("🔄 Tutti i contatori resettati (base usate, extra, nascoste e forzate).");
         }
 
         // ---------------------------------------------------------
@@ -245,11 +258,13 @@ client.on('messageCreate', async message => {
             if (message.member.roles.cache.hasAny(...RUOLI_PERMESSI)) {
                 const base = dbCache.baseVisits[message.author.id] || DEFAULT_MAX_VISITS;
                 const extra = dbCache.extraVisits[message.author.id] || 0;
-                const hidden = dbCache.hiddenVisits[message.author.id] || 0;
                 const totalLimit = base + extra;
                 const used = dbCache.playerVisits[message.author.id] || 0;
+
+                const hidden = dbCache.hiddenVisits[message.author.id] || 0;
+                const forced = dbCache.forcedVisits[message.author.id] || 0;
                 
-                message.reply(`Visite Norm: ${used}/${totalLimit} (Base: ${base} + Extra: ${extra})\nVisite Nascoste disponibili: ${hidden}`);
+                message.reply(`📊 **Le tue visite:**\n🏠 Normali: ${used}/${totalLimit}\n🧨 Forzate: ${forced}\n🕵️ Nascoste: ${hidden}`);
             }
             return;
         }
@@ -264,19 +279,18 @@ client.on('messageCreate', async message => {
             if (!homeChannel) return message.reply("❌ La tua casa non esiste più.");
             if (message.channel.id === homeId) return message.reply("🏠 Sei già a casa.");
 
-            // Ritorno a casa (Modalità normale, quindi silent=false)
+            // Ritorno a casa
             await movePlayer(message.member, message.channel, homeChannel, `🏠 ${message.member} è ritornato.`, false);
         }
 
         if (command === 'bussa') {
             message.delete().catch(()=>{}); 
 
-            // Controllo se sta già aspettando
             if (pendingKnocks.has(message.author.id)) {
                 return message.channel.send(`${message.author}, stai già bussando o aspettando una risposta!`).then(m => setTimeout(() => m.delete(), 5000));
             }
 
-            // [MODIFICA RICHIESTA] Prima selezione: Modalità
+            // Selezione: Modalità (Normale, Nascosta, Forzata)
             const selectMode = new StringSelectMenuBuilder()
                 .setCustomId('knock_mode_select')
                 .setPlaceholder('Come vuoi entrare?')
@@ -286,6 +300,11 @@ client.on('messageCreate', async message => {
                         .setValue('mode_normal')
                         .setDescription('Bussi alla porta e attendi')
                         .setEmoji('👋'),
+                    new StringSelectMenuOptionBuilder()
+                        .setLabel('Visita Forzata')
+                        .setValue('mode_forced') // [NUOVO]
+                        .setDescription('Entri con forza (Richiede Punti Forzata)')
+                        .setEmoji('🧨'),
                     new StringSelectMenuOptionBuilder()
                         .setLabel('Visita Nascosta')
                         .setValue('mode_hidden')
@@ -312,20 +331,28 @@ client.on('interactionCreate', async interaction => {
     if (!interaction.isStringSelectMenu() && !interaction.isButton()) return;
 
     try {
-        // 1. SELEZIONE MODALITÀ (Normale vs Nascosta)
+        // 1. SELEZIONE MODALITÀ
         if (interaction.customId === 'knock_mode_select') {
             if (interaction.message.content.includes(interaction.user.id) === false && !interaction.message.interaction) {
                 return interaction.reply({ content: "Non è il tuo menu.", ephemeral: true });
             }
 
-            const selectedMode = interaction.values[0]; // 'mode_normal' o 'mode_hidden'
+            const selectedMode = interaction.values[0]; 
             
-            // Logica Paginazione Case
+            // [MODIFICA FILTRO] Escludi casa propria e casa attuale
+            const userHomeId = dbCache.playerHomes[interaction.user.id];
+            const currentChannelId = interaction.channel.id;
+
             const tutteLeCase = interaction.guild.channels.cache
-                .filter(c => c.parentId === ID_CATEGORIA_CASE && c.type === ChannelType.GuildText)
+                .filter(c => 
+                    c.parentId === ID_CATEGORIA_CASE && 
+                    c.type === ChannelType.GuildText &&
+                    c.id !== userHomeId &&          // Rimuove casa proprietario
+                    c.id !== currentChannelId       // Rimuove casa attuale
+                )
                 .sort((a, b) => a.rawPosition - b.rawPosition);
 
-            if (tutteLeCase.size === 0) return interaction.reply({ content: "❌ Non ci sono case.", ephemeral: true });
+            if (tutteLeCase.size === 0) return interaction.reply({ content: "❌ Non ci sono altre case disponibili dove andare.", ephemeral: true });
 
             const PAGE_SIZE = 25;
             const totalPages = Math.ceil(tutteLeCase.size / PAGE_SIZE);
@@ -336,7 +363,6 @@ client.on('interactionCreate', async interaction => {
                 const end = Math.min((i + 1) * PAGE_SIZE, tutteLeCase.size);
                 pageOptions.push(new StringSelectMenuOptionBuilder()
                     .setLabel(`Case ${start} - ${end}`)
-                    // Passiamo la modalità nella value della pagina per ricordarcela
                     .setValue(`page_${i}_${selectedMode}`) 
                     .setEmoji('🏘️')
                 );
@@ -347,23 +373,36 @@ client.on('interactionCreate', async interaction => {
                 .setPlaceholder('Seleziona zona...')
                 .addOptions(pageOptions);
 
+            let modeText = 'Normale';
+            if (selectedMode === 'mode_hidden') modeText = 'Nascosta';
+            if (selectedMode === 'mode_forced') modeText = 'Forzata';
+
             await interaction.update({ 
-                content: `🏘️ **Modalità: ${selectedMode === 'mode_normal' ? 'Normale' : 'Nascosta'}**. Scegli zona:`, 
+                content: `🏘️ **Modalità: ${modeText}**. Scegli zona:`, 
                 components: [new ActionRowBuilder().addComponents(selectGroup)]
             });
         }
 
         // 2. SELEZIONE PAGINA
         if (interaction.customId === 'knock_page_select') {
-            const parts = interaction.values[0].split('_'); // ['page', '0', 'mode', 'normal']
+            const parts = interaction.values[0].split('_'); 
             const pageIndex = parseInt(parts[1]);
-            const currentMode = parts[2] + '_' + parts[3]; // 'mode_normal' o 'mode_hidden'
+            const currentMode = parts[2] + '_' + parts[3]; 
 
-            const PAGE_SIZE = 25;
+            const userHomeId = dbCache.playerHomes[interaction.user.id];
+            const currentChannelId = interaction.channel.id;
+
+            // Riapplichiamo lo stesso filtro per coerenza
             const tutteLeCase = interaction.guild.channels.cache
-                .filter(c => c.parentId === ID_CATEGORIA_CASE && c.type === ChannelType.GuildText)
+                .filter(c => 
+                    c.parentId === ID_CATEGORIA_CASE && 
+                    c.type === ChannelType.GuildText &&
+                    c.id !== userHomeId &&
+                    c.id !== currentChannelId
+                )
                 .sort((a, b) => a.rawPosition - b.rawPosition);
 
+            const PAGE_SIZE = 25;
             const start = pageIndex * PAGE_SIZE;
             const caseSlice = Array.from(tutteLeCase.values()).slice(start, start + PAGE_SIZE);
 
@@ -373,35 +412,45 @@ client.on('interactionCreate', async interaction => {
                 .addOptions(caseSlice.map(c => 
                     new StringSelectMenuOptionBuilder()
                         .setLabel(formatName(c.name))
-                        // Passiamo ID Casa + Modalità
                         .setValue(`${c.id}_${currentMode}`) 
-                        .setEmoji(currentMode === 'mode_hidden' ? '🕵️' : '🚪')
+                        .setEmoji(currentMode === 'mode_hidden' ? '🕵️' : (currentMode === 'mode_forced' ? '🧨' : '🚪'))
                 ));
 
             await interaction.update({ 
-                content: `📂 **Scegli la casa (${currentMode === 'mode_hidden' ? 'Nascosta' : 'Normale'}):**`, 
+                content: `📂 **Scegli la casa:**`, 
                 components: [new ActionRowBuilder().addComponents(selectHouse)] 
             });
         }
 
-        // 3. BUSSATA E LOGICA INGRESSO
+        // 3. ESECUZIONE (BUSSATA / INGRESSO)
         if (interaction.customId === 'knock_house_select') {
-            const parts = interaction.values[0].split('_'); // [ID_CASA, 'mode', 'normal/hidden']
+            const parts = interaction.values[0].split('_'); 
             const targetChannelId = parts[0];
-            const mode = parts[1] + '_' + parts[2]; // 'mode_normal' o 'mode_hidden'
+            const mode = parts[1] + '_' + parts[2]; 
             
             const targetChannel = interaction.guild.channels.cache.get(targetChannelId);
             const knocker = interaction.member;
 
             if (!targetChannel) return interaction.reply({ content: "Casa inesistente.", ephemeral: true });
 
-            // Controllo Dimora Privata
-            const playerHomeId = dbCache.playerHomes[knocker.id];
-            if (playerHomeId === targetChannelId) {
-                return interaction.reply({ 
-                    content: `⛔ **${formatName(targetChannel.name)}** è la tua dimora privata.`, 
-                    ephemeral: true 
-                });
+            // ==========================================
+            // 🧨 GESTIONE MODALITÀ FORZATA
+            // ==========================================
+            if (mode === 'mode_forced') {
+                const forcedAvailable = dbCache.forcedVisits[knocker.id] || 0;
+                if (forcedAvailable <= 0) {
+                    return interaction.reply({ content: "⛔ Non hai visite forzate disponibili!", ephemeral: true });
+                }
+
+                // Scala visita forzata
+                dbCache.forcedVisits[knocker.id] = forcedAvailable - 1;
+                await saveDB();
+
+                await interaction.message.delete().catch(()=>{});
+                // Entra con narrazione specifica
+                await enterHouse(knocker, interaction.channel, targetChannel, `@everyone ${knocker} ha sfondato la porta ed è entrato`, false);
+                
+                return interaction.channel.send({ content: `🧨 ${knocker} ha forzato l'ingresso!` }).then(m => setTimeout(() => m.delete(), 3000));
             }
 
             // ==========================================
@@ -410,18 +459,15 @@ client.on('interactionCreate', async interaction => {
             if (mode === 'mode_hidden') {
                 const hiddenAvailable = dbCache.hiddenVisits[knocker.id] || 0;
                 if (hiddenAvailable <= 0) {
-                    return interaction.reply({ content: "⛔ Non hai visite nascoste disponibili! Chiedi a un admin o usa !rimaste.", ephemeral: true });
+                    return interaction.reply({ content: "⛔ Non hai visite nascoste disponibili!", ephemeral: true });
                 }
 
-                // Scala visita nascosta
                 dbCache.hiddenVisits[knocker.id] = hiddenAvailable - 1;
                 await saveDB();
 
                 await interaction.message.delete().catch(()=>{});
-                // Entra in modalità SILENZIOSA (true)
                 await enterHouse(knocker, interaction.channel, targetChannel, "", true); 
                 
-                // Feedback effimero all'utente
                 return interaction.channel.send({ content: `🕵️ ${knocker} sei entrato in modalità nascosta.` }).then(m => setTimeout(() => m.delete(), 3000));
             }
 
@@ -446,21 +492,16 @@ client.on('interactionCreate', async interaction => {
             );
 
             if (membersWithAccess.size === 0) {
-                // --> NESSUNO IN CASA (Porta aperta)
+                // Nessuno in casa
                 pendingKnocks.delete(knocker.id);
                 await interaction.channel.send({ content: `🔓 La porta è aperta/incustodita. ${knocker} entra...` }).then(m => setTimeout(() => m.delete(), 5000));
-                
-                // [MODIFICA RICHIESTA] Messaggio con menzione (@utente)
                 await enterHouse(knocker, interaction.channel, targetChannel, `👋 ${knocker} è entrato.`, false);
-                
             } else {
-                // --> QUALCUNO È IN CASA
+                // Qualcuno è in casa
                 await interaction.channel.send({ content: `✊ ${knocker} ha bussato a **${formatName(targetChannel.name)}**. Aspetta una risposta...` });
                 
-                // [MODIFICA RICHIESTA] Tag Ruoli invece di Utenti
                 const roleMentions = RUOLI_PERMESSI.map(id => `<@&${id}>`).join(' ');
                 
-                // [MODIFICA RICHIESTA] Formattazione TOC TOC
                 const msg = await targetChannel.send(
                     `🔔 **TOC TOC!** ${roleMentions}\n**Qualcuno** sta bussando!\nAvete **5 minuti** per rispondere.\n\n✅ = Apri | ❌ = Ignora`
                 );
@@ -478,7 +519,6 @@ client.on('interactionCreate', async interaction => {
                     if (reaction.emoji.name === '✅') {
                         msg.edit(`✅ **${user.displayName}** ha aperto la porta.`);
                         pendingKnocks.delete(knocker.id);
-                        
                         await enterHouse(knocker, interaction.channel, targetChannel, `👋 **${knocker}** è entrato.`, false);
                     } else {
                         msg.edit(`❌ **${user.displayName}** ha rifiutato l'ingresso.`);
@@ -512,26 +552,40 @@ function formatName(name) {
     return name.replace(/-/g, ' ').toUpperCase().substring(0, 25);
 }
 
-// Funzione unificata per entrare e scalare visite (Solo Normali)
-// Le visite nascoste vengono scalate PRIMA di chiamare questa funzione
+// Funzione unificata per entrare
 async function enterHouse(member, fromChannel, toChannel, entryMessage, isSilent) {
-    // Se non è silent (quindi è normale), scala la visita normale
-    if (!isSilent) {
+    // Se non è silent e non è forzata, scala visita normale?
+    // NOTA: Se siamo arrivati qui da "mode_forced", i punti forzati sono GIA stati scalati sopra.
+    // Se siamo arrivati da "mode_hidden", i punti nascosti sono GIA stati scalati.
+    // Dobbiamo scalare solo le visite normali se NON è silent e NON è entrata forzata specifica.
+    
+    // Per semplicità nel codice precedente: 
+    // enterHouse scala DB['playerVisits'] se !isSilent.
+    // Tuttavia, per la visita FORZATA vogliamo mandare il messaggio MA NON scalare la visita 'normale', 
+    // bensì quella 'forzata' (che abbiamo già scalato nel blocco if mode_forced).
+    
+    // Soluzione: controlliamo se entryMessage contiene la frase della forzata per evitare doppio addebito?
+    // O meglio: passiamo un flag. Ma per non toccare troppo le firme:
+    
+    // Se il messaggio è quello standard o di porta aperta, scala normale.
+    // Se è quello forzato (sfondato), non scala la normale.
+    
+    const isForcedEntry = entryMessage.includes("ha sfondato la porta");
+    
+    if (!isSilent && !isForcedEntry) {
         const current = dbCache.playerVisits[member.id] || 0;
         dbCache.playerVisits[member.id] = current + 1;
+        await saveDB();
     }
-    await saveDB();
 
     await movePlayer(member, fromChannel, toChannel, entryMessage, isSilent);
 }
 
-// Funzione Move Player aggiornata
 async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent) {
     if (!member || !newChannel) return;
 
     let channelToLeave = oldChannel;
 
-    // SE L'UTENTE DIGITA DALLA CATEGORIA PRIVATE
     if (oldChannel && oldChannel.parentId === ID_CATEGORIA_CHAT_PRIVATE) {
         const currentHouse = oldChannel.guild.channels.cache.find(c => 
             c.parentId === ID_CATEGORIA_CASE && 
@@ -543,35 +597,24 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
         }
     }
 
-    // Gestione uscita vecchio canale
     if (channelToLeave && channelToLeave.id !== newChannel.id) {
         if (channelToLeave.parentId === ID_CATEGORIA_CASE) {
-            
-            // [MODIFICA] Controlla se la modalità precedente era HIDDEN. 
-            // Se era hidden, NON mandare messaggio di uscita.
             const prevMode = dbCache.playerModes[member.id];
             if (prevMode !== 'HIDDEN') {
                 await channelToLeave.send(`🚪 ${member} è uscito.`);
             }
-            
-            await channelToLeave.permissionOverwrites.delete(member.id).catch(() => console.log("Impossibile togliere permessi o già tolti."));
+            await channelToLeave.permissionOverwrites.delete(member.id).catch(() => console.log("Permessi già tolti."));
         }
     }
 
-    // Gestione entrata nuovo canale
     await newChannel.permissionOverwrites.create(member.id, { ViewChannel: true, SendMessages: true });
 
-    // Salva la nuova modalità
     dbCache.playerModes[member.id] = isSilent ? 'HIDDEN' : 'NORMAL';
     await saveDB();
 
-    // Se NON è silent, manda il messaggio
     if (!isSilent) {
         await newChannel.send(entryMessage);
     }
-
-    // [MODIFICA RICHIESTA] Rimosso il Ghost Ping (p.delete)
 }
 
 client.login(TOKEN);
-
