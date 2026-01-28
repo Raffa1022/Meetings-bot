@@ -641,4 +641,162 @@ client.on('interactionCreate', async interaction => {
 
             // ==========================================
             // 🧨 GESTIONE MODALITÀ FORZATA
-            // =================
+            // ==========================================
+            if (mode === 'mode_forced') {
+                const forcedAvailable = dbCache.forcedVisits[knocker.id] || 0;
+                if (forcedAvailable <= 0) {
+                    return interaction.reply({ content: "⛔ Non hai visite forzate disponibili!", ephemeral: true });
+                }
+
+                dbCache.forcedVisits[knocker.id] = forcedAvailable - 1;
+                await saveDB();
+
+                await interaction.message.delete().catch(()=>{});
+                
+                const roleMentions = RUOLI_PERMESSI.map(id => `<@&${id}>`).join(', ');
+                const narrazioneForzata = `${roleMentions}, ${knocker} ha sfondato la porta ed è entrato`;
+
+                await enterHouse(knocker, interaction.channel, targetChannel, narrazioneForzata, false);
+                
+                // [MODIFICATO] Stringa pulita senza doppioni
+                return interaction.channel.send({ content: `🧨 ${knocker} ha forzato l'ingresso in 🏡| ${formatName(targetChannel.name)}` });
+            }
+
+            // ==========================================
+            // 🕵️ GESTIONE MODALITÀ NASCOSTA
+            // ==========================================
+            if (mode === 'mode_hidden') {
+                const hiddenAvailable = dbCache.hiddenVisits[knocker.id] || 0;
+                if (hiddenAvailable <= 0) {
+                    return interaction.reply({ content: "⛔ Non hai visite nascoste disponibili!", ephemeral: true });
+                }
+
+                dbCache.hiddenVisits[knocker.id] = hiddenAvailable - 1;
+                await saveDB();
+
+                await interaction.message.delete().catch(()=>{});
+                await enterHouse(knocker, interaction.channel, targetChannel, "", true); 
+                
+                // [MODIFICATO] Stringa pulita senza doppioni
+                return interaction.channel.send({ content: `🕵️ ${knocker} sei entrato in modalità nascosta in 🏡| ${formatName(targetChannel.name)}` });
+            }
+
+            // ==========================================
+            // 👋 GESTIONE MODALITÀ NORMALE
+            // ==========================================
+            const base = dbCache.baseVisits[knocker.id] || DEFAULT_MAX_VISITS;
+            const extra = dbCache.extraVisits[knocker.id] || 0;
+            const userLimit = base + extra;
+            const used = dbCache.playerVisits[knocker.id] || 0;
+            
+            if (used >= userLimit) return interaction.reply({ content: "⛔ Visite normali finite!", ephemeral: true });
+
+            pendingKnocks.add(knocker.id);
+            await interaction.message.delete().catch(()=>{});
+
+            const membersWithAccess = targetChannel.members.filter(member => 
+                !member.user.bot && 
+                member.id !== knocker.id &&
+                member.roles.cache.hasAny(...RUOLI_PERMESSI)
+            );
+
+            if (membersWithAccess.size === 0) {
+                pendingKnocks.delete(knocker.id);
+                await interaction.channel.send({ content: `🔓 La porta è aperta...` }).then(m => setTimeout(() => m.delete(), 5000));
+                await enterHouse(knocker, interaction.channel, targetChannel, `👋 ${knocker} è entrato.`, false);
+            } else {
+                await interaction.channel.send({ content: `✊ ${knocker} ha bussato a **${formatName(targetChannel.name)}**.` });
+                
+                const roleMentions = RUOLI_PERMESSI.map(id => `<@&${id}>`).join(' ');
+                const msg = await targetChannel.send(
+                    `🔔 **TOC TOC!** ${roleMentions}\n**Qualcuno** sta bussando!\nAvete **5 minuti** per rispondere.\n\n✅ = Apri | ❌ = Rifiuta`
+                );
+                await msg.react('✅');
+                await msg.react('❌');
+
+                const filter = (reaction, user) => ['✅', '❌'].includes(reaction.emoji.name) && membersWithAccess.has(user.id);
+                const collector = msg.createReactionCollector({ filter, time: 300000, max: 1 });
+
+                collector.on('collect', async (reaction, user) => {
+                    if (reaction.emoji.name === '✅') {
+                        msg.edit(`✅ **${user.displayName}** ha aperto.`);
+                        pendingKnocks.delete(knocker.id);
+                        await enterHouse(knocker, interaction.channel, targetChannel, `👋 **${knocker}** è entrato.`, false);
+                    } else {
+                        const currentRefused = dbCache.playerVisits[knocker.id] || 0;
+                        dbCache.playerVisits[knocker.id] = currentRefused + 1;
+                        await saveDB();
+
+                        msg.edit(`❌ **${user.displayName}** ha rifiutato.`);
+                        pendingKnocks.delete(knocker.id);
+                        await interaction.channel.send(`⛔ ${knocker}, rifiutato. Hai perso la visita.`);
+                    }
+                });
+
+                collector.on('end', async (collected) => {
+                    if (collected.size === 0) {
+                        pendingKnocks.delete(knocker.id);
+                        await targetChannel.send("⏳ Nessuno ha risposto. La porta viene forzata.");
+                        await enterHouse(knocker, interaction.channel, targetChannel, `👋 ${knocker} è entrato.`, false);
+                    }
+                });
+            }
+        }
+    } catch (error) {
+        console.error("Errore interazione:", error);
+        if (interaction.member) pendingKnocks.delete(interaction.member.id);
+    }
+});
+
+// ==========================================
+// 🛠️ FUNZIONI DI UTILITÀ
+// ==========================================
+
+function formatName(name) {
+    return name.replace(/-/g, ' ').toUpperCase().substring(0, 25);
+}
+
+async function enterHouse(member, fromChannel, toChannel, entryMessage, isSilent) {
+    const isForcedEntry = entryMessage.includes("ha sfondato la porta");
+    
+    if (!isSilent && !isForcedEntry) {
+        const current = dbCache.playerVisits[member.id] || 0;
+        dbCache.playerVisits[member.id] = current + 1;
+        await saveDB();
+    }
+
+    await movePlayer(member, fromChannel, toChannel, entryMessage, isSilent);
+}
+
+async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent) {
+    if (!member || !newChannel) return;
+
+    let channelToLeave = oldChannel;
+    // Se siamo in chat privata, dobbiamo trovare la casa dove si trova effettivamente l'utente
+    if (oldChannel && oldChannel.parentId === ID_CATEGORIA_CHAT_PRIVATE) {
+        const currentHouse = oldChannel.guild.channels.cache.find(c => 
+            c.parentId === ID_CATEGORIA_CASE && 
+            c.permissionsFor(member).has(PermissionsBitField.Flags.ViewChannel)
+        );
+        if (currentHouse) channelToLeave = currentHouse;
+    }
+
+    if (channelToLeave && channelToLeave.id !== newChannel.id) {
+        if (channelToLeave.parentId === ID_CATEGORIA_CASE) {
+            const prevMode = dbCache.playerModes[member.id];
+            if (prevMode !== 'HIDDEN') {
+                // Messaggio di uscita nel vecchio canale
+                await channelToLeave.send(`🚪 ${member} è uscito.`);
+            }
+            await channelToLeave.permissionOverwrites.delete(member.id).catch(() => {});
+        }
+    }
+
+    await newChannel.permissionOverwrites.create(member.id, { ViewChannel: true, SendMessages: true });
+    dbCache.playerModes[member.id] = isSilent ? 'HIDDEN' : 'NORMAL';
+    await saveDB();
+
+    if (!isSilent) await newChannel.send(entryMessage);
+}
+
+client.login(TOKEN);
