@@ -79,7 +79,8 @@ const client = new Client({
 let dbCache = {
     playerHomes: {},   // { userID: channelID }
     playerVisits: {},  // { userID: count }
-    maxVisits: {},     // { userID: limit }
+    baseVisits: {},    // { userID: limit } [MODIFICATO: Da maxVisits a baseVisits]
+    extraVisits: {},   // { userID: extra } [NUOVO: Visite aggiuntive]
     lastReset: null
 };
 
@@ -95,7 +96,14 @@ async function loadDB() {
             const lastMsg = messages.first();
             if (lastMsg.content.startsWith('```json')) {
                 const jsonContent = lastMsg.content.replace(/```json|```/g, '');
-                dbCache = JSON.parse(jsonContent);
+                const data = JSON.parse(jsonContent);
+                
+                // Merge per compatibilità
+                dbCache = { ...dbCache, ...data };
+                // Se caricando un vecchio DB mancano i campi nuovi, li inizializzo
+                if (!dbCache.baseVisits) dbCache.baseVisits = dbCache.maxVisits || {};
+                if (!dbCache.extraVisits) dbCache.extraVisits = {};
+                
                 console.log("💾 Database caricato con successo!");
             }
         }
@@ -124,13 +132,14 @@ client.once('ready', async () => {
     console.log(`✅ Bot Online come ${client.user.tag}!`);
     await loadDB();
     
-    // Controllo Reset Giornaliero (Semplificato)
+    // Controllo Reset Giornaliero
     const today = new Date().toDateString();
     if (dbCache.lastReset !== today) {
         dbCache.playerVisits = {};
+        dbCache.extraVisits = {}; // [MODIFICA] Resetta anche le visite aggiuntive al nuovo giorno
         dbCache.lastReset = today;
         await saveDB();
-        console.log("🔄 Contatori visite resettati per nuovo giorno.");
+        console.log("🔄 Contatori visite e extra resettati per nuovo giorno.");
     }
 });
 
@@ -169,39 +178,59 @@ client.on('messageCreate', async message => {
             await pinnedMsg.pin();
         }
 
-        // !setmaxvisite @Utente 5
-        if (command === 'setmaxvisite') {
+        // [MODIFICA RICHIESTA] !base @Utente numero
+        if (command === 'base') {
             if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) return message.reply("⛔ Non sei admin.");
             
             const targetUser = message.mentions.members.first();
             const limit = parseInt(args[1]);
 
-            if (!targetUser || isNaN(limit)) return message.reply("❌ Uso: `!setmaxvisite @Utente Numero`");
+            if (!targetUser || isNaN(limit)) return message.reply("❌ Uso: `!base @Utente Numero`");
             
-            dbCache.maxVisits[targetUser.id] = limit;
+            dbCache.baseVisits[targetUser.id] = limit;
             await saveDB();
-            message.reply(`✅ Limite visite per **${targetUser.displayName}** impostato a **${limit}**.`);
+            message.reply(`✅ Visite **BASE** per **${targetUser.displayName}** impostate a **${limit}**.`);
         }
 
-        // !resetvisite
+        // [NUOVO] !aggiunta @Utente numero
+        if (command === 'aggiunta') {
+            if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) return message.reply("⛔ Non sei admin.");
+            
+            const targetUser = message.mentions.members.first();
+            const extra = parseInt(args[1]);
+
+            if (!targetUser || isNaN(extra)) return message.reply("❌ Uso: `!aggiunta @Utente Numero`");
+            
+            const currentExtra = dbCache.extraVisits[targetUser.id] || 0;
+            dbCache.extraVisits[targetUser.id] = currentExtra + extra;
+            await saveDB();
+            message.reply(`✅ Aggiunte **${extra}** visite a **${targetUser.displayName}**. (Totale Extra: ${currentExtra + extra})`);
+        }
+
+        // [MODIFICA RICHIESTA] !resetvisite
         if (command === 'resetvisite') {
             if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) return message.reply("⛔ Non sei admin.");
+            
             dbCache.playerVisits = {};
+            dbCache.extraVisits = {}; // Resetta anche le aggiuntive, si riparte dalla base
             await saveDB();
-            message.reply("🔄 Tutti i contatori visite sono stati resettati manualmente.");
+            message.reply("🔄 Tutti i contatori resettati (visite usate azzerate, visite extra rimosse). Si riparte dalle visite BASE.");
         }
 
         // ---------------------------------------------------------
         // 👤 COMANDI GIOCATORE
         // ---------------------------------------------------------
 
-        // !rimaste
+        // [MODIFICA RICHIESTA] !rimaste (Conta Base + Aggiuntive)
         if (command === 'rimaste') {
             if (message.member.roles.cache.hasAny(...RUOLI_PERMESSI)) {
-                const limit = dbCache.maxVisits[message.author.id] || DEFAULT_MAX_VISITS;
+                const base = dbCache.baseVisits[message.author.id] || DEFAULT_MAX_VISITS;
+                const extra = dbCache.extraVisits[message.author.id] || 0;
+                const totalLimit = base + extra;
+                
                 const used = dbCache.playerVisits[message.author.id] || 0;
                 
-                message.reply(`Visite effettuate ${used}/${limit}`);
+                message.reply(`Visite effettuate ${used}/${totalLimit} (Base: ${base} + Extra: ${extra})`);
             }
             return;
         }
@@ -228,8 +257,11 @@ client.on('messageCreate', async message => {
                 return message.channel.send(`${message.author}, stai già bussando o aspettando una risposta!`).then(m => setTimeout(() => m.delete(), 5000));
             }
 
-            // Controllo Stamina Personale
-            const userLimit = dbCache.maxVisits[message.author.id] || DEFAULT_MAX_VISITS;
+            // [MODIFICA] Calcolo Limit con Extra
+            const base = dbCache.baseVisits[message.author.id] || DEFAULT_MAX_VISITS;
+            const extra = dbCache.extraVisits[message.author.id] || 0;
+            const userLimit = base + extra;
+            
             const used = dbCache.playerVisits[message.author.id] || 0;
             
             if (used >= userLimit) {
@@ -322,7 +354,7 @@ client.on('interactionCreate', async interaction => {
 
             if (!targetChannel) return interaction.reply({ content: "Casa inesistente.", ephemeral: true });
 
-            // [MODIFICA RICHIESTA] Controllo Dimora Privata
+            // Controllo Dimora Privata
             const playerHomeId = dbCache.playerHomes[knocker.id];
             if (playerHomeId === targetChannelId) {
                 return interaction.reply({ 
@@ -331,8 +363,12 @@ client.on('interactionCreate', async interaction => {
                 });
             }
 
-            const userLimit = dbCache.maxVisits[knocker.id] || DEFAULT_MAX_VISITS;
+            // [MODIFICA] Controllo limiti con Extra
+            const base = dbCache.baseVisits[knocker.id] || DEFAULT_MAX_VISITS;
+            const extra = dbCache.extraVisits[knocker.id] || 0;
+            const userLimit = base + extra;
             const used = dbCache.playerVisits[knocker.id] || 0;
+            
             if (used >= userLimit) return interaction.reply({ content: "⛔ Visite finite!", ephemeral: true });
 
             pendingKnocks.add(knocker.id);
@@ -357,8 +393,9 @@ client.on('interactionCreate', async interaction => {
                 
                 const mentions = membersWithAccess.map(m => m.toString()).join(' ');
                 
+                // [MODIFICA RICHIESTA] "Qualcuno sta bussando"
                 const msg = await targetChannel.send(
-                    `🔔 **TOC TOC!** ${mentions}\n**${knocker.displayName}** sta bussando!\nAvete **5 minuti** per rispondere.\n\n✅ = Apri | ❌ = Ignora`
+                    `🔔 **TOC TOC!** ${mentions}\n**Qualcuno** sta bussando!\nAvete **5 minuti** per rispondere.\n\n✅ = Apri | ❌ = Ignora`
                 );
                 await msg.react('✅');
                 await msg.react('❌');
@@ -374,7 +411,9 @@ client.on('interactionCreate', async interaction => {
                     if (reaction.emoji.name === '✅') {
                         msg.edit(`✅ **${user.displayName}** ha aperto la porta.`);
                         pendingKnocks.delete(knocker.id);
-                        await enterHouse(knocker, interaction.channel, targetChannel, `👋 **${knocker}** è entrato (accolto da ${user}).`);
+                        
+                        // [MODIFICA RICHIESTA] Rimosso "(accolto da...)"
+                        await enterHouse(knocker, interaction.channel, targetChannel, `👋 **${knocker}** è entrato.`);
                     } else {
                         msg.edit(`❌ **${user.displayName}** ha rifiutato l'ingresso.`);
                         pendingKnocks.delete(knocker.id);
@@ -416,7 +455,7 @@ async function enterHouse(member, fromChannel, toChannel, entryMessage) {
     await movePlayer(member, fromChannel, toChannel, entryMessage);
 }
 
-// [MODIFICA RICHIESTA] Funzione Move Player aggiornata per le chat private
+// Funzione Move Player aggiornata per le chat private
 async function movePlayer(member, oldChannel, newChannel, entryMessage) {
     if (!member || !newChannel) return;
 
@@ -458,4 +497,3 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage) {
 }
 
 client.login(TOKEN);
-
