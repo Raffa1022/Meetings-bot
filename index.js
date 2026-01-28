@@ -23,6 +23,9 @@ const PREFIX = '!';
 const ID_CATEGORIA_CASE = '1460741413388947528';
 const ID_CANALE_DB = '1465768646906220700'; // Canale privato dove il bot salva i dati
 
+// [NUOVO] Inserisci qui l'ID della categoria delle chat private (OFF-RP/Generale)
+const ID_CATEGORIA_CHAT_PRIVATE = '1460741414357827747'; 
+
 // RUOLI CHE POSSONO RISPONDERE AL BUSSARE (ID Ruoli Discord)
 // Inserisci qui gli ID dei ruoli che, se presenti in casa, devono approvare l'ingresso
 // Questi ruoli sono anche quelli abilitati al comando !rimaste
@@ -161,7 +164,7 @@ client.on('messageCreate', async message => {
 
             message.reply(`✅ Casa assegnata a ${targetUser}.`);
             
-            // MODIFICA: Messaggio inviato e subito pinnato
+            // Messaggio inviato e subito pinnato
             const pinnedMsg = await targetChannel.send(`🔑 **${targetUser}**, questa è la tua dimora privata.`);
             await pinnedMsg.pin();
         }
@@ -194,14 +197,12 @@ client.on('messageCreate', async message => {
 
         // !rimaste
         if (command === 'rimaste') {
-            // Verifica se l'utente ha uno dei ruoli permessi
             if (message.member.roles.cache.hasAny(...RUOLI_PERMESSI)) {
                 const limit = dbCache.maxVisits[message.author.id] || DEFAULT_MAX_VISITS;
                 const used = dbCache.playerVisits[message.author.id] || 0;
                 
                 message.reply(`Visite effettuate ${used}/${limit}`);
             }
-            // Se non ha i ruoli, il bot ignora (o puoi mettere un return)
             return;
         }
 
@@ -319,11 +320,20 @@ client.on('interactionCreate', async interaction => {
             const targetChannel = interaction.guild.channels.cache.get(targetChannelId);
             const knocker = interaction.member;
 
+            if (!targetChannel) return interaction.reply({ content: "Casa inesistente.", ephemeral: true });
+
+            // [MODIFICA RICHIESTA] Controllo Dimora Privata
+            const playerHomeId = dbCache.playerHomes[knocker.id];
+            if (playerHomeId === targetChannelId) {
+                return interaction.reply({ 
+                    content: `⛔ **${formatName(targetChannel.name)}** è la tua dimora privata.`, 
+                    ephemeral: true 
+                });
+            }
+
             const userLimit = dbCache.maxVisits[knocker.id] || DEFAULT_MAX_VISITS;
             const used = dbCache.playerVisits[knocker.id] || 0;
             if (used >= userLimit) return interaction.reply({ content: "⛔ Visite finite!", ephemeral: true });
-
-            if (!targetChannel) return interaction.reply({ content: "Casa inesistente.", ephemeral: true });
 
             pendingKnocks.add(knocker.id);
 
@@ -406,19 +416,34 @@ async function enterHouse(member, fromChannel, toChannel, entryMessage) {
     await movePlayer(member, fromChannel, toChannel, entryMessage);
 }
 
+// [MODIFICA RICHIESTA] Funzione Move Player aggiornata per le chat private
 async function movePlayer(member, oldChannel, newChannel, entryMessage) {
     if (!member || !newChannel) return;
 
+    let channelToLeave = oldChannel;
+
+    // SE L'UTENTE DIGITA DALLA CATEGORIA PRIVATE, DOBBIAMO TROVARE LA SUA VERA POSIZIONE NELLE CASE
+    if (oldChannel && oldChannel.parentId === ID_CATEGORIA_CHAT_PRIVATE) {
+        // Cerca il canale nella categoria CASE dove l'utente ha il permesso di vedere
+        const currentHouse = oldChannel.guild.channels.cache.find(c => 
+            c.parentId === ID_CATEGORIA_CASE && 
+            c.type === ChannelType.GuildText && 
+            c.permissionsFor(member).has(PermissionsBitField.Flags.ViewChannel)
+        );
+
+        // Se troviamo una casa, impostiamo quella come canale da cui uscire
+        if (currentHouse) {
+            channelToLeave = currentHouse;
+        }
+    }
+
     // Gestione uscita vecchio canale
-    if (oldChannel && oldChannel.id !== newChannel.id) {
+    if (channelToLeave && channelToLeave.id !== newChannel.id) {
         
-        // Narrazione uscita
-        oldChannel.send(`🚪 ${member} è uscito.`);
-        
-        // MODIFICA RICHIESTA: Se il canale di uscita fa parte delle CASE (inclusa la propria), rimuovi i permessi
-        // Così l'utente vede SOLO la nuova casa
-        if (oldChannel.parentId === ID_CATEGORIA_CASE) {
-             await oldChannel.permissionOverwrites.delete(member.id).catch(() => console.log("Impossibile togliere permessi o già tolti."));
+        // Narrazione uscita e rimozione permessi SOLO se il canale da cui si esce è una Casa
+        if (channelToLeave.parentId === ID_CATEGORIA_CASE) {
+            await channelToLeave.send(`🚪 ${member} è uscito.`);
+            await channelToLeave.permissionOverwrites.delete(member.id).catch(() => console.log("Impossibile togliere permessi o già tolti."));
         }
     }
 
