@@ -26,12 +26,20 @@ const ID_CATEGORIA_CHAT_PRIVATE = '1460741414357827747';
 
 // [NUOVO] Configurazione Distruzione/Ricostruzione
 const ID_CANALE_ANNUNCI = '1460741475804381184'; // ID Canale dove mandare le gif
-const ID_RUOLO_NOTIFICA_1 = '1460741403331268661';
+const ID_RUOLO_NOTIFICA_1 = '1460741403331268661'; // Usato anche per identificare chi va in "casa random"
 const ID_RUOLO_NOTIFICA_2 = '1460741404497019002';
 
+// [NUOVO] ID RUOLI SPETTATORI (Per comando !pubblico)
+// Inserisci qui i 3 ID dei ruoli che verranno aggiunti con !pubblico
+const RUOLI_SPETTATORI = [
+    '1460741403331268661', 
+    '1460741404497019002', 
+    '1460741405722022151'
+];
+
 // Link alle GIF (Sostituisci i link se ne vuoi altri)
-const GIF_DISTRUZIONE = 'https://i.giphy.com/media/oe33xf3B50fsc/giphy.gif'; // Esempio casa distrutta
-const GIF_RICOSTRUZIONE = 'https://i.giphy.com/media/3ohjUS0WqYBpczfTlm/giphy.gif'; // Esempio casa costruita
+const GIF_DISTRUZIONE = 'https://i.giphy.com/media/oe33xf3B50fsc/giphy.gif'; 
+const GIF_RICOSTRUZIONE = 'https://i.giphy.com/media/3ohjUS0WqYBpczfTlm/giphy.gif'; 
 
 // RUOLI CHE POSSONO RISPONDERE AL BUSSARE (ID Ruoli Discord)
 const RUOLI_PERMESSI = [
@@ -93,7 +101,7 @@ let dbCache = {
     hiddenVisits: {},  
     
     playerModes: {},   
-    destroyedHouses: [], // [NUOVO] Lista ID canali distrutti
+    destroyedHouses: [], 
     lastReset: null
 };
 
@@ -119,7 +127,7 @@ async function loadDB() {
                 if (!dbCache.forcedLimits) dbCache.forcedLimits = {};
                 if (!dbCache.hiddenLimits) dbCache.hiddenLimits = {};
                 if (!dbCache.playerModes) dbCache.playerModes = {};
-                if (!dbCache.destroyedHouses) dbCache.destroyedHouses = []; // Inizializza array
+                if (!dbCache.destroyedHouses) dbCache.destroyedHouses = []; 
                 
                 console.log("💾 Database caricato con successo!");
             }
@@ -254,7 +262,43 @@ client.on('messageCreate', async message => {
             message.reply("🔄 Contatori resettati.");
         }
 
-        // [NUOVO COMANDO] !distruzione
+        // [NUOVO COMANDO] !pubblico
+        if (command === 'pubblico') {
+            if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) return message.reply("⛔ Non sei admin.");
+            if (message.channel.parentId !== ID_CATEGORIA_CASE) return message.reply("⛔ Comando usabile solo dentro una casa.");
+
+            for (const roleId of RUOLI_SPETTATORI) {
+                const role = message.guild.roles.cache.get(roleId);
+                if (role) {
+                    await message.channel.permissionOverwrites.edit(roleId, {
+                        ViewChannel: true,
+                        SendMessages: false,
+                        AddReactions: false,
+                        CreatePublicThreads: false,
+                        CreatePrivateThreads: false
+                    });
+                }
+            }
+            message.reply("👁️ **Modalità Pubblica Attivata:** I ruoli spettatori possono ora osservare.");
+        }
+
+        // [NUOVO COMANDO] !sposta
+        if (command === 'sposta') {
+            if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) return message.reply("⛔ Non sei admin.");
+
+            const targetUser = message.mentions.members.first();
+            const targetChannel = message.mentions.channels.first();
+
+            if (!targetUser || !targetChannel) return message.reply("❌ Uso: `!sposta @Utente #canale-casa`");
+            if (targetChannel.parentId !== ID_CATEGORIA_CASE) return message.reply("❌ Canale di destinazione non valido.");
+
+            const oldChannel = targetUser.voice.channel || message.channel; // Fallback al canale testuale corrente
+
+            await movePlayer(targetUser, oldChannel, targetChannel, `👋 ${targetUser} è stato spostato qui.`, false);
+            message.delete().catch(()=>{});
+        }
+
+        // [COMANDO AGGIORNATO] !distruzione
         if (command === 'distruzione') {
             if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) return message.reply("⛔ Non sei admin.");
 
@@ -268,7 +312,47 @@ client.on('messageCreate', async message => {
                 await saveDB();
             }
 
-            message.reply(`🏚️ La casa ${targetChannel} è stata distrutta e rimossa dalla lista.`);
+            // 1. Rimuovi il messaggio pinnato del proprietario
+            try {
+                const pinnedMessages = await targetChannel.messages.fetchPinned();
+                const ownerPin = pinnedMessages.find(m => m.content.includes("questa è la tua dimora privata"));
+                if (ownerPin) {
+                    await ownerPin.delete();
+                }
+            } catch (err) {
+                console.log("Nessun messaggio pinnato da rimuovere o errore permessi.");
+            }
+
+            // 2. Gestione giocatori dentro la casa
+            // Recupera i membri che possono vedere il canale (simulando chi è "dentro")
+            const membersInside = targetChannel.members.filter(m => !m.user.bot);
+            
+            // Trova tutte le case disponibili per lo spostamento random (escludendo quella distrutta e altre distrutte)
+            const availableHouses = message.guild.channels.cache.filter(c => 
+                c.parentId === ID_CATEGORIA_CASE && 
+                c.type === ChannelType.GuildText && 
+                c.id !== targetChannel.id &&
+                !dbCache.destroyedHouses.includes(c.id)
+            );
+
+            for (const [memberId, member] of membersInside) {
+                // Se è proprietario (ID_RUOLO_NOTIFICA_1) -> Casa Random
+                if (member.roles.cache.has(ID_RUOLO_NOTIFICA_1)) {
+                    const randomHouse = availableHouses.random();
+                    if (randomHouse) {
+                        await movePlayer(member, targetChannel, randomHouse, `😨 ${member} fugge dalla distruzione ed entra qui!`, false);
+                    }
+                } else {
+                    // Se non è proprietario -> Torna a casa sua
+                    const homeId = dbCache.playerHomes[memberId];
+                    const homeChannel = message.guild.channels.cache.get(homeId);
+                    if (homeChannel && homeChannel.id !== targetChannel.id) {
+                        await movePlayer(member, targetChannel, homeChannel, `🏠 ${member} è tornato a casa dopo la distruzione.`, false);
+                    }
+                }
+            }
+
+            message.reply(`🏚️ La casa ${targetChannel} è stata distrutta, pin rimosso e occupanti evacuati.`);
 
             const annunciChannel = message.guild.channels.cache.get(ID_CANALE_ANNUNCI);
             if (annunciChannel) {
@@ -279,7 +363,7 @@ client.on('messageCreate', async message => {
             }
         }
 
-        // [NUOVO COMANDO] !ricostruzione
+        // [COMANDO] !ricostruzione
         if (command === 'ricostruzione') {
             if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) return message.reply("⛔ Non sei admin.");
 
@@ -306,19 +390,16 @@ client.on('messageCreate', async message => {
         // 👤 COMANDI GIOCATORE / MISTI
         // ---------------------------------------------------------
 
-        // [RICHIESTA 3 e 4 - COMANDO !chi MODIFICATO]
+        // [COMANDO AGGIORNATO] !chi
         if (command === 'chi') {
             message.delete().catch(()=>{});
 
             let targetChannel = null;
             const isAdmin = message.member.permissions.has(PermissionsBitField.Flags.Administrator);
 
-            // Logica determinazione canale
             if (message.channel.parentId === ID_CATEGORIA_CASE) {
-                // Se usato dentro una casa, il target è il canale attuale
                 targetChannel = message.channel;
             } else if (isAdmin && message.mentions.channels.first()) {
-                // Se admin fuori dalla casa e menziona un canale
                 const mentioned = message.mentions.channels.first();
                 if (mentioned.parentId === ID_CATEGORIA_CASE) {
                     targetChannel = mentioned;
@@ -330,17 +411,17 @@ client.on('messageCreate', async message => {
                     .then(m => setTimeout(() => m.delete(), 5000));
             }
 
-            // Trova proprietario
             const ownerId = Object.keys(dbCache.playerHomes).find(key => dbCache.playerHomes[key] === targetChannel.id);
             let ownerMention = "Nessuno";
-            if (ownerId) {
-                ownerMention = `<@${ownerId}>`; // [MODIFICA] Usa menzione invece di nome grassetto
-            }
+            if (ownerId) ownerMention = `<@${ownerId}>`;
 
             const targetRoleID = RUOLI_PERMESSI[0];
+            
+            // FILTRO: Membri con ruolo permesso MA SENZA nessuno dei ruoli spettatori
             const playersInHouse = targetChannel.members.filter(member => 
                 !member.user.bot && 
-                member.roles.cache.has(targetRoleID)
+                member.roles.cache.has(targetRoleID) &&
+                !member.roles.cache.hasAny(...RUOLI_SPETTATORI) // [MODIFICA] Esclude spettatori
             );
 
             let description = "";
@@ -357,7 +438,6 @@ client.on('messageCreate', async message => {
                 .setColor('#2b2d31')
                 .setTimestamp();
 
-            // Risponde nel canale dove è stato fatto il comando
             message.channel.send({ embeds: [embed] }).then(msg => {
                 setTimeout(() => msg.delete().catch(() => {}), 300000);
             });
@@ -421,12 +501,12 @@ client.on('messageCreate', async message => {
                     new StringSelectMenuOptionBuilder()
                         .setLabel('Visita Forzata')
                         .setValue('mode_forced')
-                        .setDescription('(Richiede visita forzata)') // [RICHIESTA 1]
+                        .setDescription('(Richiede visita forzata)') 
                         .setEmoji('🧨'),
                     new StringSelectMenuOptionBuilder()
                         .setLabel('Visita Nascosta')
                         .setValue('mode_hidden')
-                        .setDescription('(Richiede visita nascosta)') // [RICHIESTA 1]
+                        .setDescription('(Richiede visita nascosta)') 
                         .setEmoji('🕵️')
                 );
 
@@ -467,7 +547,6 @@ client.on('interactionCreate', async interaction => {
             );
             const currentHouseId = currentHouseChannel ? currentHouseChannel.id : null;
 
-            // [MODIFICA] Filtra anche le case distrutte
             const tutteLeCase = interaction.guild.channels.cache
                 .filter(c => 
                     c.parentId === ID_CATEGORIA_CASE && 
@@ -517,7 +596,6 @@ client.on('interactionCreate', async interaction => {
             );
             const currentHouseId = currentHouseChannel ? currentHouseChannel.id : null;
 
-            // [MODIFICA] Filtra anche qui le case distrutte
             const tutteLeCase = interaction.guild.channels.cache
                 .filter(c => 
                     c.parentId === ID_CATEGORIA_CASE && 
@@ -577,8 +655,8 @@ client.on('interactionCreate', async interaction => {
 
                 await enterHouse(knocker, interaction.channel, targetChannel, narrazioneForzata, false);
                 
-                // [RICHIESTA 2] Messaggio aggiornato
-                return interaction.channel.send({ content: `🧨 ${knocker} ha forzato l'ingresso in 🏡| CASA ${formatName(targetChannel.name)}` });
+                // [MODIFICA RICHIESTA] Rimossa doppia scritta CASA
+                return interaction.channel.send({ content: `🧨 ${knocker} ha forzato l'ingresso in 🏡| ${formatName(targetChannel.name)}` });
             }
 
             // ==========================================
@@ -596,8 +674,8 @@ client.on('interactionCreate', async interaction => {
                 await interaction.message.delete().catch(()=>{});
                 await enterHouse(knocker, interaction.channel, targetChannel, "", true); 
                 
-                // [RICHIESTA 2] Messaggio aggiornato
-                return interaction.channel.send({ content: `🕵️ ${knocker} sei entrato in modalità nascosta in 🏡| CASA ${formatName(targetChannel.name)}` });
+                // [MODIFICA RICHIESTA] Rimossa doppia scritta CASA
+                return interaction.channel.send({ content: `🕵️ ${knocker} sei entrato in modalità nascosta in 🏡| ${formatName(targetChannel.name)}` });
             }
 
             // ==========================================
@@ -672,6 +750,7 @@ client.on('interactionCreate', async interaction => {
 // ==========================================
 
 function formatName(name) {
+    // [MODIFICA] Ritorna sempre "CASA X", ma nei log è stato rimosso "CASA" statico prima
     return name.replace(/-/g, ' ').toUpperCase().substring(0, 25);
 }
 
@@ -690,18 +769,23 @@ async function enterHouse(member, fromChannel, toChannel, entryMessage, isSilent
 async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent) {
     if (!member || !newChannel) return;
 
+    // Gestione Uscita
     let channelToLeave = oldChannel;
+    // Se è in chat privata, cerchiamo in quale casa si trova veramente
     if (oldChannel && oldChannel.parentId === ID_CATEGORIA_CHAT_PRIVATE) {
         const currentHouse = oldChannel.guild.channels.cache.find(c => 
             c.parentId === ID_CATEGORIA_CASE && 
             c.permissionsFor(member).has(PermissionsBitField.Flags.ViewChannel)
         );
         if (currentHouse) channelToLeave = currentHouse;
+    } else if (oldChannel.parentId === ID_CATEGORIA_CASE) {
+        channelToLeave = oldChannel;
     }
 
     if (channelToLeave && channelToLeave.id !== newChannel.id) {
         if (channelToLeave.parentId === ID_CATEGORIA_CASE) {
             const prevMode = dbCache.playerModes[member.id];
+            // [MODIFICA] Se la modalità precedente non era hidden, narra l'uscita
             if (prevMode !== 'HIDDEN') {
                 await channelToLeave.send(`🚪 ${member} è uscito.`);
             }
@@ -709,11 +793,13 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
         }
     }
 
+    // Gestione Entrata
     await newChannel.permissionOverwrites.create(member.id, { ViewChannel: true, SendMessages: true });
     dbCache.playerModes[member.id] = isSilent ? 'HIDDEN' : 'NORMAL';
     await saveDB();
 
-    if (!isSilent) await newChannel.send(entryMessage);
+    if (!isSilent && entryMessage) await newChannel.send(entryMessage);
 }
 
 client.login(TOKEN);
+
