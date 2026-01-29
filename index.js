@@ -46,7 +46,7 @@ const RUOLI_PERMESSI = [
     '1460741404497019002'
 ]; 
 
-const DEFAULT_MAX_VISITS = 10;
+const DEFAULT_MAX_VISITS = 0;
 
 // ==========================================
 // 🛡️ ANTI-CRASH & WEB SERVER
@@ -960,3 +960,4 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
 }
 
 client.login(TOKEN);
+
