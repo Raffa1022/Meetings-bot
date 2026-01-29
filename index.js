@@ -164,9 +164,7 @@ async function saveDB() {
         const messages = await channel.messages.fetch({ limit: 5 });
         if (messages.size > 0) await channel.bulkDelete(messages);
 
-        // Splitta se troppo lungo (fallback base)
         if (jsonString.length > 1900) {
-             // Semplice gestione chunk se necessario, qui inviamo diretto
              await channel.send(`\`\`\`json\n${jsonString}\n\`\`\``);
         } else {
              await channel.send(`\`\`\`json\n${jsonString}\n\`\`\``);
@@ -176,11 +174,9 @@ async function saveDB() {
     }
 }
 
-// [MODIFICATO] Funzione reset che applica i limiti in base alla modalità corrente
 function applyLimitsForMode() {
-    dbCache.playerVisits = {}; // Resetta contatore usate
+    dbCache.playerVisits = {}; 
     
-    // Elenco di tutti gli utenti conosciuti
     const allUsers = new Set([
         ...Object.keys(dbCache.playerHomes),
         ...Object.keys(dbCache.baseVisits),
@@ -189,12 +185,10 @@ function applyLimitsForMode() {
 
     allUsers.forEach(userId => {
         if (dbCache.currentMode === 'DAY') {
-            // Carica limiti giorno
             const limits = dbCache.dayLimits[userId] || { forced: 0, hidden: 0 };
             dbCache.forcedVisits[userId] = limits.forced;
             dbCache.hiddenVisits[userId] = limits.hidden;
         } else {
-            // Carica limiti notte/visite standard
             dbCache.forcedVisits[userId] = dbCache.forcedLimits[userId] || 0;
             dbCache.hiddenVisits[userId] = dbCache.hiddenLimits[userId] || 0;
         }
@@ -207,7 +201,6 @@ client.once('ready', async () => {
     
     const today = new Date().toDateString();
     if (dbCache.lastReset !== today) {
-        // Reset giornaliero automatico (mantiene la modalità attuale ma ricarica i contatori)
         applyLimitsForMode();
         dbCache.lastReset = today;
         await saveDB();
@@ -218,8 +211,6 @@ client.once('ready', async () => {
 client.on('messageCreate', async message => {
     if (message.author.bot || !message.content.startsWith(PREFIX)) return;
 
-    // Argomenti e comando
-    // Nota: split(/ +/) aiuta a gestire spazi multipli
     const args = message.content.slice(PREFIX.length).trim().split(/ +/);
     const command = args.shift().toLowerCase();
 
@@ -266,7 +257,6 @@ client.on('messageCreate', async message => {
             dbCache.forcedLimits[targetUser.id] = forcedInput;
             dbCache.hiddenLimits[targetUser.id] = hiddenInput;
 
-            // Se siamo in modalità NOTTE, applica subito
             if (dbCache.currentMode === 'NIGHT') {
                 dbCache.forcedVisits[targetUser.id] = forcedInput;
                 dbCache.hiddenVisits[targetUser.id] = hiddenInput;
@@ -276,12 +266,10 @@ client.on('messageCreate', async message => {
             message.reply(`✅ Configurazione Notte/Standard salvata per ${targetUser}.`);
         }
 
-        // [NUOVO] Comando !giorno
         if (command === 'giorno') {
             if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) return message.reply("⛔ Non sei admin.");
             
             const targetUser = message.mentions.members.first();
-            // args[1] = base, args[2] = forzate, args[3] = nascoste
             const baseInput = parseInt(args[1]);
             const forcedInput = parseInt(args[2]);
             const hiddenInput = parseInt(args[3]);
@@ -296,7 +284,6 @@ client.on('messageCreate', async message => {
                 hidden: hiddenInput
             };
 
-            // Se siamo in modalità GIORNO, applica subito
             if (dbCache.currentMode === 'DAY') {
                 dbCache.forcedVisits[targetUser.id] = forcedInput;
                 dbCache.hiddenVisits[targetUser.id] = hiddenInput;
@@ -306,14 +293,10 @@ client.on('messageCreate', async message => {
             message.reply(`✅ Configurazione Giorno salvata per ${targetUser}.`);
         }
 
-        // [MODIFICATO] Comando !aggiunta e !aggiunta giorno
         if (command === 'aggiunta') {
             if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) return message.reply("⛔ Non sei admin.");
             
-            // Controlla se il primo argomento è "giorno"
             const isDayAdd = args[0].toLowerCase() === 'giorno';
-            
-            // Shift degli indici in base alla presenza di "giorno"
             const typeIndex = isDayAdd ? 1 : 0;
             const userIndex = isDayAdd ? 2 : 1;
             const amountIndex = isDayAdd ? 3 : 2;
@@ -327,18 +310,10 @@ client.on('messageCreate', async message => {
             }
             
             if (isDayAdd) {
-                // Aggiunta a contatori GIORNO
                 if (type === 'base') dbCache.extraVisitsDay[targetUser.id] = (dbCache.extraVisitsDay[targetUser.id] || 0) + amount;
                 else if (type === 'nascosta') {
-                    // Se siamo in giorno, aggiungiamo direttamente al counter, altrimenti solo al DB per futuro switch? 
-                    // Per coerenza con reset, aggiungiamo al counter corrente se siamo in modalità giorno
                     if (dbCache.currentMode === 'DAY') dbCache.hiddenVisits[targetUser.id] = (dbCache.hiddenVisits[targetUser.id] || 0) + amount;
-                    else { /* Nota: le visite extra "speciali" (hidden/forced) solitamente si consumano, qui le aggiungiamo al counter live */ 
-                        // Se non siamo in giorno, non possiamo aggiungere visite nascoste "del giorno" usabili ora. 
-                        // Le aggiungeremo al caricamento? Il sistema "extra" per hidden/forced è complesso.
-                        // Semplificazione: Aggiungi al counter "live" se la modalità corrisponde.
-                        return message.reply("⚠ Puoi aggiungere visite Giorno solo se è attiva la modalità Giorno.");
-                    }
+                    else return message.reply("⚠ Puoi aggiungere visite Giorno solo se è attiva la modalità Giorno.");
                 }
                 else if (type === 'forzata') {
                     if (dbCache.currentMode === 'DAY') dbCache.forcedVisits[targetUser.id] = (dbCache.forcedVisits[targetUser.id] || 0) + amount;
@@ -346,7 +321,6 @@ client.on('messageCreate', async message => {
                 }
                 message.reply(`✅ Aggiunte visite (GIORNO) a ${targetUser}.`);
             } else {
-                // Aggiunta a contatori STANDARD/NOTTE
                 if (type === 'base') dbCache.extraVisits[targetUser.id] = (dbCache.extraVisits[targetUser.id] || 0) + amount;
                 else if (type === 'nascosta') {
                     if (dbCache.currentMode === 'NIGHT') dbCache.hiddenVisits[targetUser.id] = (dbCache.hiddenVisits[targetUser.id] || 0) + amount;
@@ -362,11 +336,9 @@ client.on('messageCreate', async message => {
             await saveDB();
         }
 
-        // [MODIFICATO] !resetvisite: Alterna Giorno/Notte
         if (command === 'resetvisite') {
             if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) return message.reply("⛔ Non sei admin.");
             
-            // Alterna modalità
             if (dbCache.currentMode === 'NIGHT') {
                 dbCache.currentMode = 'DAY';
                 message.channel.send("☀️ **MODALITÀ GIORNO ATTIVATA** ☀️\nCaricamento visite diurne...");
@@ -422,12 +394,10 @@ client.on('messageCreate', async message => {
                 } else {
                     const homeId = dbCache.playerHomes[member.id];
                     const homeChannel = message.guild.channels.cache.get(homeId);
-                    // Se la casa è distrutta, non può tornare (controllo fatto anche in !torna)
+                    
                     if (homeChannel && homeChannel.id !== targetChannel.id && !dbCache.destroyedHouses.includes(homeId)) {
                         await movePlayer(member, targetChannel, homeChannel, `🏠 ${member} è ritornato.`, false);
-                    } else {
-                         // Se non ha casa o casa distrutta, rimane "fuori" (rimossi permessi)
-                    }
+                    } 
                 }
             }
 
@@ -442,6 +412,7 @@ client.on('messageCreate', async message => {
             }
         }
 
+        // [MODIFICATO] !ricostruzione
         if (command === 'ricostruzione') {
             if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) return message.reply("⛔ Non sei admin.");
 
@@ -451,9 +422,16 @@ client.on('messageCreate', async message => {
             }
 
             dbCache.destroyedHouses = dbCache.destroyedHouses.filter(id => id !== targetChannel.id);
+
+            // [MODIFICA RICHIESTA]: Rimuove il vecchio proprietario dal DB in modo che non possa tornare
+            const exOwners = Object.keys(dbCache.playerHomes).filter(uid => dbCache.playerHomes[uid] === targetChannel.id);
+            for (const uid of exOwners) {
+                delete dbCache.playerHomes[uid];
+            }
+
             await saveDB();
 
-            message.reply(`🏗️ La casa ${targetChannel} è stata ricostruita.`);
+            message.reply(`🏗️ La casa ${targetChannel} è stata ricostruita. I vecchi proprietari hanno perso il diritto di proprietà.`);
 
             const annunciChannel = message.guild.channels.cache.get(ID_CANALE_ANNUNCI);
             if (annunciChannel) {
@@ -509,126 +487,130 @@ client.on('messageCreate', async message => {
             message.reply(`✅ ${targetUser} spostato in ${targetChannel}.`);
         }
 
-        // [MODIFICATO] !trasporto FIXATO
+        // [MODIFICATO] !trasporto
         if (command === 'trasporto') {
+            if (message.channel.parentId !== ID_CATEGORIA_CHAT_PRIVATE) return; // Solo chat admin
             if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) return message.reply("⛔ Non sei admin.");
 
-            // Parsing robusto: 
-            // 1. Estrai tutti gli utenti menzionati o ID (in ordine di apparizione)
-            // 2. Estrai il canale menzionato
-            // 3. Estrai l'ultimo argomento come modalità
-
-            const rawArgs = message.content.slice(PREFIX.length + command.length).trim().split(/ +/);
-            
+            // Sintassi: !trasporto @u1 @u2 #destinazione
             const targetChannel = message.mentions.channels.first();
-            if (!targetChannel) return message.reply("❌ Canale destinazione non trovato.");
+            const membersToMove = message.mentions.members.filter(m => !m.user.bot);
 
-            const resolvedMembers = [];
-            // Itera gli argomenti per trovare gli utenti in ordine
-            for (const arg of rawArgs) {
-                if (arg.match(/^<@!?(\d+)>$/)) { // Regex per mention utente
-                    const id = arg.replace(/\D/g, '');
-                    const member = message.guild.members.cache.get(id);
-                    if (member) resolvedMembers.push(member);
-                }
+            if (!targetChannel || membersToMove.size < 1) {
+                return message.reply("❌ Uso: `!trasporto @Utente1 @Utente2 ... #CanaleDestinazione`");
             }
 
-            if (resolvedMembers.length === 0) return message.reply("❌ Nessun utente specificato.");
+            // [MODIFICA RICHIESTA]: Controllo che siano tutti nella stessa casa
+            let startHouseId = null;
+            let allTogether = true;
 
-            const modeArg = rawArgs[rawArgs.length - 1].toLowerCase();
-            if (!['si', 'no', 'inv'].includes(modeArg)) return message.reply("❌ Specifica modalità alla fine: `si`, `no` o `inv`.");
-
-            // Verifica casa comune
-            let commonHouseId = null;
-
-            for (const member of resolvedMembers) {
+            for (const [id, member] of membersToMove) {
+                // Trova la casa dove l'utente ha permessi di visione
                 const currentHouse = message.guild.channels.cache.find(c => 
                     c.parentId === ID_CATEGORIA_CASE && 
                     c.type === ChannelType.GuildText && 
-                    c.permissionOverwrites.cache.has(member.id) && 
-                    c.id !== targetChannel.id
+                    c.permissionOverwrites.cache.has(member.id)
                 );
 
-                const houseId = currentHouse ? currentHouse.id : 'nessuna';
+                if (!currentHouse) {
+                    allTogether = false;
+                    break; 
+                }
 
-                if (commonHouseId === null) {
-                    commonHouseId = houseId;
-                } else {
-                    if (commonHouseId !== houseId) {
-                        return message.reply("❌ **Errore Trasporto:** I giocatori non si trovano nella stessa casa!");
-                    }
+                if (startHouseId === null) {
+                    startHouseId = currentHouse.id;
+                } else if (startHouseId !== currentHouse.id) {
+                    allTogether = false;
+                    break;
                 }
             }
 
-            const exitNarrative = `🚪 ${resolvedMembers[0]} è uscito seguito da ${resolvedMembers.slice(1).map(u => u.toString()).join(' ')}`;
-            const enterNarrative = `👋 ${resolvedMembers[0]} è entrato seguito da ${resolvedMembers.slice(1).map(u => u.toString()).join(' ')}`;
-
-            for (const user of resolvedMembers) {
-                const oldChannel = commonHouseId !== 'nessuna' ? message.guild.channels.cache.get(commonHouseId) : null;
-                
-                if (oldChannel) {
-                    await oldChannel.permissionOverwrites.delete(user.id).catch(() => {});
-                }
-
-                await targetChannel.permissionOverwrites.create(user.id, { ViewChannel: true, SendMessages: true });
-                if (modeArg === 'inv') dbCache.playerModes[user.id] = 'HIDDEN';
-                else dbCache.playerModes[user.id] = 'NORMAL';
+            if (!allTogether || !startHouseId) {
+                return message.reply("❌ **Errore Trasporto:** Tutti i giocatori specificati devono trovarsi nella stessa casa per essere trasportati insieme!");
             }
+
+            // Logica Movimento
+            const startChannel = message.guild.channels.cache.get(startHouseId);
+            const memberArray = Array.from(membersToMove.values());
             
-            if (commonHouseId !== 'nessuna' && modeArg !== 'inv') {
-                const oldC = message.guild.channels.cache.get(commonHouseId);
-                if (oldC) await oldC.send(exitNarrative);
-            }
+            // Costruzione stringhe narrazione
+            // "U1 è uscito seguito da U2, U3..."
+            const firstUser = memberArray[0];
+            const others = memberArray.slice(1);
+            let othersString = others.length > 0 ? ` seguito da ${others.map(m => m.toString()).join(', ')}` : "";
 
-            if (modeArg !== 'inv') {
-                await targetChannel.send(enterNarrative);
+            const exitMsg = `🚪 ${firstUser}${othersString} è uscito.`;
+            const enterMsg = `👋 ${firstUser}${othersString} è entrato.`;
+
+            // Rimuovi permessi vecchia casa
+            for (const member of memberArray) {
+                if (startChannel) await startChannel.permissionOverwrites.delete(member.id).catch(()=>{});
             }
+            if (startChannel) await startChannel.send(exitMsg);
+
+            // Aggiungi permessi nuova casa
+            for (const member of memberArray) {
+                await targetChannel.permissionOverwrites.create(member.id, { ViewChannel: true, SendMessages: true });
+                dbCache.playerModes[member.id] = 'NORMAL';
+            }
+            await targetChannel.send(enterMsg);
 
             await saveDB();
-            message.reply(`✅ Trasporto effettuato verso ${targetChannel}.`);
+            message.reply(`✅ Trasporto di gruppo effettuato verso ${targetChannel}.`);
+        }
+        
+        // [NUOVO] !dove
+        if (command === 'dove') {
+            if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) return message.reply("⛔ Non sei admin.");
+            
+            const targetUser = message.mentions.members.first();
+            if (!targetUser) return message.reply("❌ Uso: `!dove @Utente`");
+
+            // Cerca la casa dove l'utente ha accesso
+            const location = message.guild.channels.cache.find(c => 
+                c.parentId === ID_CATEGORIA_CASE && 
+                c.type === ChannelType.GuildText && 
+                c.permissionOverwrites.cache.has(targetUser.id)
+            );
+
+            if (location) {
+                message.reply(`📍 **${targetUser.displayName}** si trova in: ${location} (ID: ${location.id})`);
+            } else {
+                message.reply(`❌ **${targetUser.displayName}** non si trova in nessuna casa al momento.`);
+            }
         }
 
-        // [MODIFICATO] !multipla AVANZATO
-        // Logica: !multipla @Utente #c1 #c2 si #c3 #c4
-        // Prima del "si": solo lettura. Dopo "si": scrittura.
         if (command === 'multipla') {
             if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) return message.reply("⛔ Non sei admin.");
 
             const targetUser = message.mentions.members.first();
             if (!targetUser) return message.reply("❌ Uso: `!multipla @Utente #casa1 ... si #casa2 ...`");
 
-            // Inizializza storico ritirata
             if (!dbCache.multiplaHistory[targetUser.id]) {
                 dbCache.multiplaHistory[targetUser.id] = [];
             }
 
             const rawArgs = message.content.slice(PREFIX.length + command.length).trim().split(/ +/);
             
-            let canWrite = false; // Default: sola lettura
+            let canWrite = false; 
             let processedCount = 0;
 
             for (const arg of rawArgs) {
-                // Se è una mention utente, salta
                 if (arg.includes(targetUser.id)) continue;
-
-                // Se è "si", attiva scrittura
                 if (arg.toLowerCase() === 'si') {
                     canWrite = true;
                     continue;
                 }
 
-                // Se è un canale
                 if (arg.match(/^<#(\d+)>$/)) {
                     const channelId = arg.replace(/\D/g, '');
                     const channel = message.guild.channels.cache.get(channelId);
 
                     if (channel && channel.parentId === ID_CATEGORIA_CASE) {
-                        // Aggiorna storico
                         if (!dbCache.multiplaHistory[targetUser.id].includes(channel.id)) {
                             dbCache.multiplaHistory[targetUser.id].push(channel.id);
                         }
 
-                        // Applica permessi
                         await channel.permissionOverwrites.create(targetUser.id, {
                             ViewChannel: true,
                             SendMessages: canWrite,
@@ -645,9 +627,6 @@ client.on('messageCreate', async message => {
             message.reply(`✅ Configurazione multipla applicata a ${processedCount} canali per ${targetUser}.`);
         }
 
-        // [MODIFICATO] !ritirata AVANZATO
-        // !ritirata @Utente #c1 #c2 si/no
-        // Rimuove da c1 e c2. "si/no" decide scrittura per le case RESTANTI nello storico.
         if (command === 'ritirata') {
             if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) return message.reply("⛔ Non sei admin.");
 
@@ -655,12 +634,11 @@ client.on('messageCreate', async message => {
             if (!targetUser) return message.reply("❌ Uso: `!ritirata @Utente #daRimuovere ... si/no`");
 
             const rawArgs = message.content.slice(PREFIX.length + command.length).trim().split(/ +/);
-            const modeArg = rawArgs[rawArgs.length - 1].toLowerCase(); // si/no per il Rimanente
+            const modeArg = rawArgs[rawArgs.length - 1].toLowerCase(); 
 
             const channelsToRemove = [];
             message.mentions.channels.forEach(c => channelsToRemove.push(c.id));
 
-            // Rimuovi permessi dai canali specificati
             let removedCount = 0;
             for (const cid of channelsToRemove) {
                 const channel = message.guild.channels.cache.get(cid);
@@ -670,12 +648,10 @@ client.on('messageCreate', async message => {
                 }
             }
 
-            // Aggiorna storico rimuovendo quelli tolti
             let history = dbCache.multiplaHistory[targetUser.id] || [];
             history = history.filter(hid => !channelsToRemove.includes(hid));
             dbCache.multiplaHistory[targetUser.id] = history;
 
-            // Aggiorna permessi per i canali RIMASTI
             if (modeArg === 'si' || modeArg === 'no') {
                 const canWrite = (modeArg === 'si');
                 for (const hid of history) {
@@ -700,7 +676,8 @@ client.on('messageCreate', async message => {
         // 👤 COMANDI GIOCATORE / NUOVI
         // ---------------------------------------------------------
 
-        // [NUOVO] !trasferimento
+        // [MODIFICATO] !trasferimento
+        // [MODIFICATO] !trasferimento
         if (command === 'trasferimento') {
             if (message.channel.parentId !== ID_CATEGORIA_CASE) return message.delete().catch(()=>{});
 
@@ -709,19 +686,32 @@ client.on('messageCreate', async message => {
                 return message.channel.send("⛔ Non hai il ruolo per trasferirti.").then(m => setTimeout(() => m.delete(), 5000));
             }
 
-            // Trova proprietario
-            const ownerId = Object.keys(dbCache.playerHomes).find(key => dbCache.playerHomes[key] === message.channel.id);
-            if (!ownerId) return message.channel.send("❌ Questa casa non ha un proprietario registrato.").then(m => setTimeout(() => m.delete(), 5000));
-
-            const owner = message.guild.members.cache.get(ownerId);
-            if (!owner) return message.channel.send("❌ Proprietario non trovato nel server.");
-
             const requester = message.author;
             const newHomeChannel = message.channel;
 
+            // Trova proprietario esistente
+            const ownerId = Object.keys(dbCache.playerHomes).find(key => dbCache.playerHomes[key] === message.channel.id);
+            
+            // Caso 1: Casa vuota = assegnazione automatica
+            if (!ownerId) {
+                dbCache.playerHomes[requester.id] = newHomeChannel.id;
+                await saveDB();
+
+                // Rimuove vecchia key se esiste (logica semplificata, !torna funzionerà sulla nuova)
+                await newHomeChannel.permissionOverwrites.edit(requester.id, { ViewChannel: true, SendMessages: true });
+                const pinnedMsg = await newHomeChannel.send(`🔑 **${requester}**, questa è la tua dimora privata (Trasferimento automatico).`);
+                await pinnedMsg.pin();
+                return message.reply("✅ Trasferimento completato! La casa era vuota e ora è tua.");
+            }
+
+            // Caso 2: Casa occupata = richiesta permesso IN CASA
+            const owner = message.guild.members.cache.get(ownerId);
+            if (!owner) return message.channel.send("❌ Proprietario della casa non trovato nel server (DB Errore).");
+
+            // Messaggio che appare in casa
             const confirmEmbed = new EmbedBuilder()
                 .setTitle("Richiesta di Trasferimento 📦")
-                .setDescription(`${requester} vuole trasferirsi a casa tua e diventarne comproprietario.\nAccetti?`)
+                .setDescription(`${requester} vuole trasferirsi qui e diventarne comproprietario.\nAccetti?`)
                 .setColor('Blue');
 
             const row = new ActionRowBuilder()
@@ -730,43 +720,40 @@ client.on('messageCreate', async message => {
                     new ButtonBuilder().setCustomId(`transfer_no_${requester.id}`).setLabel('Rifiuta ❌').setStyle(ButtonStyle.Danger)
                 );
 
-            const msg = await owner.send({ content: `🔔 **Richiesta Trasferimento!**`, embeds: [confirmEmbed], components: [row] });
-            message.reply(`📨 Richiesta inviata a ${owner}. Attendi risposta.`);
+            // Invia il messaggio NEL CANALE invece che in DM
+            const msg = await message.channel.send({ 
+                content: `🔔 **Richiesta Trasferimento!** <@${owner.id}>`, // Ping al proprietario
+                embeds: [confirmEmbed], 
+                components: [row] 
+            });
 
-            // Gestione interazione pulsante
             const filter = i => i.user.id === owner.id;
             const collector = msg.createMessageComponentCollector({ filter, time: 300000, max: 1 });
 
             collector.on('collect', async i => {
                 if (i.customId === `transfer_yes_${requester.id}`) {
-                    await i.update({ content: "✅ Hai accettato il trasferimento.", components: [] });
+                    // Aggiorna il messaggio dei bottoni
+                    await i.update({ content: `✅ **${owner.displayName}** ha accettato il trasferimento!`, embeds: [], components: [] });
 
-                    // 1. Cancella vecchia key message
-                    const oldHomeId = dbCache.playerHomes[requester.id];
-                    if (oldHomeId) {
-                        const oldChannel = message.guild.channels.cache.get(oldHomeId);
-                        if (oldChannel) {
-                            const pinned = await oldChannel.messages.fetchPinned();
-                            // Cerca messaggio "questa è la tua dimora" che menziona l'utente
-                            const oldKeyMsg = pinned.find(m => m.content.includes(requester.id) && m.content.includes("dimora privata"));
-                            if (oldKeyMsg) await oldKeyMsg.delete();
-                        }
-                    }
-
-                    // 2. Aggiorna DB
+                    // Aggiorna DB
                     dbCache.playerHomes[requester.id] = newHomeChannel.id;
                     await saveDB();
 
-                    // 3. Manda nuovo messaggio e pinna
-                    const newKeyMsg = await newHomeChannel.send(`🔑 ${requester}, questa è la tua nuova dimora privata.`);
+                    // Imposta permessi canale
+                    await newHomeChannel.permissionOverwrites.edit(requester.id, { ViewChannel: true, SendMessages: true });
+
+                    const newKeyMsg = await newHomeChannel.send(`🔑 ${requester}, questa è la tua nuova dimora privata (Comproprietario).`);
                     await newKeyMsg.pin();
 
-                    // 4. Feedback
-                    newHomeChannel.send(`📦 ${requester} si è trasferito ufficialmente qui!`);
-
                 } else {
-                    await i.update({ content: "❌ Hai rifiutato il trasferimento.", components: [] });
-                    newHomeChannel.send(`⛔ ${owner} ha rifiutato la richiesta di trasferimento di ${requester}.`);
+                    // Aggiorna il messaggio dei bottoni
+                    await i.update({ content: `❌ **${owner.displayName}** ha rifiutato il trasferimento.`, embeds: [], components: [] });
+                    
+                    // Notifica ruolo ID1 nel canale annunci
+                    const notificationChannel = message.guild.channels.cache.get(ID_CANALE_ANNUNCI);
+                    if (notificationChannel) {
+                        notificationChannel.send(`<@&${ID_RUOLO_NOTIFICA_1}>: Il trasferimento di ${requester} presso ${newHomeChannel} è stato RIFIUTATO dal proprietario.`);
+                    }
                 }
             });
         }
@@ -827,7 +814,6 @@ client.on('messageCreate', async message => {
             if (message.member.roles.cache.hasAny(...RUOLI_PERMESSI)) {
                 let base, extra, hidden, forced;
 
-                // [MODIFICATO] Mostra statistiche in base alla modalità
                 if (dbCache.currentMode === 'DAY') {
                      const limits = dbCache.dayLimits[message.author.id] || { base: 0 };
                      base = limits.base;
@@ -840,7 +826,6 @@ client.on('messageCreate', async message => {
                 const totalLimit = base + extra;
                 const used = dbCache.playerVisits[message.author.id] || 0;
 
-                // Forced e Hidden sono letti dai contatori dinamici attuali (già caricati dallo switch mode)
                 hidden = dbCache.hiddenVisits[message.author.id] || 0;
                 forced = dbCache.forcedVisits[message.author.id] || 0;
                 
@@ -850,14 +835,18 @@ client.on('messageCreate', async message => {
             }
         }
 
+        // [MODIFICATO] !torna
         if (command === 'torna') {
             message.delete().catch(()=>{}); 
             if (message.channel.parentId !== ID_CATEGORIA_CHAT_PRIVATE) return;
 
             const homeId = dbCache.playerHomes[message.author.id];
-            if (!homeId) return message.channel.send("❌ Non hai una casa."); 
             
-            // [MODIFICATO] Controllo distruzione
+            // [MODIFICA RICHIESTA]: Messaggio specifico se la casa non esiste (ricostruita/cancellata)
+            if (!homeId) {
+                return message.channel.send("❌ **Non hai una casa!** Potrebbe essere stata distrutta e ricostruita. Devi cercarne una nuova."); 
+            }
+            
             if (dbCache.destroyedHouses.includes(homeId)) {
                 return message.channel.send("🏚️ **Casa tua è stata distrutta!** Non puoi tornarci.");
             }
@@ -1031,7 +1020,6 @@ client.on('interactionCreate', async interaction => {
 
             if (!targetChannel) return interaction.reply({ content: "Casa inesistente.", ephemeral: true });
 
-            // [MODIFICATO] Usa i counter correnti (popolati da applyLimitsForMode)
             if (mode === 'mode_forced') {
                 const forcedAvailable = dbCache.forcedVisits[knocker.id] || 0;
                 if (forcedAvailable <= 0) {
@@ -1066,7 +1054,6 @@ client.on('interactionCreate', async interaction => {
                 return interaction.channel.send({ content: `🕵️ ${knocker} sei entrato in modalità nascosta in 🏡| ${formatName(targetChannel.name)}` });
             }
 
-            // Calcolo visite normali in base alla modalità
             let base, extra;
             if (dbCache.currentMode === 'DAY') {
                 const limits = dbCache.dayLimits[knocker.id] || { base: 0 };
@@ -1198,3 +1185,4 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
 }
 
 client.login(TOKEN);
+
