@@ -946,15 +946,12 @@ client.on('interactionCreate', async interaction => {
             );
             const currentHouseId = currentHouseChannel ? currentHouseChannel.id : null;
 
-            const tutteLeCase = interaction.guild.channels.cache
-                .filter(c => 
-                    c.parentId === ID_CATEGORIA_CASE && 
-                    c.type === ChannelType.GuildText &&
-                    c.id !== userHomeId &&      
-                    c.id !== currentHouseId &&
-                    (!dbCache.destroyedHouses || !dbCache.destroyedHouses.includes(c.id)) 
-                )
-                .sort((a, b) => a.rawPosition - b.rawPosition);
+const tutteLeCase = interaction.guild.channels.cache
+    .filter(c => 
+        c.parentId === ID_CATEGORIA_CASE && 
+        c.type === ChannelType.GuildText
+    )
+    .sort((a, b) => a.rawPosition - b.rawPosition);
 
             if (tutteLeCase.size === 0) return interaction.reply({ content: "❌ Nessuna casa disponibile.", ephemeral: true });
 
@@ -983,36 +980,50 @@ client.on('interactionCreate', async interaction => {
             });
         }
 
-        if (interaction.customId === 'knock_page_select') {
+       if (interaction.customId === 'knock_page_select') {
             const parts = interaction.values[0].split('_'); 
             const pageIndex = parseInt(parts[1]);
             const currentMode = parts[2] + '_' + parts[3]; 
 
             const userHomeId = dbCache.playerHomes[interaction.user.id];
+            
+            // Trova la casa dove si trova l'utente ORA
             const currentHouseChannel = interaction.guild.channels.cache.find(c => 
                 c.parentId === ID_CATEGORIA_CASE && 
                 c.permissionsFor(interaction.user).has(PermissionsBitField.Flags.ViewChannel)
             );
             const currentHouseId = currentHouseChannel ? currentHouseChannel.id : null;
 
+            // 1. PRENDIAMO TUTTO (Così i numeri restano fissi: 1-25, 26-40)
             const tutteLeCase = interaction.guild.channels.cache
                 .filter(c => 
                     c.parentId === ID_CATEGORIA_CASE && 
-                    c.type === ChannelType.GuildText &&
-                    c.id !== userHomeId &&
-                    c.id !== currentHouseId &&
-                    (!dbCache.destroyedHouses || !dbCache.destroyedHouses.includes(c.id))
+                    c.type === ChannelType.GuildText
                 )
                 .sort((a, b) => a.rawPosition - b.rawPosition);
 
             const PAGE_SIZE = 25;
             const start = pageIndex * PAGE_SIZE;
-            const caseSlice = Array.from(tutteLeCase.values()).slice(start, start + PAGE_SIZE);
+            
+            // 2. TAGLIAMO LA PAGINA "GREZZA"
+            const caseSliceRaw = Array.from(tutteLeCase.values()).slice(start, start + PAGE_SIZE);
+
+            // 3. ORA FILTRIAMO: Nascondiamo le case distrutte solo da questa lista
+            const caseSliceFiltered = caseSliceRaw.filter(c => 
+                c.id !== userHomeId &&
+                c.id !== currentHouseId &&
+                (!dbCache.destroyedHouses || !dbCache.destroyedHouses.includes(c.id))
+            );
+
+            // Se dopo aver filtrato non rimane nulla
+            if (caseSliceFiltered.length === 0) {
+                return interaction.reply({ content: "❌ Nessuna casa visitabile in questa zona (sono tutte distrutte o è casa tua).", ephemeral: true });
+            }
 
             const selectHouse = new StringSelectMenuBuilder()
                 .setCustomId('knock_house_select')
                 .setPlaceholder('Dove vuoi andare?')
-                .addOptions(caseSlice.map(c => 
+                .addOptions(caseSliceFiltered.map(c => 
                     new StringSelectMenuOptionBuilder()
                         .setLabel(formatName(c.name))
                         .setValue(`${c.id}_${currentMode}`) 
@@ -1200,4 +1211,5 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
 }
 
 client.login(TOKEN);
+
 
