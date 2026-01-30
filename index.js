@@ -577,26 +577,40 @@ client.on('messageCreate', async message => {
         }
         
         // [NUOVO] !dove
+        // [MODIFICATO] !dove (Versione Anti-Fantasmi e Strict Mode)
         if (command === 'dove') {
             if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) return message.reply("⛔ Non sei admin.");
             
             const targetUser = message.mentions.members.first();
             if (!targetUser) return message.reply("❌ Uso: `!dove @Utente`");
 
-            // Cerca la casa dove l'utente ha permessi di visione ATTUALI (dove è fisicamente)
-            const location = message.guild.channels.cache.find(c => 
-                c.parentId === ID_CATEGORIA_CASE && 
-                c.type === ChannelType.GuildText && 
-                c.permissionOverwrites.cache.has(targetUser.id)
-            );
+            // Cerca le case controllando se il permesso è ESPLICITAMENTE su "Allow" (Verde)
+            const locations = message.guild.channels.cache.filter(c => {
+                // Deve essere una casa (controllo categoria e tipo testo)
+                if (c.parentId !== ID_CATEGORIA_CASE || c.type !== ChannelType.GuildText) return false;
 
-            if (location) {
-                message.reply(`📍 **${targetUser.displayName}** si trova attualmente in: ${location} (ID: ${location.id})`);
+                // Prendi i permessi specifici dell'utente per questo canale
+                const overwrite = c.permissionOverwrites.cache.get(targetUser.id);
+
+                // IL FIX È QUI:
+                // 1. L'overwrite deve esistere
+                // 2. Deve avere il flag 'ViewChannel' impostato su ALLOW (Verde)
+                return overwrite && overwrite.allow.has(PermissionsBitField.Flags.ViewChannel);
+            });
+
+            if (locations.size > 0) {
+                const locList = locations.map(c => `🏠 ${c} (ID: ${c.id})`).join('\n');
+                
+                let warning = "";
+                if (locations.size > 1) {
+                    warning = "\n\n⚠️ **ATTENZIONE:** L'utente risulta attivo in più case! Usa `!ritirata` o togli i permessi manuali.";
+                }
+
+                message.reply(`📍 **${targetUser.displayName}** si trova fisicamente in:\n${locList}${warning}`);
             } else {
                 message.reply(`❌ **${targetUser.displayName}** non si trova in nessuna casa al momento.`);
             }
         }
-
         if (command === 'multipla') {
             if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) return message.reply("⛔ Non sei admin.");
 
@@ -1232,3 +1246,4 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
 }
 
 client.login(TOKEN);
+
