@@ -406,18 +406,32 @@ client.on('messageCreate', async message => {
                         .random();
                     
                     if (randomHouse) {
-                        await movePlayer(member, targetChannel, randomHouse, `${member} è entrato (casa distrutta).`, false);
+                        await movePlayer(member, targetChannel, randomHouse, `${member} è entrato.`, false);
                     }
-                } else {
-                    // Ospite -> Torna a casa sua (se esiste)
+              } else {
+                    // OSPITE (Non proprietario della casa che sta esplodendo)
                     const homeId = dbCache.playerHomes[member.id];
+                    // Controlla se ha una casa E se quella casa è sicura (non distrutta)
+                    const hasSafeHome = homeId && homeId !== targetChannel.id && !dbCache.destroyedHouses.includes(homeId);
                     
-                    if (homeId && homeId !== targetChannel.id && !dbCache.destroyedHouses.includes(homeId)) {
+                    if (hasSafeHome) {
+                        // CASO 1: Ha una casa sicura -> Torna a casa sua
                         const homeChannel = message.guild.channels.cache.get(homeId);
                         if (homeChannel) {
-                            await movePlayer(member, targetChannel, homeChannel, `🏠 ${member} è ritornato (casa distrutta).`, false);
+                            await movePlayer(member, targetChannel, homeChannel, `🏠 ${member} è ritornato.`, false);
                         }
-                    } 
+                    } else {
+                        // CASO 2: Non ha casa (o è distrutta) -> Finisce in una casa RANDOM (se ha i ruoli)
+                        if (member.roles.cache.hasAny(...RUOLI_PERMESSI)) {
+                            const randomHouse = message.guild.channels.cache
+                                .filter(c => c.parentId === ID_CATEGORIA_CASE && c.id !== targetChannel.id && !dbCache.destroyedHouses.includes(c.id))
+                                .random();
+                            
+                            if (randomHouse) {
+                                await movePlayer(member, targetChannel, randomHouse, `${member} è entrato.`, false);
+                            }
+                        }
+                    }
                 }
             }
 
@@ -1246,5 +1260,6 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
 }
 
 client.login(TOKEN);
+
 
 
