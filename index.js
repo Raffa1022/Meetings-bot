@@ -195,6 +195,23 @@ function applyLimitsForMode() {
     });
 }
 
+// Funzione helper per pulire la vecchia casa
+async function cleanOldHome(userId, guild) {
+    const oldHomeId = dbCache.playerHomes[userId];
+    if (oldHomeId) {
+        const oldChannel = guild.channels.cache.get(oldHomeId);
+        if (oldChannel) {
+            try {
+                const pinnedMessages = await oldChannel.messages.fetchPinned();
+                const keyMsg = pinnedMessages.find(m => m.content.includes("questa è la tua dimora privata"));
+                if (keyMsg) await keyMsg.delete();
+            } catch (err) {
+                console.log("Errore rimozione pin vecchia casa:", err);
+            }
+        }
+    }
+}
+
 client.once('ready', async () => {
     console.log(`✅ Bot Online come ${client.user.tag}!`);
     await loadDB();
@@ -374,29 +391,32 @@ client.on('messageCreate', async message => {
             const keyMsg = pinnedMessages.find(m => m.content.includes("questa è la tua dimora privata"));
             if (keyMsg) await keyMsg.delete();
 
-            const membersInside = targetChannel.members.filter(m => !m.user.bot);
-            
-            for (const [memberId, member] of membersInside) {
-                const ownerId = Object.keys(dbCache.playerHomes).find(key => dbCache.playerHomes[key] === targetChannel.id);
-                const isOwner = (ownerId === member.id);
-                const hasSpecialRole = member.roles.cache.has(ID_RUOLO_NOTIFICA_1); 
+            const membersInside = targetChannel.members.filter(m => !m.user.bot && m.id !== message.member.id);
+            const ownerId = Object.keys(dbCache.playerHomes).find(key => dbCache.playerHomes[key] === targetChannel.id);
 
+            for (const [memberId, member] of membersInside) {
+                const isOwner = (ownerId === member.id);
+                
                 await targetChannel.permissionOverwrites.delete(member.id).catch(() => {});
 
-                if (isOwner && hasSpecialRole) {
+                if (isOwner) {
+                    // Proprietario -> Casa random
                     const randomHouse = message.guild.channels.cache
                         .filter(c => c.parentId === ID_CATEGORIA_CASE && c.id !== targetChannel.id && !dbCache.destroyedHouses.includes(c.id))
                         .random();
                     
                     if (randomHouse) {
-                        await movePlayer(member, targetChannel, randomHouse, `${member} è entrato.`, false);
+                        await movePlayer(member, targetChannel, randomHouse, `${member} è entrato (casa distrutta).`, false);
                     }
                 } else {
+                    // Ospite -> Torna a casa sua (se esiste)
                     const homeId = dbCache.playerHomes[member.id];
-                    const homeChannel = message.guild.channels.cache.get(homeId);
                     
-                    if (homeChannel && homeChannel.id !== targetChannel.id && !dbCache.destroyedHouses.includes(homeId)) {
-                        await movePlayer(member, targetChannel, homeChannel, `🏠 ${member} è ritornato.`, false);
+                    if (homeId && homeId !== targetChannel.id && !dbCache.destroyedHouses.includes(homeId)) {
+                        const homeChannel = message.guild.channels.cache.get(homeId);
+                        if (homeChannel) {
+                            await movePlayer(member, targetChannel, homeChannel, `🏠 ${member} è ritornato (casa distrutta).`, false);
+                        }
                     } 
                 }
             }
@@ -500,12 +520,11 @@ client.on('messageCreate', async message => {
                 return message.reply("❌ Uso: `!trasporto @Utente1 @Utente2 ... #CanaleDestinazione`");
             }
 
-            // [MODIFICA RICHIESTA]: Controllo che siano tutti nella stessa casa
+            // Controllo che siano tutti nella stessa casa
             let startHouseId = null;
             let allTogether = true;
 
             for (const [id, member] of membersToMove) {
-                // Trova la casa dove l'utente ha permessi di visione
                 const currentHouse = message.guild.channels.cache.find(c => 
                     c.parentId === ID_CATEGORIA_CASE && 
                     c.type === ChannelType.GuildText && 
@@ -529,12 +548,10 @@ client.on('messageCreate', async message => {
                 return message.reply("❌ **Errore Trasporto:** Tutti i giocatori specificati devono trovarsi nella stessa casa per essere trasportati insieme!");
             }
 
-            // Logica Movimento
             const startChannel = message.guild.channels.cache.get(startHouseId);
             const memberArray = Array.from(membersToMove.values());
             
-            // Costruzione stringhe narrazione
-            // "U1 è uscito seguito da U2, U3..."
+            // Costruzione stringhe narrazione richiesta
             const firstUser = memberArray[0];
             const others = memberArray.slice(1);
             let othersString = others.length > 0 ? ` seguito da ${others.map(m => m.toString()).join(', ')}` : "";
@@ -566,7 +583,7 @@ client.on('messageCreate', async message => {
             const targetUser = message.mentions.members.first();
             if (!targetUser) return message.reply("❌ Uso: `!dove @Utente`");
 
-            // Cerca la casa dove l'utente ha accesso
+            // Cerca la casa dove l'utente ha permessi di visione ATTUALI (dove è fisicamente)
             const location = message.guild.channels.cache.find(c => 
                 c.parentId === ID_CATEGORIA_CASE && 
                 c.type === ChannelType.GuildText && 
@@ -574,7 +591,7 @@ client.on('messageCreate', async message => {
             );
 
             if (location) {
-                message.reply(`📍 **${targetUser.displayName}** si trova in: ${location} (ID: ${location.id})`);
+                message.reply(`📍 **${targetUser.displayName}** si trova attualmente in: ${location} (ID: ${location.id})`);
             } else {
                 message.reply(`❌ **${targetUser.displayName}** non si trova in nessuna casa al momento.`);
             }
@@ -677,7 +694,6 @@ client.on('messageCreate', async message => {
         // ---------------------------------------------------------
 
         // [MODIFICATO] !trasferimento
-        // [MODIFICATO] !trasferimento
         if (command === 'trasferimento') {
             if (message.channel.parentId !== ID_CATEGORIA_CASE) return message.delete().catch(()=>{});
 
@@ -694,24 +710,25 @@ client.on('messageCreate', async message => {
             
             // Caso 1: Casa vuota = assegnazione automatica
             if (!ownerId) {
+                // PULIZIA VECCHIA CASA
+                await cleanOldHome(requester.id, message.guild);
+
                 dbCache.playerHomes[requester.id] = newHomeChannel.id;
                 await saveDB();
 
-                // Rimuove vecchia key se esiste (logica semplificata, !torna funzionerà sulla nuova)
                 await newHomeChannel.permissionOverwrites.edit(requester.id, { ViewChannel: true, SendMessages: true });
                 const pinnedMsg = await newHomeChannel.send(`🔑 **${requester}**, questa è la tua dimora privata (Trasferimento automatico).`);
                 await pinnedMsg.pin();
                 return message.reply("✅ Trasferimento completato! La casa era vuota e ora è tua.");
             }
 
-            // Caso 2: Casa occupata = richiesta permesso IN CASA
+            // Caso 2: Casa occupata = richiesta permesso
             const owner = message.guild.members.cache.get(ownerId);
             if (!owner) return message.channel.send("❌ Proprietario della casa non trovato nel server (DB Errore).");
 
-            // Messaggio che appare in casa
             const confirmEmbed = new EmbedBuilder()
                 .setTitle("Richiesta di Trasferimento 📦")
-                .setDescription(`${requester} vuole trasferirsi qui e diventarne comproprietario.\nAccetti?`)
+                .setDescription(`${requester} vuole trasferirsi presso **${formatName(newHomeChannel.name)}** e diventarne comproprietario.\nAccetti?`)
                 .setColor('Blue');
 
             const row = new ActionRowBuilder()
@@ -720,20 +737,44 @@ client.on('messageCreate', async message => {
                     new ButtonBuilder().setCustomId(`transfer_no_${requester.id}`).setLabel('Rifiuta ❌').setStyle(ButtonStyle.Danger)
                 );
 
-            // Invia il messaggio NEL CANALE invece che in DM
-            const msg = await message.channel.send({ 
-                content: `🔔 **Richiesta Trasferimento!** <@${owner.id}>`, // Ping al proprietario
-                embeds: [confirmEmbed], 
-                components: [row] 
-            });
+            // Verifica se il proprietario è IN CASA (ha i permessi di visualizzazione)
+            const isOwnerHome = newHomeChannel.permissionsFor(owner).has(PermissionsBitField.Flags.ViewChannel);
+            let msg;
+            let targetChannelForButtons;
+
+            if (isOwnerHome) {
+                // Proprietario in casa -> manda messaggio nel canale
+                targetChannelForButtons = newHomeChannel;
+                msg = await newHomeChannel.send({ 
+                    content: `🔔 **Richiesta Trasferimento!** <@${owner.id}>`, 
+                    embeds: [confirmEmbed], 
+                    components: [row] 
+                });
+            } else {
+                // Proprietario fuori casa -> manda messaggio in Chat Private
+                const privateChat = message.guild.channels.cache.get(ID_CATEGORIA_CHAT_PRIVATE);
+                if (privateChat) {
+                    targetChannelForButtons = privateChat;
+                    msg = await privateChat.send({
+                        content: `🔔 **Richiesta Trasferimento per casa tua!** <@${owner.id}> (L'utente si trova in ${newHomeChannel})`,
+                        embeds: [confirmEmbed],
+                        components: [row]
+                    });
+                    message.channel.send(`📩 Il proprietario non è in casa. Ho inviato la richiesta sulla sua linea privata.`);
+                } else {
+                    return message.channel.send("❌ Errore canale chat private.");
+                }
+            }
 
             const filter = i => i.user.id === owner.id;
             const collector = msg.createMessageComponentCollector({ filter, time: 300000, max: 1 });
 
             collector.on('collect', async i => {
                 if (i.customId === `transfer_yes_${requester.id}`) {
-                    // Aggiorna il messaggio dei bottoni
                     await i.update({ content: `✅ **${owner.displayName}** ha accettato il trasferimento!`, embeds: [], components: [] });
+
+                    // PULIZIA VECCHIA CASA
+                    await cleanOldHome(requester.id, message.guild);
 
                     // Aggiorna DB
                     dbCache.playerHomes[requester.id] = newHomeChannel.id;
@@ -745,11 +786,17 @@ client.on('messageCreate', async message => {
                     const newKeyMsg = await newHomeChannel.send(`🔑 ${requester}, questa è la tua nuova dimora privata (Comproprietario).`);
                     await newKeyMsg.pin();
 
+                    if (!isOwnerHome) {
+                        newHomeChannel.send(`✅ **${owner.displayName}** (da remoto) ha accettato il trasferimento di ${requester}!`);
+                    }
+
                 } else {
-                    // Aggiorna il messaggio dei bottoni
                     await i.update({ content: `❌ **${owner.displayName}** ha rifiutato il trasferimento.`, embeds: [], components: [] });
                     
-                    // Notifica ruolo ID1 nel canale annunci
+                    if (!isOwnerHome) {
+                        newHomeChannel.send(`❌ **${owner.displayName}** (da remoto) ha rifiutato il trasferimento.`);
+                    }
+
                     const notificationChannel = message.guild.channels.cache.get(ID_CANALE_ANNUNCI);
                     if (notificationChannel) {
                         notificationChannel.send(`<@&${ID_RUOLO_NOTIFICA_1}>: Il trasferimento di ${requester} presso ${newHomeChannel} è stato RIFIUTATO dal proprietario.`);
@@ -1185,4 +1232,3 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
 }
 
 client.login(TOKEN);
-
