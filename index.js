@@ -512,83 +512,23 @@ client.on('messageCreate', async message => {
         if (command === 'sposta') {
             if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) return message.reply("⛔ Non sei admin.");
             
-            const targetUser = message.mentions.members.first();
+            // Filtra solo gli utenti reali (no bot)
+            const targetMembers = message.mentions.members.filter(m => !m.user.bot);
             const targetChannel = message.mentions.channels.first();
 
-            if (!targetUser || !targetChannel) return message.reply("❌ Uso: `!sposta @Utente #canale`");
-
-            await movePlayer(targetUser, message.channel, targetChannel, `👋 **${targetUser}** è entrato.`, false);
-            message.reply(`✅ ${targetUser} spostato in ${targetChannel}.`);
-        }
-
-        // [MODIFICATO] !trasporto
-        if (command === 'trasporto') {
-            if (message.channel.parentId !== ID_CATEGORIA_CHAT_PRIVATE) return; // Solo chat admin
-            if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) return message.reply("⛔ Non sei admin.");
-
-            // Sintassi: !trasporto @u1 @u2 #destinazione
-            const targetChannel = message.mentions.channels.first();
-            const membersToMove = message.mentions.members.filter(m => !m.user.bot);
-
-            if (!targetChannel || membersToMove.size < 1) {
-                return message.reply("❌ Uso: `!trasporto @Utente1 @Utente2 ... #CanaleDestinazione`");
+            if (!targetChannel || targetMembers.size === 0) {
+                return message.reply("❌ Uso: `!sposta @Utente1 @Utente2 ... #canale`");
             }
 
-            // Controllo che siano tutti nella stessa casa
-            let startHouseId = null;
-            let allTogether = true;
-
-            for (const [id, member] of membersToMove) {
-                const currentHouse = message.guild.channels.cache.find(c => 
-                    c.parentId === ID_CATEGORIA_CASE && 
-                    c.type === ChannelType.GuildText && 
-                    c.permissionOverwrites.cache.has(member.id)
-                );
-
-                if (!currentHouse) {
-                    allTogether = false;
-                    break; 
-                }
-
-                if (startHouseId === null) {
-                    startHouseId = currentHouse.id;
-                } else if (startHouseId !== currentHouse.id) {
-                    allTogether = false;
-                    break;
-                }
+            // Ciclo per spostare tutti gli utenti taggati
+            for (const [id, member] of targetMembers) {
+                await movePlayer(member, message.channel, targetChannel, `👋 **${member}** è entrato.`, false);
             }
-
-            if (!allTogether || !startHouseId) {
-                return message.reply("❌ **Errore Trasporto:** Tutti i giocatori specificati devono trovarsi nella stessa casa per essere trasportati insieme!");
-            }
-
-            const startChannel = message.guild.channels.cache.get(startHouseId);
-            const memberArray = Array.from(membersToMove.values());
             
-            // Costruzione stringhe narrazione richiesta
-            const firstUser = memberArray[0];
-            const others = memberArray.slice(1);
-            let othersString = others.length > 0 ? ` seguito da ${others.map(m => m.toString()).join(', ')}` : "";
-
-            const exitMsg = `🚪 ${firstUser}${othersString} è uscito.`;
-            const enterMsg = `👋 ${firstUser}${othersString} è entrato.`;
-
-            // Rimuovi permessi vecchia casa
-            for (const member of memberArray) {
-                if (startChannel) await startChannel.permissionOverwrites.delete(member.id).catch(()=>{});
-            }
-            if (startChannel) await startChannel.send(exitMsg);
-
-            // Aggiungi permessi nuova casa
-            for (const member of memberArray) {
-                await targetChannel.permissionOverwrites.create(member.id, { ViewChannel: true, SendMessages: true });
-                dbCache.playerModes[member.id] = 'NORMAL';
-            }
-            await targetChannel.send(enterMsg);
-
-            await saveDB();
-            message.reply(`✅ Trasporto di gruppo effettuato verso ${targetChannel}.`);
+            message.reply(`✅ Spostati ${targetMembers.size} utenti in ${targetChannel}.`);
         }
+
+        // [RIMOSSO] !trasporto (Il comando è stato eliminato come richiesto)
         
         // [NUOVO] !dove
         // [MODIFICATO] !dove (Versione Anti-Fantasmi e Strict Mode)
@@ -1260,7 +1200,3 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
 }
 
 client.login(TOKEN);
-
-
-
-
