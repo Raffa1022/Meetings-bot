@@ -719,23 +719,34 @@ client.on('messageCreate', async message => {
                     components: [row] 
                 });
             } else {
-                // Proprietario fuori casa -> manda messaggio in Chat Private
-                const privateChat = message.guild.channels.cache.get(ID_CATEGORIA_CHAT_PRIVATE);
-                if (privateChat) {
-                    targetChannelForButtons = privateChat;
-                    msg = await privateChat.send({
-                        content: `🔔 **Richiesta Trasferimento per casa tua!** <@${owner.id}> (L'utente si trova in ${newHomeChannel})`,
-                        embeds: [confirmEmbed],
-                        components: [row]
-                    });
-                    message.channel.send(`📩 Il proprietario non è in casa. Ho inviato la richiesta sulla sua linea privata.`);
-                } else {
-                    return message.channel.send("❌ Errore canale chat private.");
-                }
+              // Proprietario fuori casa -> Cerca la SUA chat privata nella categoria
+            const privateCategory = message.guild.channels.cache.get(ID_CATEGORIA_CHAT_PRIVATE);
+            
+            if (!privateCategory) {
+                return message.channel.send("❌ Errore: Categoria Chat Private non trovata.");
+            }
+
+            // Cerca un canale TESTUALE dentro quella categoria dove il proprietario ha il permesso di VEDERE
+            const ownerPrivateChannel = privateCategory.children.cache.find(c => 
+                c.type === ChannelType.GuildText && 
+                c.permissionsFor(owner).has(PermissionsBitField.Flags.ViewChannel)
+            );
+
+            if (ownerPrivateChannel) {
+                targetChannelForButtons = ownerPrivateChannel;
+                msg = await ownerPrivateChannel.send({
+                    content: `🔔 **Richiesta Trasferimento per casa tua!** <@${owner.id}> (L'utente si trova in ${newHomeChannel})`,
+                    embeds: [confirmEmbed],
+                    components: [row]
+                });
+                message.channel.send(`📩 Il proprietario non è in casa. Ho inviato la richiesta sulla sua linea privata.`);
+            } else {
+                return message.channel.send(`❌ Il proprietario non è in casa e non riesco a trovare la sua chat privata per avvisarlo!`);
+            }
             }
 
             const filter = i => i.user.id === owner.id;
-            const collector = msg.createMessageComponentCollector({ filter, time: 300000, max: 1 });
+            const collector = msg.createMessageComponentCollector({ filter, max: 1 });
 
             collector.on('collect', async i => {
                 if (i.customId === `transfer_yes_${requester.id}`) {
@@ -765,10 +776,6 @@ client.on('messageCreate', async message => {
                         newHomeChannel.send(`❌ **${owner.displayName}** (da remoto) ha rifiutato il trasferimento.`);
                     }
 
-                    const notificationChannel = message.guild.channels.cache.get(ID_CANALE_ANNUNCI);
-                    if (notificationChannel) {
-                        notificationChannel.send(`<@&${ID_RUOLO_NOTIFICA_1}>: Il trasferimento di ${requester} presso ${newHomeChannel} è stato RIFIUTATO dal proprietario.`);
-                    }
                 }
             });
         }
@@ -1213,6 +1220,7 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
 }
 
 client.login(TOKEN);
+
 
 
 
