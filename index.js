@@ -569,7 +569,7 @@ client.on('messageCreate', async message => {
             if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) return message.reply("⛔ Non sei admin.");
 
             const targetUser = message.mentions.members.first();
-            if (!targetUser) return message.reply("❌ Uso: `!multipla @Utente #casa1 ... si #casa2 ...`");
+            if (!targetUser) return message.reply("❌ Uso: `!multipla @Utente #casa1 si narra #casa2 no ...`");
 
             if (!dbCache.multiplaHistory[targetUser.id]) {
                 dbCache.multiplaHistory[targetUser.id] = [];
@@ -577,61 +577,166 @@ client.on('messageCreate', async message => {
 
             const rawArgs = message.content.slice(PREFIX.length + command.length).trim().split(/ +/);
             
-            let canWrite = false; 
-            let processedCount = 0;
+            // STATO INIZIALE (Default: Muto e Silenzioso)
+            let currentWrite = false; 
+            let currentNarra = false;
+
+            // Lista delle azioni da compiere
+            let actions = [];
 
             for (const arg of rawArgs) {
+                // Ignora il tag dell'utente
                 if (arg.includes(targetUser.id)) continue;
-                if (arg.toLowerCase() === 'si') {
-                    canWrite = true;
+
+                // 1. GESTIONE COMANDI (Aggiornano lo stato attuale e l'ultima casa inserita)
+                let stateChanged = false;
+
+                if (arg.toLowerCase() === 'si') { currentWrite = true; stateChanged = true; }
+                else if (arg.toLowerCase() === 'no') { currentWrite = false; stateChanged = true; }
+                else if (arg.toLowerCase() === 'narra') { currentNarra = true; stateChanged = true; }
+                else if (arg.toLowerCase() === 'muto') { currentNarra = false; stateChanged = true; } // Opzione per spegnere la narrazione
+
+                // Se abbiamo cambiato stato e c'è una casa appena aggiunta, aggiorniamola subito
+                // Questo permette la sintassi: #casa1 si narra (comandi DOPO la casa)
+                if (stateChanged && actions.length > 0) {
+                    actions[actions.length - 1].write = currentWrite;
+                    actions[actions.length - 1].narra = currentNarra;
                     continue;
                 }
 
+                // 2. GESTIONE CANALI
                 if (arg.match(/^<#(\d+)>$/)) {
                     const channelId = arg.replace(/\D/g, '');
                     const channel = message.guild.channels.cache.get(channelId);
 
                     if (channel && channel.parentId === ID_CATEGORIA_CASE) {
-                        if (!dbCache.multiplaHistory[targetUser.id].includes(channel.id)) {
-                            dbCache.multiplaHistory[targetUser.id].push(channel.id);
-                        }
-
-                        await channel.permissionOverwrites.create(targetUser.id, {
-                            ViewChannel: true,
-                            SendMessages: canWrite,
-                            AddReactions: canWrite,
-                            CreatePublicThreads: canWrite,
-                            CreatePrivateThreads: canWrite
+                        // Aggiunge la casa alla lista con le impostazioni ATTUALI
+                        actions.push({
+                            channel: channel,
+                            write: currentWrite,
+                            narra: currentNarra
                         });
-                        processedCount++;
                     }
                 }
             }
+
+            // ESECUZIONE REALE
+            let processedCount = 0;
+            for (const action of actions) {
+                // Aggiungi alla memoria se non c'è
+                if (!dbCache.multiplaHistory[targetUser.id].includes(action.channel.id)) {
+                    dbCache.multiplaHistory[targetUser.id].push(action.channel.id);
+                }
+
+                // Applica i permessi specifici per QUESTA casa
+                await action.channel.permissionOverwrites.create(targetUser.id, {
+                    ViewChannel: true,
+                    SendMessages: action.write,
+                    AddReactions: action.write,
+                    CreatePublicThreads: action.write,
+                    CreatePrivateThreads: action.write,
+                    ReadMessageHistory: true
+                });
+
+                // Narra solo se richiesto per QUESTA casa
+                if (action.narra) {
+                    await action.channel.send(`👋 **${targetUser.displayName}** è entrato.`);
+                }
+                processedCount++;
+            }
             
             await saveDB();
-            message.reply(`✅ Configurazione multipla applicata a ${processedCount} canali per ${targetUser}.`);
+            message.reply(`✅ Applicate impostazioni personalizzate a **${processedCount}** case per ${targetUser}.`);
         }
-
-        if (command === 'ritirata') {
+       if (command === 'ritirata') {
             if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) return message.reply("⛔ Non sei admin.");
 
             const targetUser = message.mentions.members.first();
-            if (!targetUser) return message.reply("❌ Uso: `!ritirata @Utente #daRimuovere ... si/no`");
+            if (!targetUser) return message.reply("❌ Uso: `!ritirata @Utente #casa1 narra ... [si/no]`");
 
             const rawArgs = message.content.slice(PREFIX.length + command.length).trim().split(/ +/);
-            const modeArg = rawArgs[rawArgs.length - 1].toLowerCase(); 
+            
+            // STATO
+            let currentNarra = false;
+            let currentWrite = null; // null = non toccare le case che restano
+            let removalActions = [];
+            
+            // 1. ANALISI ARGOMENTI
+            for (const arg of rawArgs) {
+                if (arg.includes(targetUser.id)) continue;
 
-            const channelsToRemove = [];
-            message.mentions.channels.forEach(c => channelsToRemove.push(c.id));
+                let stateChanged = false;
+                // Impostazioni per l'uscita (narrazione)
+                if (arg.toLowerCase() === 'narra') { currentNarra = true; stateChanged = true; }
+                else if (arg.toLowerCase() === 'muto') { currentNarra = false; stateChanged = true; }
+                
+                // Impostazioni per le case che RIMANGONO (si/no)
+                else if (arg.toLowerCase() === 'si') { currentWrite = true; } 
+                else if (arg.toLowerCase() === 'no') { currentWrite = false; } 
 
-            let removedCount = 0;
-            for (const cid of channelsToRemove) {
-                const channel = message.guild.channels.cache.get(cid);
-                if (channel) {
-                    await channel.permissionOverwrites.delete(targetUser.id).catch(() => {});
-                    removedCount++;
+                // Se abbiamo cambiato 'narra', aggiorniamo l'ultima azione di rimozione se presente
+                if (stateChanged && removalActions.length > 0) {
+                    removalActions[removalActions.length - 1].narra = currentNarra;
+                    continue;
+                }
+
+                // Identificazione canali da rimuovere
+                if (arg.match(/^<#(\d+)>$/)) {
+                    const channelId = arg.replace(/\D/g, '');
+                    const channel = message.guild.channels.cache.get(channelId);
+                    if (channel) {
+                        removalActions.push({
+                            channel: channel,
+                            narra: currentNarra
+                        });
+                    }
                 }
             }
+
+            // 2. ESECUZIONE RIMOZIONI
+            let removedCount = 0;
+            let channelsRemovedIds = [];
+
+            for (const action of removalActions) {
+                // Se richiesto, saluta PRIMA di togliere i permessi
+                if (action.narra) {
+                    await action.channel.send(`🚪 **${targetUser.displayName}** è uscito.`);
+                }
+                
+                // Toglie i permessi
+                await action.channel.permissionOverwrites.delete(targetUser.id).catch(() => {});
+                
+                channelsRemovedIds.push(action.channel.id);
+                removedCount++;
+            }
+
+            // 3. AGGIORNAMENTO MEMORIA
+            let history = dbCache.multiplaHistory[targetUser.id] || [];
+            // Filtra via quelle appena rimosse
+            history = history.filter(hid => !channelsRemovedIds.includes(hid));
+            dbCache.multiplaHistory[targetUser.id] = history;
+
+            // 4. AGGIORNAMENTO CASE RIMASTE (Solo se hai scritto 'si' o 'no')
+            if (currentWrite !== null) {
+                for (const hid of history) {
+                    const ch = message.guild.channels.cache.get(hid);
+                    if (ch) {
+                        await ch.permissionOverwrites.create(targetUser.id, {
+                            ViewChannel: true,
+                            SendMessages: currentWrite,
+                            AddReactions: currentWrite,
+                            ReadMessageHistory: true
+                        });
+                    }
+                }
+                const statusText = currentWrite ? "SCRITTURA (SI)" : "LETTURA (NO)";
+                message.reply(`✅ Rimossi ${removedCount} canali. Le ${history.length} case restanti sono state aggiornate a: **${statusText}**.`);
+            } else {
+                message.reply(`✅ Rimossi ${removedCount} canali. Nessuna modifica alle case restanti.`);
+            }
+
+            await saveDB();
+        }
 
             let history = dbCache.multiplaHistory[targetUser.id] || [];
             history = history.filter(hid => !channelsToRemove.includes(hid));
@@ -1224,6 +1329,7 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
 }
 
 client.login(TOKEN);
+
 
 
 
