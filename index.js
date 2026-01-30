@@ -792,10 +792,12 @@ client.on('messageCreate', async message => {
                 return message.channel.send("⛔ Devi usare questo comando dentro una casa.").then(m => setTimeout(() => m.delete(), 5000));
             }
 
-            const ownerId = Object.keys(dbCache.playerHomes).find(key => dbCache.playerHomes[key] === targetChannel.id);
-            let ownerMention = "Nessuno";
-            if (ownerId) ownerMention = `<@${ownerId}>`;
+const ownerIds = Object.keys(dbCache.playerHomes).filter(key => dbCache.playerHomes[key] === targetChannel.id);
 
+let ownerMention = "Nessuno";
+if (ownerIds.length > 0) {
+    ownerMention = ownerIds.map(id => `<@${id}>`).join(', ');
+}
             const playersInHouse = targetChannel.members.filter(member => 
                 !member.user.bot && 
                 targetChannel.permissionOverwrites.cache.has(member.id)
@@ -1211,5 +1213,6 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
 }
 
 client.login(TOKEN);
+
 
 
