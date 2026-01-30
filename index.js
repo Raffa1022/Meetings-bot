@@ -1247,3 +1247,4 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
 
 client.login(TOKEN);
 
+
