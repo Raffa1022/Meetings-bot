@@ -1212,7 +1212,11 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
         }
     }
 
-    await newChannel.permissionOverwrites.create(member.id, { ViewChannel: true, SendMessages: true });
+   await newChannel.permissionOverwrites.create(member.id, { 
+        ViewChannel: true, 
+        SendMessages: true,
+        ReadMessageHistory: true 
+    });
     dbCache.playerModes[member.id] = isSilent ? 'HIDDEN' : 'NORMAL';
     await saveDB();
 
@@ -1220,6 +1224,7 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
 }
 
 client.login(TOKEN);
+
 
 
 
