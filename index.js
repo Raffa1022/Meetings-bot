@@ -406,7 +406,7 @@ client.on('messageCreate', async message => {
                         .random();
                     
                     if (randomHouse) {
-                        await movePlayer(member, targetChannel, randomHouse, `${member} è entrato.`, false);
+                        await movePlayer(member, targetChannel, randomHouse, ` 👋 **${member}** è entrato.`, false);
                     }
               } else {
                     // OSPITE (Non proprietario della casa che sta esplodendo)
@@ -428,7 +428,7 @@ client.on('messageCreate', async message => {
                                 .random();
                             
                             if (randomHouse) {
-                                await movePlayer(member, targetChannel, randomHouse, `${member} è entrato.`, false);
+                                await movePlayer(member, targetChannel, randomHouse, `👋 **${member}** è entrato.`, false);
                             }
                         }
                     }
@@ -1260,6 +1260,7 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
 }
 
 client.login(TOKEN);
+
 
 
 
