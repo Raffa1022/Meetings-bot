@@ -737,32 +737,7 @@ client.on('messageCreate', async message => {
 
             await saveDB();
         }
-        }
-
-            let history = dbCache.multiplaHistory[targetUser.id] || [];
-            history = history.filter(hid => !channelsToRemove.includes(hid));
-            dbCache.multiplaHistory[targetUser.id] = history;
-
-            if (modeArg === 'si' || modeArg === 'no') {
-                const canWrite = (modeArg === 'si');
-                for (const hid of history) {
-                    const ch = message.guild.channels.cache.get(hid);
-                    if (ch) {
-                        await ch.permissionOverwrites.create(targetUser.id, {
-                            ViewChannel: true,
-                            SendMessages: canWrite,
-                            AddReactions: canWrite
-                        });
-                    }
-                }
-                message.reply(`✅ Rimossi ${removedCount} canali. I restanti (${history.length}) sono stati impostati su Scrittura: **${modeArg.toUpperCase()}**.`);
-            } else {
-                message.reply(`✅ Rimossi ${removedCount} canali. Nessuna modifica ai restanti.`);
-            }
-
-            await saveDB();
-        }
-
+       
         // ---------------------------------------------------------
         // 👤 COMANDI GIOCATORE / NUOVI
         // ---------------------------------------------------------
@@ -1330,6 +1305,7 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
 }
 
 client.login(TOKEN);
+
 
 
 
