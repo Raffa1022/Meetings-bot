@@ -737,6 +737,7 @@ client.on('messageCreate', async message => {
 
             await saveDB();
         }
+        }
 
             let history = dbCache.multiplaHistory[targetUser.id] || [];
             history = history.filter(hid => !channelsToRemove.includes(hid));
@@ -1329,6 +1330,7 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
 }
 
 client.login(TOKEN);
+
 
 
 
