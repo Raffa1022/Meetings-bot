@@ -25,11 +25,17 @@ const PREFIX = '!';
 const ID_CATEGORIA_CASE = '1460741413388947528';
 const ID_CANALE_DB = '1465768646906220700'; 
 const ID_CATEGORIA_CHAT_PRIVATE = '1460741414357827747'; 
+const ID_CATEGORIA_CHAT_DIURNA = '1460741410599866413';
 
 // Configurazione Distruzione/Ricostruzione
 const ID_CANALE_ANNUNCI = '1460741475804381184'; 
 const ID_RUOLO_NOTIFICA_1 = '1460741403331268661'; // Usato anche per !trasferimento
 const ID_RUOLO_NOTIFICA_2 = '1460741404497019002';
+const ID_RUOLO_NOTIFICA_3 = '1460741405722022151';
+
+// Nuove GIF per Notte e Giorno (Quelle che hai caricato tu)
+const GIF_NOTTE_START = 'https://media2.giphy.com/media/v1.Y2lkPTc5MGI3NjExbWl6d2w2NWhkM2QwZWR6aDZ5YW5pdmFwMjR4NGd1ZXBneGo4NmhvayZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/LMomqSiRZF3zi/giphy.gif'; 
+const GIF_GIORNO_START = 'https://media.giphy.com/media/jxbtTiXsCUZQXOKP2M/giphy.gif';
 
 // Ruoli per comando !pubblico
 const RUOLI_PUBBLICI = [
@@ -283,33 +289,6 @@ client.on('messageCreate', async message => {
             message.reply(`✅ Configurazione Notte/Standard salvata per ${targetUser}.`);
         }
 
-        if (command === 'giorno') {
-            if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) return message.reply("⛔ Non sei admin.");
-            
-            const targetUser = message.mentions.members.first();
-            const baseInput = parseInt(args[1]);
-            const forcedInput = parseInt(args[2]);
-            const hiddenInput = parseInt(args[3]);
-
-            if (!targetUser || isNaN(baseInput) || isNaN(forcedInput) || isNaN(hiddenInput)) {
-                return message.reply("❌ Uso: `!giorno @Utente [Base] [Forzate] [Nascoste]`");
-            }
-
-            dbCache.dayLimits[targetUser.id] = {
-                base: baseInput,
-                forced: forcedInput,
-                hidden: hiddenInput
-            };
-
-            if (dbCache.currentMode === 'DAY') {
-                dbCache.forcedVisits[targetUser.id] = forcedInput;
-                dbCache.hiddenVisits[targetUser.id] = hiddenInput;
-            }
-
-            await saveDB();
-            message.reply(`✅ Configurazione Giorno salvata per ${targetUser}.`);
-        }
-
         if (command === 'aggiunta') {
             if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) return message.reply("⛔ Non sei admin.");
             
@@ -353,22 +332,135 @@ client.on('messageCreate', async message => {
             await saveDB();
         }
 
-        if (command === 'resetvisite') {
+       if (command === 'resetvisite') {
             if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) return message.reply("⛔ Non sei admin.");
             
-            if (dbCache.currentMode === 'NIGHT') {
-                dbCache.currentMode = 'DAY';
-                message.channel.send("☀️ **MODALITÀ GIORNO ATTIVATA** ☀️\nCaricamento visite diurne...");
-            } else {
-                dbCache.currentMode = 'NIGHT';
-                message.channel.send("🌙 **MODALITÀ NOTTE/VISITE ATTIVATA** 🌙\nCaricamento visite standard...");
+            // 1. Resetta le visite Extra aggiunte con !aggiunta
+            dbCache.extraVisits = {};      // Resetta extra notte
+            dbCache.extraVisitsDay = {};   // Resetta extra giorno
+            
+            // 2. Resetta lo storico delle visite usate (fatto da applyLimitsForMode, ma lo forziamo per sicurezza)
+            dbCache.playerVisits = {};
+
+            // 3. Ricalcola limiti forzati/nascosti in base alla modalità attuale
+            applyLimitsForMode();
+            
+            await saveDB();
+            message.reply("♻️ **RESET GLOBALE COMPLETATO**\n- Visite usate: 0\n- Visite Extra (!aggiunta): Rimosse\n- Limiti ripristinati ai valori base.");
+        }
+        if (command === 'notte') {
+            if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) return message.reply("⛔ Non sei admin.");
+
+            const numero = args[0];
+            if (!numero) return message.reply("❌ Devi specificare il numero della notte. Es: `!notte 1`");
+
+            // --- LOGICA VISITE (Richiesta 3) ---
+            dbCache.currentMode = 'NIGHT'; // Imposta modalità Notte
+            applyLimitsForMode();          // Applica i limiti notturni e pulisce i contatori giornalieri
+            await saveDB();
+
+            // --- ANNUNCI E CHAT ---
+            const testoAnnuncio = `🌑 **NOTTE ${numero} HA INIZIO**`;
+
+            // Annuncio canale principale
+            const annunciChannel = message.guild.channels.cache.get(ID_CANALE_ANNUNCI);
+            if (annunciChannel) {
+                await annunciChannel.send({
+                    content: `<@&${ID_RUOLO_NOTIFICA_1}> <@&${ID_RUOLO_NOTIFICA_2}>\n${testoAnnuncio}`,
+                    files: [GIF_NOTTE_START]
+                });
             }
 
-            applyLimitsForMode();
-            await saveDB();
-            message.reply("🔄 Contatori aggiornati in base alla nuova modalità.");
-        }
+            // Blocco Chat Diurna
+            const categoriaDiurna = message.guild.channels.cache.get(ID_CATEGORIA_CHAT_DIURNA);
+            if (categoriaDiurna) {
+                const ruoliDaBloccare = [ID_RUOLO_NOTIFICA_1, ID_RUOLO_NOTIFICA_2, ID_RUOLO_NOTIFICA_3];
+                const canaliDiurni = categoriaDiurna.children.cache.filter(c => c.type === ChannelType.GuildText);
 
+                for (const [id, channel] of canaliDiurni) {
+                    for (const ruoloId of ruoliDaBloccare) {
+                        if (ruoloId) await channel.permissionOverwrites.edit(ruoloId, { SendMessages: false }).catch(() => {});
+                    }
+                    try {
+                        const msg = await channel.send(testoAnnuncio);
+                        await msg.pin();
+                    } catch (e) {}
+                }
+            }
+
+            message.reply(`✅ **Notte ${numero} avviata.**\n- Chat diurne: CHIUSE\n- Modalità Visite: NOTTE (Attive)`);
+        }
+        if (command === 'giorno') {
+            if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) return message.reply("⛔ Non sei admin.");
+
+            const primoArgomento = args[0];
+            const isConfigUser = message.mentions.members.size > 0;
+
+            // --- CASO A: CONFIGURAZIONE UTENTE (!giorno @Utente 3 1 1) ---
+            if (isConfigUser) {
+                const targetUser = message.mentions.members.first();
+                const baseInput = parseInt(args[1]);
+                const forcedInput = parseInt(args[2]);
+                const hiddenInput = parseInt(args[3]);
+
+                if (!targetUser || isNaN(baseInput) || isNaN(forcedInput) || isNaN(hiddenInput)) {
+                    return message.reply("❌ Uso config: `!giorno @Utente [Base] [Forzate] [Nascoste]`");
+                }
+
+                dbCache.dayLimits[targetUser.id] = {
+                    base: baseInput,
+                    forced: forcedInput,
+                    hidden: hiddenInput
+                };
+                
+                // Se siamo già di giorno, aggiorna subito i contatori live
+                if (dbCache.currentMode === 'DAY') {
+                    dbCache.forcedVisits[targetUser.id] = forcedInput;
+                    dbCache.hiddenVisits[targetUser.id] = hiddenInput;
+                }
+
+                await saveDB();
+                return message.reply(`✅ Configurazione Giorno salvata per ${targetUser}.`);
+            }
+
+            // --- CASO B: AVVIO FASE GIORNO (!giorno 1) ---
+            if (!primoArgomento) return message.reply("❌ Specifica il numero del giorno (es. `!giorno 1`) o tagga un utente per configurarlo.");
+
+            // LOGICA VISITE (Richiesta 3)
+            dbCache.currentMode = 'DAY'; // Imposta modalità Giorno
+            applyLimitsForMode();        // Applica i limiti giorno e pulisce i contatori notturni
+            await saveDB();
+
+            const testoAnnuncio = `☀️ **GIORNO ${primoArgomento} HA INIZIO**`;
+
+            // Annuncio
+            const annunciChannel = message.guild.channels.cache.get(ID_CANALE_ANNUNCI);
+            if (annunciChannel) {
+                await annunciChannel.send({
+                    content: `<@&${ID_RUOLO_NOTIFICA_1}> <@&${ID_RUOLO_NOTIFICA_2}> <@&${ID_RUOLO_NOTIFICA_3}>\n${testoAnnuncio}`,
+                    files: [GIF_GIORNO_START]
+                });
+            }
+
+            // Sblocco Chat Diurna
+            const categoriaDiurna = message.guild.channels.cache.get(ID_CATEGORIA_CHAT_DIURNA);
+            if (categoriaDiurna) {
+                const ruoliDaSbloccare = [ID_RUOLO_NOTIFICA_1, ID_RUOLO_NOTIFICA_2, ID_RUOLO_NOTIFICA_3];
+                const canaliDiurni = categoriaDiurna.children.cache.filter(c => c.type === ChannelType.GuildText);
+
+                for (const [id, channel] of canaliDiurni) {
+                    for (const ruoloId of ruoliDaSbloccare) {
+                        if (ruoloId) await channel.permissionOverwrites.edit(ruoloId, { SendMessages: true }).catch(() => {});
+                    }
+                    try {
+                        const msg = await channel.send(testoAnnuncio);
+                        await msg.pin();
+                    } catch (e) {}
+                }
+            }
+
+            message.reply(`✅ **Giorno ${primoArgomento} avviato.**\n- Chat diurne: APERTE\n- Modalità Visite: GIORNO (Attive)`);
+        }
         if (command === 'distruzione') {
             if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) return message.reply("⛔ Non sei admin.");
 
@@ -1305,6 +1397,7 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
 }
 
 client.login(TOKEN);
+
 
 
 
