@@ -27,6 +27,15 @@ const ID_CANALE_DB = '1465768646906220700';
 const ID_CATEGORIA_CHAT_PRIVATE = '1460741414357827747'; 
 const ID_CATEGORIA_CHAT_DIURNA = '1460741410599866413';
 
+// NUOVI ID PER LA GESTIONE PERMESSI NOTTE
+const ID_CANALE_BLOCCO_TOTALE = '1460741488815247567'; // Qui blocchi Ruolo 1, 2 e 3
+const ID_CANALI_BLOCCO_PARZIALE = [
+    '1464941042380837010', 
+    '1460741484226543840', 
+    '1460741486290276456', 
+    '1460741488135635030'
+]; // Qui blocchi solo Ruolo 2 e 3
+
 // Configurazione Distruzione/Ricostruzione
 const ID_CANALE_ANNUNCI = '1460741475804381184'; 
 const ID_RUOLO_NOTIFICA_1 = '1460741403331268661'; // Usato anche per !trasferimento
@@ -372,19 +381,36 @@ client.on('messageCreate', async message => {
             }
 
             // Blocco Chat Diurna
+          // Blocco Chat Diurna (LOGICA AGGIORNATA)
             const categoriaDiurna = message.guild.channels.cache.get(ID_CATEGORIA_CHAT_DIURNA);
             if (categoriaDiurna) {
-                const ruoliDaBloccare = [ID_RUOLO_NOTIFICA_1, ID_RUOLO_NOTIFICA_2, ID_RUOLO_NOTIFICA_3];
                 const canaliDiurni = categoriaDiurna.children.cache.filter(c => c.type === ChannelType.GuildText);
 
                 for (const [id, channel] of canaliDiurni) {
-                    for (const ruoloId of ruoliDaBloccare) {
-                        if (ruoloId) await channel.permissionOverwrites.edit(ruoloId, { SendMessages: false }).catch(() => {});
+                    
+                    // CASO 1: Canale dove TUTTI (1, 2, 3) devono essere bloccati
+                    if (channel.id === ID_CANALE_BLOCCO_TOTALE) {
+                        const ruoliTotali = [ID_RUOLO_NOTIFICA_1, ID_RUOLO_NOTIFICA_2, ID_RUOLO_NOTIFICA_3];
+                        for (const r of ruoliTotali) {
+                            if (r) await channel.permissionOverwrites.edit(r, { SendMessages: false }).catch(() => {});
+                        }
                     }
-                    try {
-                        const msg = await channel.send(testoAnnuncio);
-                        await msg.pin();
-                    } catch (e) {}
+                    
+                    // CASO 2: I 4 Canali dove solo RUOLO 2 e 3 vengono bloccati (Ruolo 1 rimane libero)
+                    else if (ID_CANALI_BLOCCO_PARZIALE.includes(channel.id)) {
+                        const ruoliParziali = [ID_RUOLO_NOTIFICA_2, ID_RUOLO_NOTIFICA_3];
+                        for (const r of ruoliParziali) {
+                            if (r) await channel.permissionOverwrites.edit(r, { SendMessages: false }).catch(() => {});
+                        }
+                    }
+                    
+                    // CASO 3: Tutti gli altri canali della categoria (Blocco standard per sicurezza)
+                    else {
+                        const ruoliStandard = [ID_RUOLO_NOTIFICA_1, ID_RUOLO_NOTIFICA_2, ID_RUOLO_NOTIFICA_3];
+                        for (const r of ruoliStandard) {
+                            if (r) await channel.permissionOverwrites.edit(r, { SendMessages: false }).catch(() => {});
+                        }
+                    }
                 }
             }
 
@@ -1397,6 +1423,7 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
 }
 
 client.login(TOKEN);
+
 
 
 
