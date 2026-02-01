@@ -381,38 +381,23 @@ client.on('messageCreate', async message => {
             }
 
             // Blocco Chat Diurna
-          // Blocco Chat Diurna (LOGICA AGGIORNATA)
+                      // Blocco Chat Diurna (BLOCCO TOTALE PER TUTTI)
             const categoriaDiurna = message.guild.channels.cache.get(ID_CATEGORIA_CHAT_DIURNA);
             if (categoriaDiurna) {
                 const canaliDiurni = categoriaDiurna.children.cache.filter(c => c.type === ChannelType.GuildText);
+                
+                // Lista di tutti i ruoli da zittire
+                const ruoliDaBloccare = [ID_RUOLO_NOTIFICA_1, ID_RUOLO_NOTIFICA_2, ID_RUOLO_NOTIFICA_3];
 
                 for (const [id, channel] of canaliDiurni) {
-                    
-                    // CASO 1: Canale dove TUTTI (1, 2, 3) devono essere bloccati
-                    if (channel.id === ID_CANALE_BLOCCO_TOTALE) {
-                        const ruoliTotali = [ID_RUOLO_NOTIFICA_1, ID_RUOLO_NOTIFICA_2, ID_RUOLO_NOTIFICA_3];
-                        for (const r of ruoliTotali) {
-                            if (r) await channel.permissionOverwrites.edit(r, { SendMessages: false }).catch(() => {});
-                        }
+                    for (const r of ruoliDaBloccare) {
+                        // Imposta SendMessages su FALSE per tutti i ruoli in tutti i canali
+                        if (r) await channel.permissionOverwrites.edit(r, { SendMessages: false }).catch(() => {});
                     }
-                    
-                    // CASO 2: I 4 Canali dove solo RUOLO 2 e 3 vengono bloccati (Ruolo 1 rimane libero)
-                    else if (ID_CANALI_BLOCCO_PARZIALE.includes(channel.id)) {
-                        const ruoliParziali = [ID_RUOLO_NOTIFICA_2, ID_RUOLO_NOTIFICA_3];
-                        for (const r of ruoliParziali) {
-                            if (r) await channel.permissionOverwrites.edit(r, { SendMessages: false }).catch(() => {});
-                        }
-                    }
-                    
-                    // CASO 3: Tutti gli altri canali della categoria (Blocco standard per sicurezza)
-                    else {
-                        const ruoliStandard = [ID_RUOLO_NOTIFICA_1, ID_RUOLO_NOTIFICA_2, ID_RUOLO_NOTIFICA_3];
-                        for (const r of ruoliStandard) {
-                            if (r) await channel.permissionOverwrites.edit(r, { SendMessages: false }).catch(() => {});
-                        }
-                    }
+                    // Nessun messaggio inviato, nessun pin. Solo silenzio.
                 }
             }
+
 
             message.reply(`✅ **Notte ${numero} avviata.**\n- Chat diurne: CHIUSE\n- Modalità Visite: NOTTE (Attive)`);
         }
@@ -1423,6 +1408,7 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
 }
 
 client.login(TOKEN);
+
 
 
 
