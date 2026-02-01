@@ -178,6 +178,22 @@ client.on('messageCreate', async message => {
             return message.reply("✅ Fatto.");
         }
 
+                if (command === 'sposta' && isAdmin) {
+            const user = message.mentions.members.first();
+            const dest = message.mentions.channels.first();
+            if (!user || !dest) return message.reply("❌ Uso: `!sposta @Utente #Canale`");
+
+            // Cerca dov'è ora l'utente per toglierlo da lì
+            const currentLoc = message.guild.channels.cache.find(c => 
+                c.parentId === ID_CATEGORIA_CASE && 
+                c.permissionsFor(user).has(PermissionsBitField.Flags.ViewChannel)
+            );
+
+            await movePlayer(user, currentLoc, dest, `🚚 **${user.displayName}** è entrato.`, false, data);
+            await data.save();
+            message.reply(`✅ Spostato ${user.displayName} in ${dest}.`);
+        }
+
         if (command === 'visite' && isAdmin) {
             const user = message.mentions.members.first();
             const [b, f, h] = [parseInt(args[1]), parseInt(args[2]), parseInt(args[3])];
@@ -473,5 +489,6 @@ client.on('interactionCreate', async i => {
         }
     } catch (e) { console.error(e); }
 });
+
 
 client.login(TOKEN);
