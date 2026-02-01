@@ -454,21 +454,46 @@ client.on('messageCreate', async message => {
             }
 
             // Sblocco Chat Diurna
+                        // Sblocco Chat Diurna (LOGICA PERSONALIZZATA)
             const categoriaDiurna = message.guild.channels.cache.get(ID_CATEGORIA_CHAT_DIURNA);
             if (categoriaDiurna) {
-                const ruoliDaSbloccare = [ID_RUOLO_NOTIFICA_1, ID_RUOLO_NOTIFICA_2, ID_RUOLO_NOTIFICA_3];
                 const canaliDiurni = categoriaDiurna.children.cache.filter(c => c.type === ChannelType.GuildText);
+                
+                const r1 = ID_RUOLO_NOTIFICA_1;
+                const r2 = ID_RUOLO_NOTIFICA_2;
+                const r3 = ID_RUOLO_NOTIFICA_3;
 
                 for (const [id, channel] of canaliDiurni) {
-                    for (const ruoloId of ruoliDaSbloccare) {
-                        if (ruoloId) await channel.permissionOverwrites.edit(ruoloId, { SendMessages: true }).catch(() => {});
+                    
+                    // CASO 1: Canale "Blocco Totale" (Restano tutti muti anche di giorno)
+                    if (channel.id === ID_CANALE_BLOCCO_TOTALE) {
+                        if (r1) await channel.permissionOverwrites.edit(r1, { SendMessages: false }).catch(() => {});
+                        if (r2) await channel.permissionOverwrites.edit(r2, { SendMessages: false }).catch(() => {});
+                        if (r3) await channel.permissionOverwrites.edit(r3, { SendMessages: false }).catch(() => {});
                     }
+                    
+                    // CASO 2: Canali "Blocco Parziale" (Sblocca SOLO Ruolo 1)
+                    else if (ID_CANALI_BLOCCO_PARZIALE.includes(channel.id)) {
+                        if (r1) await channel.permissionOverwrites.edit(r1, { SendMessages: true }).catch(() => {});
+                        if (r2) await channel.permissionOverwrites.edit(r2, { SendMessages: false }).catch(() => {}); // R2 resta muto
+                        if (r3) await channel.permissionOverwrites.edit(r3, { SendMessages: false }).catch(() => {}); // R3 resta muto
+                    }
+                    
+                    // CASO 3: Tutti gli altri canali (Tutti liberi)
+                    else {
+                        if (r1) await channel.permissionOverwrites.edit(r1, { SendMessages: true }).catch(() => {});
+                        if (r2) await channel.permissionOverwrites.edit(r2, { SendMessages: true }).catch(() => {});
+                        if (r3) await channel.permissionOverwrites.edit(r3, { SendMessages: true }).catch(() => {});
+                    }
+
+                    // Messaggio annuncio + Pin
                     try {
                         const msg = await channel.send(testoAnnuncio);
                         await msg.pin();
                     } catch (e) {}
                 }
             }
+
 
             message.reply(`✅ **Giorno ${primoArgomento} avviato.**\n- Chat diurne: APERTE\n- Modalità Visite: GIORNO (Attive)`);
         }
@@ -1408,6 +1433,7 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
 }
 
 client.login(TOKEN);
+
 
 
 
