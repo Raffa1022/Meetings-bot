@@ -870,13 +870,15 @@ module.exports = async (client, Model) => {
                  pendingKnocks.delete(knocker.id);
                  await interaction.channel.send({ content: `🔓 Porta aperta...` }).then(m => setTimeout(() => m.delete(), 5000));
                  await enterHouse(knocker, interaction.channel, targetChannel, `👋 ${knocker} è entrato.`, false);
-          } else {
-                 // 1. Messaggio nella chat di chi bussa
+                      } else {
+                 // 1. Messaggio chat esterna (chi bussa)
                  await interaction.channel.send({ content: `✊ ${knocker} ha bussato.` });
                  
-                 // 2. Messaggio DENTRO la casa (con tag ruoli)
+                 // 2. Messaggio chat interna (con tag ruoli)
                  const roleTags = RUOLI_PERMESSI.map(r => `<@&${r}>`).join(' ');
-                 const msg = await targetChannel.send(`🔔 **TOC TOC!** ${roleTags}\nQualcuno sta bussando\n✅ = Apri | ❌ = Rifiuta`);
+                 const baseMessage = `🔔 **TOC TOC!** ${roleTags}`;
+                 
+                 const msg = await targetChannel.send(`${baseMessage}\nQualcuno sta bussando\n✅ = Apri | ❌ = Rifiuta`);
                  await msg.react('✅'); await msg.react('❌');
                  
                  const filter = (reaction, user) => ['✅', '❌'].includes(reaction.emoji.name) && membersWithAccess.has(user.id);
@@ -884,31 +886,33 @@ module.exports = async (client, Model) => {
                  
                  collector.on('collect', async (reaction, user) => {
                      if (reaction.emoji.name === '✅') {
-                         // 3. APERTO: Nome in grassetto, SENZA tag
-                         msg.edit(`✅ Aperto da **${user.username}**.`);
+                         // APERTO: Mettiamo il nome in grassetto per info
+                         msg.edit(`${baseMessage}\n✅ Aperto da **${user.username}**.`);
                          pendingKnocks.delete(knocker.id);
                          await enterHouse(knocker, interaction.channel, targetChannel, `👋 **${knocker}** è entrato.`, false);
                      } else {
-                         // 4. RIFIUTATO: Nome in grassetto + Lista presenti inviata a chi bussa
+                         // RIFIUTATO
                          const currentRefused = dbCache.playerVisits[knocker.id] || 0;
                          dbCache.playerVisits[knocker.id] = currentRefused + 1;
                          await saveDB();
                          
-                         msg.edit(`❌ Rifiutato da **${user.username}**.`);
+                         // DENTRO: Messaggio anonimo "Qualcuno ha rifiutato"
+                         msg.edit(`${baseMessage}\n❌ Qualcuno ha rifiutato.`);
                          pendingKnocks.delete(knocker.id);
 
-                         // Crea la lista dei giocatori presenti (escluso bot)
+                         // FUORI: Calcola la lista dei presenti (IGNORANDO !PUBBLICO)
+                         // Filtra: Non Bot AND Ha Ruolo Alive AND Ha Permesso Specifico (Overwrite) sul canale
                          const playersInside = targetChannel.members
-                             .filter(m => !m.user.bot)
-                             .map(m => `<@${m.id}>`) // Tagga i presenti
+                             .filter(m => !m.user.bot && m.roles.cache.hasAny(...RUOLI_PERMESSI) && targetChannel.permissionOverwrites.cache.has(m.id))
+                             .map(m => `<@${m.id}>`) // Tagga i giocatori
                              .join(', ');
                          
-                         const listText = playersInside.length > 0 ? playersInside : "Nessuno visibile";
+                         const listText = playersInside.length > 0 ? playersInside : "Nessuno";
                          
                          await interaction.channel.send(`⛔ ${knocker}, entrata rifiutata. I giocatori presenti in quella casa sono: ${listText}`);
                      }
                  });
-               collector.on('end', async collected => {
+                 collector.on('end', async collected => {
                     if (collected.size === 0) {
                         pendingKnocks.delete(knocker.id);
                         await targetChannel.send("⏳ Nessuno ha risposto. La porta viene forzata.");
@@ -916,6 +920,8 @@ module.exports = async (client, Model) => {
                     }
                  });
             }
+
         }
     });
 };
+
