@@ -611,7 +611,10 @@ module.exports = async (client, Model) => {
             const requester = message.author;
             const newHomeChannel = message.channel;
             const ownerId = Object.keys(dbCache.playerHomes).find(key => dbCache.playerHomes[key] === message.channel.id);
-            
+            // DA INSERIRE SUBITO DOPO 'const ownerId = ...'
+            if (ownerId === requester.id) {
+                return message.channel.send("⛔ Non puoi trasferirti in una casa che possiedi già se ci sei dentro!").then(m => setTimeout(() => m.delete(), 5000));
+            }
             if (!ownerId) {
                 await cleanOldHome(requester.id, message.guild);
                 dbCache.playerHomes[requester.id] = newHomeChannel.id;
@@ -669,18 +672,29 @@ module.exports = async (client, Model) => {
 
         if (command === 'chi') {
             message.delete().catch(()=>{});
-            let targetChannel = message.channel.parentId === ID_CATEGORIA_CASE ? message.channel : null;
-            if (!targetChannel) return message.channel.send("⛔ Usalo in una casa.").then(m => setTimeout(() => m.delete(), 5000));
+            
+            let targetChannel;
+
+            // Se è ADMIN e menziona un canale, usa quello
+            if (message.member.permissions.has(PermissionsBitField.Flags.Administrator) && message.mentions.channels.first()) {
+                targetChannel = message.mentions.channels.first();
+            } else {
+                // Altrimenti usa il canale attuale (solo se è una casa)
+                targetChannel = message.channel.parentId === ID_CATEGORIA_CASE ? message.channel : null;
+            }
+
+            if (!targetChannel) return message.channel.send("⛔ Usalo in una casa o menziona una casa (Admin).").then(m => setTimeout(() => m.delete(), 5000));
 
             const ownerIds = Object.keys(dbCache.playerHomes).filter(key => dbCache.playerHomes[key] === targetChannel.id);
             const ownerMention = ownerIds.length > 0 ? ownerIds.map(id => `<@${id}>`).join(', ') : "Nessuno";
+            
+            // Filtra membri non bot che hanno permessi
             const playersInHouse = targetChannel.members.filter(m => !m.user.bot && targetChannel.permissionOverwrites.cache.has(m.id));
             let description = playersInHouse.size > 0 ? playersInHouse.map(p => `👤 ${p}`).join('\n') : "Nessuno.";
 
-            const embed = new EmbedBuilder().setTitle(`👥 Persone in casa`).setDescription(description).addFields({ name: '🔑 Proprietario', value: ownerMention });
+            const embed = new EmbedBuilder().setTitle(`👥 Persone in ${targetChannel.name}`).setDescription(description).addFields({ name: '🔑 Proprietario', value: ownerMention });
             message.channel.send({ embeds: [embed] }).then(msg => setTimeout(() => msg.delete().catch(() => {}), 300000));
         }
-
         if (command === 'rimaste') {
             message.delete().catch(()=>{});
             if (message.channel.parentId !== ID_CATEGORIA_CHAT_PRIVATE) return message.channel.send("⛔ Solo chat private!").then(m => setTimeout(() => m.delete(), 5000));
@@ -856,9 +870,13 @@ module.exports = async (client, Model) => {
                  pendingKnocks.delete(knocker.id);
                  await interaction.channel.send({ content: `🔓 Porta aperta...` }).then(m => setTimeout(() => m.delete(), 5000));
                  await enterHouse(knocker, interaction.channel, targetChannel, `👋 ${knocker} è entrato.`, false);
-            } else {
+          } else {
+                 // 1. Messaggio nella chat di chi bussa
                  await interaction.channel.send({ content: `✊ ${knocker} ha bussato.` });
-                 const msg = await targetChannel.send(`🔔 **TOC TOC!** Qualcuno bussa.\n✅ = Apri | ❌ = Rifiuta`);
+                 
+                 // 2. Messaggio DENTRO la casa (con tag ruoli)
+                 const roleTags = RUOLI_PERMESSI.map(r => `<@&${r}>`).join(' ');
+                 const msg = await targetChannel.send(`🔔 **TOC TOC!** ${roleTags}\nQualcuno sta bussando\n✅ = Apri | ❌ = Rifiuta`);
                  await msg.react('✅'); await msg.react('❌');
                  
                  const filter = (reaction, user) => ['✅', '❌'].includes(reaction.emoji.name) && membersWithAccess.has(user.id);
@@ -866,16 +884,28 @@ module.exports = async (client, Model) => {
                  
                  collector.on('collect', async (reaction, user) => {
                      if (reaction.emoji.name === '✅') {
-                         msg.edit(`✅ Aperto da ${user}.`);
+                         // 3. APERTO: Nome in grassetto, SENZA tag
+                         msg.edit(`✅ Aperto da **${user.username}**.`);
                          pendingKnocks.delete(knocker.id);
                          await enterHouse(knocker, interaction.channel, targetChannel, `👋 **${knocker}** è entrato.`, false);
                      } else {
+                         // 4. RIFIUTATO: Nome in grassetto + Lista presenti inviata a chi bussa
                          const currentRefused = dbCache.playerVisits[knocker.id] || 0;
                          dbCache.playerVisits[knocker.id] = currentRefused + 1;
                          await saveDB();
-                         msg.edit(`❌ Rifiutato.`);
+                         
+                         msg.edit(`❌ Rifiutato da **${user.username}**.`);
                          pendingKnocks.delete(knocker.id);
-                         await interaction.channel.send(`⛔ ${knocker}, accesso rifiutato.`);
+
+                         // Crea la lista dei giocatori presenti (escluso bot)
+                         const playersInside = targetChannel.members
+                             .filter(m => !m.user.bot)
+                             .map(m => `<@${m.id}>`) // Tagga i presenti
+                             .join(', ');
+                         
+                         const listText = playersInside.length > 0 ? playersInside : "Nessuno visibile";
+                         
+                         await interaction.channel.send(`⛔ ${knocker}, entrata rifiutata. I giocatori presenti in quella casa sono: ${listText}`);
                      }
                  });
                  collector.on('end', async collected => {
@@ -886,6 +916,3 @@ module.exports = async (client, Model) => {
                     }
                  });
             }
-        }
-    });
-};
