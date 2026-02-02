@@ -908,7 +908,7 @@ module.exports = async (client, Model) => {
                          await interaction.channel.send(`⛔ ${knocker}, entrata rifiutata. I giocatori presenti in quella casa sono: ${listText}`);
                      }
                  });
-                 collector.on('end', async collected => {
+               collector.on('end', async collected => {
                     if (collected.size === 0) {
                         pendingKnocks.delete(knocker.id);
                         await targetChannel.send("⏳ Nessuno ha risposto. La porta viene forzata.");
@@ -916,3 +916,6 @@ module.exports = async (client, Model) => {
                     }
                  });
             }
+        }
+    });
+};
