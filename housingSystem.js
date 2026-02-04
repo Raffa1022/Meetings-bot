@@ -612,6 +612,11 @@ module.exports = async (client, Model) => {
             const newHomeChannel = message.channel;
             const ownerId = Object.keys(dbCache.playerHomes).find(key => dbCache.playerHomes[key] === message.channel.id);
             
+            // MODIFICA: Controllo se il proprietario è già in casa sua
+            if (ownerId === requester.id) {
+                return message.reply("❌ Sei già a casa tua, non puoi trasferirti qui!");
+            }
+
             if (!ownerId) {
                 await cleanOldHome(requester.id, message.guild);
                 dbCache.playerHomes[requester.id] = newHomeChannel.id;
