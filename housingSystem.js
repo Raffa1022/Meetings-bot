@@ -865,58 +865,69 @@ module.exports = async (client, Model) => {
 
             pendingKnocks.add(knocker.id);
             await interaction.message.delete().catch(()=>{});
-            
-             const membersWithAccess = targetChannel.members.filter(member => 
-                !member.user.bot && member.id !== knocker.id && member.roles.cache.hasAny(...RUOLI_PERMESSI)
-            );
+                             const membersWithAccess = targetChannel.members.filter(member => 
+                    !member.user.bot && member.id !== knocker.id && member.roles.cache.hasAny(...RUOLI_PERMESSI)
+                 );
 
-            if (membersWithAccess.size === 0) {
-                 pendingKnocks.delete(knocker.id);
-                 await interaction.channel.send({ content: `🔓 Porta aperta...` }).then(m => setTimeout(() => m.delete(), 5000));
-                 await enterHouse(knocker, interaction.channel, targetChannel, `👋 ${knocker} è entrato.`, false);
-            } else {
-                 await interaction.channel.send({ content: `✊ ${knocker} ha bussato.` });
-                 const msg = await targetChannel.send(`🔔 **TOC TOC!** Qualcuno bussa.\n✅ = Apri | ❌ = Rifiuta`);
-                 await msg.react('✅'); await msg.react('❌');
-                 
-                 const filter = (reaction, user) => ['✅', '❌'].includes(reaction.emoji.name) && membersWithAccess.has(user.id);
-                 const collector = msg.createReactionCollector({ filter, time: 300000, max: 1 });
-                 
-                         collector.on('collect', async (reaction, user) => {
-            if (reaction.emoji.name === '✅') {
-                // --- CASO APERTURA (Anonima) ---
-                msg.edit(`✅ Qualcuno ha aperto.`); 
-                pendingKnocks.delete(knocker.id);
-                await enterHouse(knocker, interaction.channel, targetChannel, `👋 **${knocker}** è entrato.`, false);
-            } else {
-                // --- CASO RIFIUTO (Con lista spia) ---
-                const currentRefused = dbCache.playerVisits[knocker.id] || 0;
-                dbCache.playerVisits[knocker.id] = currentRefused + 1;
-                await saveDB();
-                
-                msg.edit(`❌ Rifiutato.`);
-                pendingKnocks.delete(knocker.id);
+                 if (membersWithAccess.size === 0) {
+                     pendingKnocks.delete(knocker.id);
+                     await interaction.channel.send({ content: `🔓 Porta aperta...` }).then(m => setTimeout(() => m.delete(), 5000));
+                     await enterHouse(knocker, interaction.channel, targetChannel, `👋 ${knocker} è entrato.`, false);
+                 } else {
+                     await interaction.channel.send({ content: `✊ ${knocker} ha bussato.` });
+                     
+                     // 1. Tag Ruoli (Definiti in alto nel file)
+                     const roleMentions = RUOLI_PERMESSI.map(id => `<@&${id}>`).join(' ');
+                     
+                     // Messaggio TOC TOC con i tag
+                     const msg = await targetChannel.send(`🔔 **TOC TOC!** ${roleMentions}\nQualcuno sta bussando\n✅ = Apri | ❌ = Rifiuta`);
+                     
+                     await msg.react('✅'); await msg.react('❌');
+                     
+                     const filter = (reaction, user) => ['✅', '❌'].includes(reaction.emoji.name) && membersWithAccess.has(user.id);
+                     const collector = msg.createReactionCollector({ filter, time: 300000, max: 1 });
+                     
+                     collector.on('collect', async (reaction, user) => {
+                         if (reaction.emoji.name === '✅') {
+                             // 2. REPLY invece di Edit (Apertura)
+                             await msg.reply(`✅ Qualcuno ha aperto.`); 
+                             
+                             pendingKnocks.delete(knocker.id);
+                             await enterHouse(knocker, interaction.channel, targetChannel, `👋 **${knocker}** è entrato.`, false);
+                         } else {
+                             const currentRefused = dbCache.playerVisits[knocker.id] || 0;
+                             dbCache.playerVisits[knocker.id] = currentRefused + 1;
+                             await saveDB();
+                             
+                             // 2. REPLY invece di Edit (Rifiuto)
+                             await msg.reply(`❌ Qualcuno ha rifiutato.`);
+                             
+                             pendingKnocks.delete(knocker.id);
+    
+                             // 3. FIX LISTA: Rimuove chi bussa (knocker.id) dalla lista visualizzata
+                             const presentPlayers = targetChannel.members
+                                 .filter(m => !m.user.bot && m.id !== knocker.id)
+                                 .map(m => m.displayName)
+                                 .join(', ');
+    
+                             await interaction.channel.send(`⛔ ${knocker}, entrata rifiutata. I giocatori presenti in quella casa sono: ${presentPlayers || 'Nessuno'}`);
+                         }
+                     });
 
-                // Calcola chi c'è dentro per dirlo a chi ha bussato
-                const presentPlayers = targetChannel.members
-                    .filter(m => !m.user.bot)
-                    .map(m => m.displayName)
-                    .join(', ');
+                     collector.on('end', async collected => {
+                        if (collected.size === 0) {
+                            pendingKnocks.delete(knocker.id);
+                            // Anche qui REPLY se scade il tempo
+                            await msg.reply("⏳ Nessuno ha risposto. La porta viene forzata.");
+                            await enterHouse(knocker, interaction.channel, targetChannel, `👋 ${knocker} è entrato.`, false);
+                        }
+                     });
+                 }
 
-                await interaction.channel.send(`⛔ ${knocker}, entrata rifiutata. I giocatori presenti in quella casa sono: ${presentPlayers || 'Nessuno'}`);
-            }
-        });
-
-                 collector.on('end', async collected => {
-                    if (collected.size === 0) {
-                        pendingKnocks.delete(knocker.id);
-                        await targetChannel.send("⏳ Nessuno ha risposto. La porta viene forzata.");
-                        await enterHouse(knocker, interaction.channel, targetChannel, `👋 ${knocker} è entrato.`, false);
-                    }
-                 });
             }
         }
     });
 };
+
 
 
