@@ -225,25 +225,7 @@ module.exports = async (client, Model) => {
             await data.save();
             await message.channel.send(`✅ **Operazione completata!**\n- Stanze configurate: ${assegnati}\n- Gioco salvato in MongoDB.`);
         }
-// !cambio (Scambio ruoli Player/Sponsor)
-        if (content === '!cambio' && guildId === CONFIG.SERVER.COMMAND_GUILD) {
-            if (message.channel.parentId !== CONFIG.SERVER.ROLE_CHAT_CAT) return message.reply("⛔ Questo comando funziona solo nelle Role Chat.");
-            if (!isAdmin) return message.reply("⛔ Non sei admin.");
 
-            const members = await message.channel.members.fetch();
-            const userPlayer = members.find(m => m.roles.cache.has(CONFIG.ROLES.PLAYER_AUTO));
-            const userSponsor = members.find(m => m.roles.cache.has(CONFIG.ROLES.SPONSOR_AUTO));
-
-            if (!userPlayer || !userSponsor) return message.reply("❌ Coppia Player/Sponsor non trovata.");
-
-            try {
-                await userPlayer.roles.remove(CONFIG.ROLES.PLAYER_AUTO);
-                await userSponsor.roles.remove(CONFIG.ROLES.SPONSOR_AUTO);
-                await userPlayer.roles.add(CONFIG.ROLES.SPONSOR_AUTO);
-                await userSponsor.roles.add(CONFIG.ROLES.PLAYER_AUTO);
-                message.reply(`✅ **Scambio effettuato!**\n🔄 <@${userPlayer.id}> ora è **Sponsor**.\n🔄 <@${userSponsor.id}> ora è **Giocatore**.`);
-            } catch (e) { message.reply("❌ Errore cambio ruoli."); }
-        }
         // !meeting
         if (content.startsWith('!meeting ') && guildId === CONFIG.SERVER.COMMAND_GUILD) {
             if (!member.roles.cache.has(CONFIG.ROLES.PLAYER_AUTO)) return message.reply("❌ Solo i Giocatori possono gestire i meeting.");
@@ -300,14 +282,14 @@ module.exports = async (client, Model) => {
 
                     try {
                         const targetGuild = client.guilds.cache.get(CONFIG.SERVER.TARGET_GUILD);
-                     const permissions = [
-                { id: targetGuild.id, deny: [PermissionsBitField.Flags.ViewChannel] },
-                { id: client.user.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages] },
-                { id: message.author.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages], deny: [PermissionsBitField.Flags.CreatePublicThreads, PermissionsBitField.Flags.CreatePrivateThreads] },
-                { id: userToInvite.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages], deny: [PermissionsBitField.Flags.CreatePublicThreads, PermissionsBitField.Flags.CreatePrivateThreads] }
-            ];
-            if (sponsorA) permissions.push({ id: sponsorA, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages], deny: [PermissionsBitField.Flags.CreatePublicThreads, PermissionsBitField.Flags.CreatePrivateThreads] });
-            if (sponsorB) permissions.push({ id: sponsorB, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages], deny: [PermissionsBitField.Flags.CreatePublicThreads, PermissionsBitField.Flags.CreatePrivateThreads] });  
+                        const permissions = [
+                            { id: targetGuild.id, deny: [PermissionsBitField.Flags.ViewChannel] },
+                            { id: client.user.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages] },
+                            { id: message.author.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages], deny: [PermissionsBitField.Flags.CreatePublicThreads] },
+                            { id: userToInvite.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages], deny: [PermissionsBitField.Flags.CreatePublicThreads] }
+                        ];
+                        if (sponsorA) permissions.push({ id: sponsorA, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages], deny: [PermissionsBitField.Flags.CreatePublicThreads] });
+                        if (sponsorB) permissions.push({ id: sponsorB, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages], deny: [PermissionsBitField.Flags.CreatePublicThreads] });
 
                         const newChannel = await targetGuild.channels.create({
                             name: `meeting-${message.author.username}-${userToInvite.username}`,
@@ -437,5 +419,4 @@ module.exports = async (client, Model) => {
             await interaction.update({ embeds: [new EmbedBuilder(interaction.message.embeds[0]).setDescription(generateTableText(data.table))] });
         }
     });
-
 };
