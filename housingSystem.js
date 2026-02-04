@@ -887,12 +887,13 @@ module.exports = async (client, Model) => {
                      const filter = (reaction, user) => ['✅', '❌'].includes(reaction.emoji.name) && membersWithAccess.has(user.id);
                      const collector = msg.createReactionCollector({ filter, time: 300000, max: 1 });
                      
-                                                              collector.on('collect', async (reaction, user) => {
+                                                                                  collector.on('collect', async (reaction, user) => {
                         if (reaction.emoji.name === '✅') {
                             // APERTURA
                             await msg.reply(`✅ Qualcuno ha aperto.`);
                             pendingKnocks.delete(knocker.id);
-                            // AGGIUNTI BACKTICK QUI SOTTO
+                            
+                            // QUi ho messo i backtick `
                             await enterHouse(knocker, interaction.channel, targetChannel, `👋 **${knocker}** è entrato.`, false);
                         } else {
                             // RIFIUTO
@@ -909,7 +910,7 @@ module.exports = async (client, Model) => {
                                 .map(m => m.displayName)
                                 .join(', ');
 
-                            // AGGIUNTI BACKTICK QUI SOTTO (Questo causava l'errore principale)
+                            // QUI era l'errore grave: ho aggiunto i backtick ` prima dell'emoji e alla fine
                             await interaction.channel.send(`⛔ ${knocker}, entrata rifiutata. I giocatori presenti in quella casa sono: ${presentPlayers || 'Nessuno'}`);
                         }
                     });
@@ -918,7 +919,8 @@ module.exports = async (client, Model) => {
                         if (collected.size === 0) {
                             pendingKnocks.delete(knocker.id);
                             await msg.reply('⏳ Nessuno ha risposto. La porta viene forzata.');
-                            // AGGIUNTI BACKTICK QUI SOTTO
+                            
+                            // Anche qui ho assicurato i backtick
                             await enterHouse(knocker, interaction.channel, targetChannel, `👋 ${knocker} è entrato.`, false);
                         }
                     });
