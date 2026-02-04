@@ -198,9 +198,10 @@ module.exports = async (client, Model) => {
 
                 if (channel) {
                     await channel.permissionOverwrites.set([{ id: message.guild.id, deny: [PermissionsBitField.Flags.ViewChannel] }]);
+                    // MODIFICATO: Disabilitata creazione thread privati e pubblici
                     const permessiSpeciali = {
                         ViewChannel: true, SendMessages: true, ManageMessages: true,        
-                        CreatePrivateThreads: true, SendMessagesInThreads: true, CreatePublicThreads: false   
+                        CreatePrivateThreads: false, SendMessagesInThreads: false, CreatePublicThreads: false   
                     };
                     let utentiDaSalutare = [];
                     if (slot.player) {
@@ -444,4 +445,3 @@ module.exports = async (client, Model) => {
         }
     });
 };
-
