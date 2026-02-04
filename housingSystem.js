@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const { 
     ActionRowBuilder, StringSelectMenuBuilder, StringSelectMenuOptionBuilder,
     EmbedBuilder, ChannelType, PermissionsBitField, ButtonStyle, ButtonBuilder
@@ -599,7 +600,116 @@ module.exports = async (client, Model) => {
             }
             await saveDB();
         }
-       
+       // ---------------------------------------------------------
+        // 🔄 COMANDO CAMBIO IDENTITÀ
+        // ---------------------------------------------------------
+        if (command === 'cambio') {
+            // 1. Controllo Canale (Solo Categoria Chat Private)
+            if (message.channel.parentId !== ID_CATEGORIA_CHAT_PRIVATE) return;
+
+            // 2. Definizione Ruoli da scambiare
+            const R1 = ID_RUOLO_NOTIFICA_1; // Ruolo 1
+            const R2 = ID_RUOLO_NOTIFICA_2; // Ruolo 2
+
+            // 3. Controllo Permessi Esecutore
+            const isAdmin = message.member.permissions.has(PermissionsBitField.Flags.Administrator);
+            const hasRole1 = message.member.roles.cache.has(R1);
+            const hasRole2 = message.member.roles.cache.has(R2);
+
+            if (!isAdmin && !hasRole1 && !hasRole2) return message.reply("⛔ Non hai i permessi per usare questo comando.");
+
+            // 4. Identificazione dei due giocatori nel canale
+            // Cerchiamo nel canale membri che non siano bot e abbiano uno dei due ruoli
+            const membersInChannel = message.channel.members.filter(m => !m.user.bot);
+            const player1 = membersInChannel.find(m => m.roles.cache.has(R1));
+            const player2 = membersInChannel.find(m => m.roles.cache.has(R2));
+
+            if (!player1 || !player2) {
+                return message.reply("❌ Errore: Non trovo entrambi i giocatori con i ruoli necessari in questa chat per effettuare lo scambio.");
+            }
+
+            // Se chi digita non è admin, deve essere uno dei due coinvolti
+            if (!isAdmin && message.member.id !== player1.id && message.member.id !== player2.id) {
+                return message.reply("⛔ Non sei coinvolto in questo scambio.");
+            }
+
+            message.channel.send("🔄 **Inizio procedura di scambio identità...**");
+
+            try {
+                // A. SCAMBIO DATI HOUSING (Database Locale dbCache)
+                // Scambiamo tutti i contatori pertinenti tra ID P1 e ID P2
+                const swapKeys = [
+                    'playerVisits', 'baseVisits', 'forcedLimits', 'hiddenLimits', 
+                    'dayLimits', 'forcedVisits', 'hiddenVisits', 'extraVisits', 'extraVisitsDay'
+                ];
+
+                swapKeys.forEach(key => {
+                    if (!dbCache[key]) dbCache[key] = {};
+                    const val1 = dbCache[key][player1.id];
+                    const val2 = dbCache[key][player2.id];
+                    
+                    // Scambio
+                    if (val1 === undefined) delete dbCache[key][player2.id];
+                    else dbCache[key][player2.id] = val1;
+
+                    if (val2 === undefined) delete dbCache[key][player1.id];
+                    else dbCache[key][player1.id] = val2;
+                });
+
+                await saveDB(); // Salva Housing
+
+                // B. SCAMBIO DATI MEETING (Database Mongoose Diretto)
+                try {
+                    const MeetingData = mongoose.model('MeetingData');
+                    const meetingDB = await MeetingData.findOne({ id: 'main_meeting' });
+                    
+                    if (meetingDB) {
+                        const meetingKeys = ['meetingCounts', 'letturaCounts'];
+                        let modified = false;
+
+                        meetingKeys.forEach(key => {
+                            if (!meetingDB[key]) meetingDB[key] = {};
+                            // Mongoose Map/Object manipulation
+                            const val1 = meetingDB[key][player1.id];
+                            const val2 = meetingDB[key][player2.id];
+
+                            // Scambio
+                            if (val1 === undefined) delete meetingDB[key][player2.id];
+                            else meetingDB[key][player2.id] = val1;
+
+                            if (val2 === undefined) delete meetingDB[key][player1.id];
+                            else meetingDB[key][player1.id] = val2;
+                            
+                            modified = true;
+                        });
+
+                        if (modified) {
+                            meetingDB.markModified('meetingCounts');
+                            meetingDB.markModified('letturaCounts');
+                            await meetingDB.save();
+                        }
+                    }
+                } catch (err) {
+                    console.error("Errore scambio Meeting:", err);
+                    message.channel.send("⚠️ Errore nello scambio dati Meeting (i ruoli verranno comunque scambiati).");
+                }
+
+                // C. SCAMBIO RUOLI DISCORD
+                // Rimuovi e aggiungi in parallelo per velocità
+                await Promise.all([
+                    player1.roles.remove(R1),
+                    player1.roles.add(R2),
+                    player2.roles.remove(R2),
+                    player2.roles.add(R1)
+                ]);
+
+                message.channel.send(`✅ **Scambio Completato!**\n👤 ${player1} ora ha il ruolo <@&${R2}> e le relative stats.\n👤 ${player2} ora ha il ruolo <@&${R1}> e le relative stats.`);
+
+            } catch (error) {
+                console.error(error);
+                message.reply("❌ Si è verificato un errore critico durante lo scambio.");
+            }
+        }
         // ---------------------------------------------------------
         // 👤 COMANDI GIOCATORE
         // ---------------------------------------------------------
@@ -930,3 +1040,4 @@ module.exports = async (client, Model) => {
         }
     });
 };
+
