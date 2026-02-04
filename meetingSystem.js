@@ -282,14 +282,38 @@ module.exports = async (client, Model) => {
 
                     try {
                         const targetGuild = client.guilds.cache.get(CONFIG.SERVER.TARGET_GUILD);
-                        const permissions = [
-                            { id: targetGuild.id, deny: [PermissionsBitField.Flags.ViewChannel] },
-                            { id: client.user.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages] },
-                            { id: message.author.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages], deny: [PermissionsBitField.Flags.CreatePublicThreads] },
-                            { id: userToInvite.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages], deny: [PermissionsBitField.Flags.CreatePublicThreads] }
-                        ];
-                        if (sponsorA) permissions.push({ id: sponsorA, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages], deny: [PermissionsBitField.Flags.CreatePublicThreads] });
-                        if (sponsorB) permissions.push({ id: sponsorB, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages], deny: [PermissionsBitField.Flags.CreatePublicThreads] });
+                                    const permissions = [
+                { 
+                    id: targetGuild.id, 
+                    deny: [PermissionsBitField.Flags.ViewChannel] 
+                },
+                { 
+                    id: client.user.id, 
+                    allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages] 
+                },
+                { 
+                    id: message.author.id, 
+                    allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages], 
+                    deny: [PermissionsBitField.Flags.CreatePublicThreads, PermissionsBitField.Flags.CreatePrivateThreads] 
+                },
+                { 
+                    id: userToInvite.id, 
+                    allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages], 
+                    deny: [PermissionsBitField.Flags.CreatePublicThreads, PermissionsBitField.Flags.CreatePrivateThreads] 
+                }
+            ];
+            
+            if (sponsorA) permissions.push({ 
+                id: sponsorA, 
+                allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages], 
+                deny: [PermissionsBitField.Flags.CreatePublicThreads, PermissionsBitField.Flags.CreatePrivateThreads] 
+            });
+            
+            if (sponsorB) permissions.push({ 
+                id: sponsorB, 
+                allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages], 
+                deny: [PermissionsBitField.Flags.CreatePublicThreads, PermissionsBitField.Flags.CreatePrivateThreads] 
+            });
 
                         const newChannel = await targetGuild.channels.create({
                             name: `meeting-${message.author.username}-${userToInvite.username}`,
@@ -420,3 +444,4 @@ module.exports = async (client, Model) => {
         }
     });
 };
+
