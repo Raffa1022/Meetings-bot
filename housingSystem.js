@@ -911,22 +911,20 @@ module.exports = async (client, Model) => {
                                  .join(', ');
     
                              // NOTA: Anche qui backtick ` all'inizio e alla fine
-                             await interaction.channel.send(`⛔ ${knocker}, entrata rifiutata. I giocatori presenti in quella casa sono: ${presentPlayers || 'Nessuno'}`);
+                                     // FIX: Aggiunti i backtick qui sotto che mancavano
+        await interaction.channel.send(`⛔ ${knocker}, entrata rifiutata. I giocatori presenti in quella casa sono: ${presentPlayers || 'Nessuno'}`);
+      }
+    });
 
-                         }
-                     });
-
-                         collector.on('end', async collected => {
+    collector.on('end', async collected => {
       if (collected.size === 0) {
         pendingKnocks.delete(knocker.id);
         await msg.reply('⏳ Nessuno ha risposto. La porta viene forzata.');
-        
-        // FIX: Used backticks ` ` and ${knocker} to allow variable replacement
+        // FIX: Qui i backtick c'erano già, ma li confermiamo
         await enterHouse(knocker, interaction.channel, targetChannel, `👋 ${knocker} è entrato.`, false);
       }
     });
 
-  } // Closes the 'else' block from line 876
-}; // Closes module.exports
-
-
+  } // Chiude l'else
+}   // Chiude la funzione execute (QUESTA MANCAVA!)
+};  // Chiude il module.exports
