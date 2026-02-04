@@ -882,20 +882,31 @@ module.exports = async (client, Model) => {
                  const filter = (reaction, user) => ['✅', '❌'].includes(reaction.emoji.name) && membersWithAccess.has(user.id);
                  const collector = msg.createReactionCollector({ filter, time: 300000, max: 1 });
                  
-                 collector.on('collect', async (reaction, user) => {
-                     if (reaction.emoji.name === '✅') {
-                         msg.edit(`✅ Aperto da ${user}.`);
-                         pendingKnocks.delete(knocker.id);
-                         await enterHouse(knocker, interaction.channel, targetChannel, `👋 **${knocker}** è entrato.`, false);
-                     } else {
-                         const currentRefused = dbCache.playerVisits[knocker.id] || 0;
-                         dbCache.playerVisits[knocker.id] = currentRefused + 1;
-                         await saveDB();
-                         msg.edit(`❌ Rifiutato.`);
-                         pendingKnocks.delete(knocker.id);
-                         await interaction.channel.send(`⛔ ${knocker}, accesso rifiutato.`);
-                     }
-                 });
+                         collector.on('collect', async (reaction, user) => {
+            if (reaction.emoji.name === '✅') {
+                // --- CASO APERTURA (Anonima) ---
+                msg.edit(`✅ Qualcuno ha aperto.`); 
+                pendingKnocks.delete(knocker.id);
+                await enterHouse(knocker, interaction.channel, targetChannel, `👋 **${knocker}** è entrato.`, false);
+            } else {
+                // --- CASO RIFIUTO (Con lista spia) ---
+                const currentRefused = dbCache.playerVisits[knocker.id] || 0;
+                dbCache.playerVisits[knocker.id] = currentRefused + 1;
+                await saveDB();
+                
+                msg.edit(`❌ Rifiutato.`);
+                pendingKnocks.delete(knocker.id);
+
+                // Calcola chi c'è dentro per dirlo a chi ha bussato
+                const presentPlayers = targetChannel.members
+                    .filter(m => !m.user.bot)
+                    .map(m => m.displayName)
+                    .join(', ');
+
+                await interaction.channel.send(`⛔ ${knocker}, entrata rifiutata. I giocatori presenti in quella casa sono: ${presentPlayers || 'Nessuno'}`);
+            }
+        });
+
                  collector.on('end', async collected => {
                     if (collected.size === 0) {
                         pendingKnocks.delete(knocker.id);
@@ -907,4 +918,5 @@ module.exports = async (client, Model) => {
         }
     });
 };
+
 
