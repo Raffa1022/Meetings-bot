@@ -912,6 +912,7 @@ module.exports = async (client, Model) => {
     
                              // NOTA: Anche qui backtick ` all'inizio e alla fine
                              await interaction.channel.send(`⛔ ${knocker}, entrata rifiutata. I giocatori presenti in quella casa sono: ${presentPlayers || 'Nessuno'}`);
+
                          }
                      });
 
@@ -926,6 +927,5 @@ module.exports = async (client, Model) => {
     });
 
   } // Closes the 'else' block from line 876
-  
-} // Closes the main function
 }; // Closes module.exports
+
