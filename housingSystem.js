@@ -887,44 +887,44 @@ module.exports = async (client, Model) => {
                      const filter = (reaction, user) => ['✅', '❌'].includes(reaction.emoji.name) && membersWithAccess.has(user.id);
                      const collector = msg.createReactionCollector({ filter, time: 300000, max: 1 });
                      
-                                          collector.on('collect', async (reaction, user) => {
-                         if (reaction.emoji.name === '✅') {
-                             // APERTURA
-                             await msg.reply(`✅ Qualcuno ha aperto.`); 
-                             
-                             pendingKnocks.delete(knocker.id);
-                             // NOTA: Qui sotto uso i backtick ` per far funzionare ${knocker}
-                             await enterHouse(knocker, interaction.channel, targetChannel, `👋 **${knocker}** è entrato.`, false);
-                         } else {
-                             // RIFIUTO
-                             const currentRefused = dbCache.playerVisits[knocker.id] || 0;
-                             dbCache.playerVisits[knocker.id] = currentRefused + 1;
-                             await saveDB();
-                             
-                             await msg.reply(`❌ Qualcuno ha rifiutato.`);
-                             
-                             pendingKnocks.delete(knocker.id);
-    
-                             const presentPlayers = targetChannel.members
-                                 .filter(m => !m.user.bot && m.id !== knocker.id)
-                                 .map(m => m.displayName)
-                                 .join(', ');
-    
-                             // NOTA: Anche qui backtick ` all'inizio e alla fine
-                                     // FIX: Aggiunti i backtick qui sotto che mancavano
-        await interaction.channel.send(`⛔ ${knocker}, entrata rifiutata. I giocatori presenti in quella casa sono: ${presentPlayers || 'Nessuno'}`);
-      }
-    });
+                                                              collector.on('collect', async (reaction, user) => {
+                        if (reaction.emoji.name === '✅') {
+                            // APERTURA
+                            await msg.reply(`✅ Qualcuno ha aperto.`);
+                            pendingKnocks.delete(knocker.id);
+                            // AGGIUNTI BACKTICK QUI SOTTO
+                            await enterHouse(knocker, interaction.channel, targetChannel, `👋 **${knocker}** è entrato.`, false);
+                        } else {
+                            // RIFIUTO
+                            const currentRefused = dbCache.playerVisits[knocker.id] || 0;
+                            dbCache.playerVisits[knocker.id] = currentRefused + 1;
+                            await saveDB();
 
-    collector.on('end', async collected => {
-      if (collected.size === 0) {
-        pendingKnocks.delete(knocker.id);
-        await msg.reply('⏳ Nessuno ha risposto. La porta viene forzata.');
-        // FIX: Qui i backtick c'erano già, ma li confermiamo
-        await enterHouse(knocker, interaction.channel, targetChannel, `👋 ${knocker} è entrato.`, false);
-      }
-    });
+                            await msg.reply(`❌ Qualcuno ha rifiutato.`);
 
-  } // Chiude l'else
-}   // Chiude la funzione execute (QUESTA MANCAVA!)
-};  // Chiude il module.exports
+                            pendingKnocks.delete(knocker.id);
+
+                            const presentPlayers = targetChannel.members
+                                .filter(m => !m.user.bot && m.id !== knocker.id)
+                                .map(m => m.displayName)
+                                .join(', ');
+
+                            // AGGIUNTI BACKTICK QUI SOTTO (Questo causava l'errore principale)
+                            await interaction.channel.send(`⛔ ${knocker}, entrata rifiutata. I giocatori presenti in quella casa sono: ${presentPlayers || 'Nessuno'}`);
+                        }
+                    });
+
+                    collector.on('end', async collected => {
+                        if (collected.size === 0) {
+                            pendingKnocks.delete(knocker.id);
+                            await msg.reply('⏳ Nessuno ha risposto. La porta viene forzata.');
+                            // AGGIUNTI BACKTICK QUI SOTTO
+                            await enterHouse(knocker, interaction.channel, targetChannel, `👋 ${knocker} è entrato.`, false);
+                        }
+                    });
+
+                } 
+            }
+        }
+    });
+};
