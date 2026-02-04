@@ -915,22 +915,17 @@ module.exports = async (client, Model) => {
                          }
                      });
 
-                     collector.on('end', async collected => {
-                        if (collected.size === 0) {
-                            pendingKnocks.delete(knocker.id);
-                            await msg.reply("⏳ Nessuno ha risposto. La porta viene forzata.");
-                            // NOTA: Anche qui backtick `
-                            await enterHouse(knocker, interaction.channel, targetChannel, `👋 ${knocker} è entrato.`, false);
-                        }
-                     });
-
-                 }
-
-            }
-        }
+                         collector.on('end', async collected => {
+      if (collected.size === 0) {
+        pendingKnocks.delete(knocker.id);
+        await msg.reply('⏳ Nessuno ha risposto. La porta viene forzata.');
+        
+        // FIX: Used backticks ` ` and ${knocker} to allow variable replacement
+        await enterHouse(knocker, interaction.channel, targetChannel, `👋 ${knocker} è entrato.`, false);
+      }
     });
-};
 
-
-
-
+  } // Closes the 'else' block from line 876
+  
+} // Closes the main function
+}; // Closes module.exports
