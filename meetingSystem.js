@@ -246,8 +246,13 @@ module.exports = async (client, Model) => {
                 const isTargetSponsor = targetMember.roles.cache.has(CONFIG.ROLES.SPONSOR_AUTO);
                 const isAuthorSponsor = member.roles.cache.has(CONFIG.ROLES.SPONSOR_AUTO);
                 const isTargetPlayer = targetMember.roles.cache.has(CONFIG.ROLES.PLAYER_AUTO);
+                
                 if (isAuthorPlayer && isTargetSponsor) return message.reply("⛔ Negato: Giocatore -> Sponsor.");
                 if (isAuthorSponsor && isTargetPlayer) return message.reply("⛔ Negato: Sponsor -> Giocatore.");
+                
+                // --- FIX: Impedisce ai Giocatori di invitare Spettatori (non-Giocatori) ---
+                if (isAuthorPlayer && !isTargetPlayer) return message.reply("⛔ Negato: Puoi invitare solo altri Giocatori.");
+
             } catch (e) {}
 
             if (data.activeUsers.includes(userToInvite.id)) return message.reply(`⚠️ ${userToInvite} è impegnato.`);
