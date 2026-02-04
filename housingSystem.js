@@ -667,10 +667,27 @@ module.exports = async (client, Model) => {
             });
         }
 
-        if (command === 'chi') {
+                if (command === 'chi') {
             message.delete().catch(()=>{});
-            let targetChannel = message.channel.parentId === ID_CATEGORIA_CASE ? message.channel : null;
-            if (!targetChannel) return message.channel.send("⛔ Usalo in una casa.").then(m => setTimeout(() => m.delete(), 5000));
+            
+            const isAdmin = message.member.permissions.has(PermissionsBitField.Flags.Administrator);
+            let targetChannel = null;
+
+            // Logica di selezione canale
+            if (isAdmin && message.mentions.channels.size > 0) {
+                // Se è admin e ha menzionato un canale, usa quello
+                targetChannel = message.mentions.channels.first();
+            } else {
+                // Altrimenti usa il canale corrente se è una casa
+                if (message.channel.parentId === ID_CATEGORIA_CASE) {
+                    targetChannel = message.channel;
+                }
+            }
+
+            // Controllo validità
+            if (!targetChannel || targetChannel.parentId !== ID_CATEGORIA_CASE) {
+                return message.channel.send("⛔ Devi essere in una casa o (se admin) specificare una casa valida.").then(m => setTimeout(() => m.delete(), 5000));
+            }
 
             const ownerIds = Object.keys(dbCache.playerHomes).filter(key => dbCache.playerHomes[key] === targetChannel.id);
             const ownerMention = ownerIds.length > 0 ? ownerIds.map(id => `<@${id}>`).join(', ') : "Nessuno";
@@ -680,6 +697,7 @@ module.exports = async (client, Model) => {
             const embed = new EmbedBuilder().setTitle(`👥 Persone in casa`).setDescription(description).addFields({ name: '🔑 Proprietario', value: ownerMention });
             message.channel.send({ embeds: [embed] }).then(msg => setTimeout(() => msg.delete().catch(() => {}), 300000));
         }
+
 
         if (command === 'rimaste') {
             message.delete().catch(()=>{});
@@ -889,3 +907,4 @@ module.exports = async (client, Model) => {
         }
     });
 };
+
