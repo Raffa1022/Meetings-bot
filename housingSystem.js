@@ -905,7 +905,7 @@ module.exports = async (client, Model) => {
                         pendingKnocks.delete(knocker.id);
 
                         const presentPlayers = targetChannel.members
-                            .filter(m => !m.user.bot && m.id !== knocker.id)
+                            .filter(m => !m.user.bot && m.id !== knocker.id && !m.permissions.has(PermissionsBitField.Flags.Administrator))
                             .map(m => m.displayName)
                             .join(', ');
 
