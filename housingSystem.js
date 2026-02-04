@@ -887,29 +887,30 @@ module.exports = async (client, Model) => {
                      const filter = (reaction, user) => ['✅', '❌'].includes(reaction.emoji.name) && membersWithAccess.has(user.id);
                      const collector = msg.createReactionCollector({ filter, time: 300000, max: 1 });
                      
-                     collector.on('collect', async (reaction, user) => {
+                                          collector.on('collect', async (reaction, user) => {
                          if (reaction.emoji.name === '✅') {
-                             // 2. REPLY invece di Edit (Apertura)
+                             // APERTURA
                              await msg.reply(`✅ Qualcuno ha aperto.`); 
                              
                              pendingKnocks.delete(knocker.id);
+                             // NOTA: Qui sotto uso i backtick ` per far funzionare ${knocker}
                              await enterHouse(knocker, interaction.channel, targetChannel, `👋 **${knocker}** è entrato.`, false);
                          } else {
+                             // RIFIUTO
                              const currentRefused = dbCache.playerVisits[knocker.id] || 0;
                              dbCache.playerVisits[knocker.id] = currentRefused + 1;
                              await saveDB();
                              
-                             // 2. REPLY invece di Edit (Rifiuto)
                              await msg.reply(`❌ Qualcuno ha rifiutato.`);
                              
                              pendingKnocks.delete(knocker.id);
     
-                             // 3. FIX LISTA: Rimuove chi bussa (knocker.id) dalla lista visualizzata
                              const presentPlayers = targetChannel.members
                                  .filter(m => !m.user.bot && m.id !== knocker.id)
                                  .map(m => m.displayName)
                                  .join(', ');
     
+                             // NOTA: Anche qui backtick ` all'inizio e alla fine
                              await interaction.channel.send(`⛔ ${knocker}, entrata rifiutata. I giocatori presenti in quella casa sono: ${presentPlayers || 'Nessuno'}`);
                          }
                      });
@@ -917,17 +918,19 @@ module.exports = async (client, Model) => {
                      collector.on('end', async collected => {
                         if (collected.size === 0) {
                             pendingKnocks.delete(knocker.id);
-                            // Anche qui REPLY se scade il tempo
                             await msg.reply("⏳ Nessuno ha risposto. La porta viene forzata.");
+                            // NOTA: Anche qui backtick `
                             await enterHouse(knocker, interaction.channel, targetChannel, `👋 ${knocker} è entrato.`, false);
                         }
                      });
+
                  }
 
             }
         }
     });
 };
+
 
 
 
