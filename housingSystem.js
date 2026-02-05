@@ -36,6 +36,7 @@ const DEFAULT_MAX_VISITS = 0;
 let dbCache = {}; // Cache locale sincronizzata con Mongo
 let HousingModel = null;
 let QueueSystem = null;
+let client = null;
 const pendingKnocks = new Set(); 
 
 // ==========================================
@@ -172,8 +173,8 @@ async function executeHousingAction(queueItem) {
     
     // Trova il guild (server Discord)
     const guild = Object.values(dbCache.playerHomes).length > 0 
-        ? (await client.channels.fetch(Object.values(dbCache.playerHomes)[0]).catch(()=>null))?.guild
-        : client.guilds.cache.first();
+        ? (await clientRef.channels.fetch(Object.values(dbCache.playerHomes)[0]).catch(()=>null))?.guild
+        : clientRef.guilds.cache.first();
 
     if (!guild) {
         console.error("❌ [Housing] Guild non trovata.");
@@ -286,7 +287,8 @@ async function executeHousingAction(queueItem) {
         });
     }
 }
-module.exports = async (client, Model, QueueSys) => {
+ module.exports = async (client, Model, QueueSys) => {
+    clientRef = client; // ⚠️ AGGIUNTO: salva il riferimento globale
     HousingModel = Model;
     QueueSystem = QueueSys; // Salviamo il riferimento al sistema coda
     
@@ -1202,6 +1204,7 @@ if (interaction.customId === 'knock_house_select') {
     // Restituisci la funzione esecutore alla coda
     return executeHousingAction;
 };
+
 
 
 
