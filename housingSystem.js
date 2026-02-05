@@ -233,9 +233,12 @@ async function executeHousingAction(queueItem) {
         }
 
         // B. Visita Normale -> TOC TOC
-        const membersWithAccess = targetChannel.members.filter(m => 
+        // Funzione helper per contare chi c'è dentro ORA
+        const getOccupants = () => targetChannel.members.filter(m => 
             !m.user.bot && m.id !== member.id && m.roles.cache.hasAny(...RUOLI_PERMESSI)
         );
+
+        const membersWithAccess = getOccupants();
 
         // Se vuota, entra subito
         if (membersWithAccess.size === 0) {
@@ -253,11 +256,21 @@ async function executeHousingAction(queueItem) {
 
         const filter = (reaction, user) => 
             ['✅', '❌'].includes(reaction.emoji.name) && 
-            membersWithAccess.has(user.id);
+            getOccupants().has(user.id); // Usa la funzione dinamica
         
         const collector = msg.createReactionCollector({ filter, time: 300000, max: 1 });
 
+        // --- MONITORAGGIO PRESENZE (AGGIUNTO) ---
+        const monitorInterval = setInterval(() => {
+            const currentOccupants = getOccupants();
+            if (currentOccupants.size === 0) {
+                collector.stop('everyone_left');
+            }
+        }, 2000); 
+
         collector.on('collect', async (reaction, user) => {
+            clearInterval(monitorInterval);
+
             if (reaction.emoji.name === '✅') {
                 // ACCETTATO
                 await msg.reply(`✅ Qualcuno ha aperto.`);
@@ -271,13 +284,12 @@ async function executeHousingAction(queueItem) {
 
                 await msg.reply(`❌ Qualcuno ha rifiutato.`);
 
-                // Lista presenti
+                // Lista presenti per il messaggio di rifiuto
                 const presentPlayers = targetChannel.members
                     .filter(m => !m.user.bot && m.id !== member.id && !m.permissions.has(PermissionsBitField.Flags.Administrator))
                     .map(m => m.displayName)
                     .join(', ');
 
-                // Messaggio di rifiuto
                 if (fromChannel) {
                     await fromChannel.send(`⛔ ${member}, entrata rifiutata. I giocatori presenti in quella casa sono: ${presentPlayers || 'Nessuno'}`);
                 }
@@ -285,8 +297,17 @@ async function executeHousingAction(queueItem) {
             }
         });
 
-        collector.on('end', async collected => {
-            if (collected.size === 0) {
+        collector.on('end', async (collected, reason) => {
+            clearInterval(monitorInterval);
+
+            // CASO: TUTTI SONO USCITI
+            if (reason === 'everyone_left') {
+                await msg.reply(`🚪 La casa si è svuotata.`);
+                await enterHouse(member, fromChannel, targetChannel, `👋 ${member} è entrato (casa libera).`, false);
+                console.log(`✅ [Housing] ${member.user.tag} è entrato (tutti usciti).`);
+            }
+            // CASO: Timeout classico
+            else if (collected.size === 0 && reason !== 'limit') {
                 await msg.reply('⏳ Nessuno ha risposto. La porta viene forzata.');
                 await enterHouse(member, fromChannel, targetChannel, `👋 ${member} è entrato.`, false);
                 console.log(`✅ [Housing] ${member.user.tag} è entrato (timeout).`);
@@ -1523,6 +1544,7 @@ async function executeHousingAction(queueItem) {
     // Restituisci la funzione esecutore alla coda
     return executeHousingAction;
 };
+
 
 
 
