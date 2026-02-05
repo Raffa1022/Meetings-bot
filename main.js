@@ -51,7 +51,7 @@ const client = new Client({
         // 2. Avvia Housing e ottieni la funzione esecutore
         // IMPORTANTE: Passiamo queueSystem come terzo parametro
         console.log('📦 Inizializzazione Housing System...');
-        const housingExecutor = await initHousingSystem(client, HousingModel, queueSystem, QueueModel);
+        const housingExecutor = await initHousingSystem(client, HousingModel, queueSystem, QueueModel, AbilityModel);
         console.log('✅ Housing System caricato!');
         
         // 3. Avvia il Sistema Coda
@@ -98,4 +98,5 @@ process.on('unhandledRejection', (error) => {
 process.on('uncaughtException', (error) => {
     console.error('❌ Uncaught Exception:', error);
 });
+
 
