@@ -23,9 +23,10 @@ const housingSchema = new mongoose.Schema({
     playerModes: { type: Object, default: {} },
     destroyedHouses: { type: Array, default: [] },
     multiplaHistory: { type: Object, default: {} },
-    lastReset: { type: String, default: '' }
-}, { minimize: false });
+    lastReset: { type: String, default: '' },
+    pendingKnocks: { type: Array, default: [] } 
 
+}, { minimize: false });
 // --- SCHEMA MEETING ---
 const meetingSchema = new mongoose.Schema({
     id: { type: String, default: 'main_meeting' },
@@ -65,3 +66,4 @@ const QueueModel = mongoose.model('QueueData', queueSchema);
 
 // Export di tutti i modelli
 module.exports = { HousingModel, MeetingModel, AbilityModel, QueueModel };
+
