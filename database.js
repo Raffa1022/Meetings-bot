@@ -1,8 +1,8 @@
 const mongoose = require('mongoose');
 
-// --- SCHEMA CASE (Ex index-19) ---
+// --- SCHEMA CASE (Housing) ---
 const housingSchema = new mongoose.Schema({
-    id: { type: String, default: 'main_housing' }, // ID univoco per trovare il documento
+    id: { type: String, default: 'main_housing' }, // ID univoco
     playerHomes: { type: Object, default: {} },
     playerVisits: { type: Object, default: {} },
     
@@ -24,9 +24,9 @@ const housingSchema = new mongoose.Schema({
     destroyedHouses: { type: Array, default: [] },
     multiplaHistory: { type: Object, default: {} },
     lastReset: { type: String, default: '' }
-}, { minimize: false }); // minimize: false assicura che gli oggetti vuoti {} vengano salvati
+}, { minimize: false });
 
-// --- SCHEMA MEETING (Ex index-20) ---
+// --- SCHEMA MEETING ---
 const meetingSchema = new mongoose.Schema({
     id: { type: String, default: 'main_meeting' },
     isAutoRoleActive: { type: Boolean, default: false },
@@ -40,7 +40,19 @@ const meetingSchema = new mongoose.Schema({
     activeGameSlots: { type: Array, default: [] }
 }, { minimize: false });
 
+// --- SCHEMA ABILITÀ (NUOVO) ---
+const abilitySchema = new mongoose.Schema({
+    userId: String,         // Chi ha inviato la richiesta
+    content: String,        // Il testo scritto nella tendina
+    status: { type: String, default: 'PENDING' }, // PENDING, APPROVED, REJECTED
+    adminMessageId: String, // ID del messaggio nel canale admin (per poterlo gestire)
+    timestamp: { type: Date, default: Date.now }
+}, { minimize: false });
+
+// Creazione Modelli
 const HousingModel = mongoose.model('HousingData', housingSchema);
 const MeetingModel = mongoose.model('MeetingData', meetingSchema);
+const AbilityModel = mongoose.model('AbilityData', abilitySchema);
 
-module.exports = { HousingModel, MeetingModel };
+// Export di tutti i modelli
+module.exports = { HousingModel, MeetingModel, AbilityModel };
