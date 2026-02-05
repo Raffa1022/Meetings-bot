@@ -167,6 +167,9 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
 // 🎯 ESECUTORE AZIONI HOUSING PER CODA
 // ==========================================
 async function executeHousingAction(queueItem) {
+    console.log(`🎯 [Housing Executor] Ricevuta azione: ${queueItem.type} da utente ${queueItem.userId}`);
+    console.log(`📋 [Housing Executor] Dettagli:`, queueItem.details);
+    
     // Trova il guild (server Discord)
     const guild = Object.values(dbCache.playerHomes).length > 0 
         ? (await client.channels.fetch(Object.values(dbCache.playerHomes)[0]).catch(()=>null))?.guild
@@ -286,6 +289,12 @@ async function executeHousingAction(queueItem) {
 module.exports = async (client, Model, QueueSys) => {
     HousingModel = Model;
     QueueSystem = QueueSys; // Salviamo il riferimento al sistema coda
+    
+    console.log(`🔧 [Housing] QueueSystem ricevuto:`, QueueSystem ? '✅ ATTIVO' : '❌ NON DISPONIBILE');
+    if (QueueSystem) {
+        console.log(`🔧 [Housing] QueueSystem.add disponibile:`, typeof QueueSystem.add === 'function' ? '✅ SÌ' : '❌ NO');
+    }
+    
     await loadDB();
 
     const today = new Date().toDateString();
@@ -995,6 +1004,8 @@ module.exports = async (client, Model, QueueSys) => {
             if (message.channel.parentId !== ID_CATEGORIA_CHAT_PRIVATE) return message.channel.send(`⛔ Solo chat private!`);
             if (pendingKnocks.has(message.author.id)) return message.channel.send(`${message.author}, stai già bussando!`);
 
+            pendingKnocks.add(message.author.id);
+
             const selectMode = new StringSelectMenuBuilder()
                 .setCustomId('knock_mode_select')
                 .setPlaceholder('Come vuoi entrare?')
@@ -1104,9 +1115,11 @@ if (interaction.customId === 'knock_house_select') {
 
             await saveDB();
             await interaction.message.delete().catch(()=>{});
+            pendingKnocks.delete(knocker.id);
 
             // --- MODIFICA CODA ---
             if (QueueSystem) {
+                console.log(`➕ [Housing] Aggiungendo ${mode} alla coda per ${knocker.user.tag}`);
                 await QueueSystem.add('KNOCK', knocker.id, {
                     targetChannelId: targetChannelId,
                     mode: mode,
@@ -1115,16 +1128,73 @@ if (interaction.customId === 'knock_house_select') {
                 await interaction.reply({ content: "⏳ **Azione Bussa** messa in coda. Attendi...", ephemeral: true });
             } else {
                 // Fallback se coda non disponibile (esecuzione immediata)
+                await interaction.reply({ content: "✅ Esecuzione immediata...", ephemeral: true });
+                
                 const targetChannel = interaction.guild.channels.cache.get(targetChannelId);
-                const roleMentions = RUOLI_PERMESSI.map(id => `<@&${id}>`).join(', ');
-
+                const fromChannel = interaction.channel;
+                
+                // A. Ingressi immediati (Forzata/Nascosta)
                 if (mode === 'mode_forced') {
-                    await enterHouse(knocker, interaction.channel, targetChannel, `${roleMentions}, ${knocker} ha sfondato la porta ed è entrato`, false);
-                } else if (mode === 'mode_hidden') {
-                    await enterHouse(knocker, interaction.channel, targetChannel, "", true);
-                } else {
-                    await enterHouse(knocker, interaction.channel, targetChannel, `👋 ${knocker} è entrato.`, false);
+                    const roleMentions = RUOLI_PERMESSI.map(id => `<@&${id}>`).join(', ');
+                    await enterHouse(knocker, fromChannel, targetChannel, `${roleMentions}, ${knocker} ha sfondato la porta ed è entrato`, false);
+                    return;
+                } 
+                if (mode === 'mode_hidden') {
+                    await enterHouse(knocker, fromChannel, targetChannel, "", true);
+                    return;
                 }
+
+                // B. Visita Normale -> TOC TOC
+                const membersWithAccess = targetChannel.members.filter(m => 
+                    !m.user.bot && m.id !== knocker.id && m.roles.cache.hasAny(...RUOLI_PERMESSI)
+                );
+
+                // Se vuota, entra subito
+                if (membersWithAccess.size === 0) {
+                    await enterHouse(knocker, fromChannel, targetChannel, `👋 ${knocker} è entrato.`, false);
+                    return;
+                }
+
+                // Se c'è gente, invia il messaggio TOC TOC
+                const roleMentions = RUOLI_PERMESSI.map(id => `<@&${id}>`).join(' ');
+                const msg = await targetChannel.send(`🔔 **TOC TOC!** ${roleMentions}\nQualcuno sta bussando\n✅ = Apri | ❌ = Rifiuta`);
+                await msg.react('✅'); 
+                await msg.react('❌');
+
+                const filter = (reaction, user) => 
+                    ['✅', '❌'].includes(reaction.emoji.name) && 
+                    membersWithAccess.has(user.id);
+                
+                const collector = msg.createReactionCollector({ filter, time: 300000, max: 1 });
+
+                collector.on('collect', async (reaction, user) => {
+                    if (reaction.emoji.name === '✅') {
+                        await msg.reply(`✅ Qualcuno ha aperto.`);
+                        await enterHouse(knocker, fromChannel, targetChannel, `👋 ${knocker} è entrato.`, false);
+                    } else {
+                        const currentRefused = dbCache.playerVisits[knocker.id] || 0;
+                        dbCache.playerVisits[knocker.id] = currentRefused + 1;
+                        await saveDB();
+
+                        await msg.reply(`❌ Qualcuno ha rifiutato.`);
+
+                        const presentPlayers = targetChannel.members
+                            .filter(m => !m.user.bot && m.id !== knocker.id && !m.permissions.has(PermissionsBitField.Flags.Administrator))
+                            .map(m => m.displayName)
+                            .join(', ');
+
+                        if (fromChannel) {
+                            await fromChannel.send(`⛔ ${knocker}, entrata rifiutata. I giocatori presenti in quella casa sono: ${presentPlayers || 'Nessuno'}`);
+                        }
+                    }
+                });
+
+                collector.on('end', async collected => {
+                    if (collected.size === 0) {
+                        await msg.reply('⏳ Nessuno ha risposto. La porta viene forzata.');
+                        await enterHouse(knocker, fromChannel, targetChannel, `👋 ${knocker} è entrato.`, false);
+                    }
+                });
             }
     }
     }); // Chiude il client.on('interactionCreate'...)
