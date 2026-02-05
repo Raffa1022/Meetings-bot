@@ -1117,10 +1117,6 @@ async function executeHousingAction(queueItem) {
                 await saveDB();
             }
 
-            const selectMode = new StringSelectMenuBuilder()
-                .setCustomId('knock_mode_select')
-                .setPlaceholder('Come vuoi entrare?')
-                .addOptions(
 
             // 🛑 CONTROLLO: Non può bussare se ha già un'altra azione in corso
             if (QueueModel) {
@@ -1135,6 +1131,11 @@ async function executeHousingAction(queueItem) {
                     return message.channel.send(`⚠️ Hai già un'azione "${actionType}" in corso! Completa prima quella o usa \`!rimuovi\` per annullarla.`);
                 }
             }
+
+            const selectMode = new StringSelectMenuBuilder()
+                .setCustomId('knock_mode_select')
+                .setPlaceholder('Come vuoi entrare?')
+                .addOptions(
                     new StringSelectMenuOptionBuilder().setLabel('Visita Normale').setValue('mode_normal').setEmoji('👋'),
                     new StringSelectMenuOptionBuilder().setLabel('Visita Forzata').setValue('mode_forced').setEmoji('🧨'),
                     new StringSelectMenuOptionBuilder().setLabel('Visita Nascosta').setValue('mode_hidden').setEmoji('🕵️')
