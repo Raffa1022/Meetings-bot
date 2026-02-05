@@ -3,13 +3,17 @@ const mongoose = require('mongoose');
 const express = require('express');
 
 // --- IMPORTA I MODULI ---
-const { HousingModel, MeetingModel } = require('./database');
+// 1. MODIFICA: Aggiunto AbilityModel nella lista
+const { HousingModel, MeetingModel, AbilityModel } = require('./database'); 
+
 const initHousingSystem = require('./housingSystem');
 const initMeetingSystem = require('./meetingSystem');
+// 2. MODIFICA: Importa il file del nuovo sistema
+const initAbilitySystem = require('./abilitySystem');
 
 // CONFIGURAZIONE
 const TOKEN = 'MTQ2MzU5NDkwMTAzOTIyMjg3Nw.G2ZqJU.HRxjqWMs2fIwblzW2B2SUXcYhUZ8BkeWioLmss'; 
-const MONGO_URI = process.env.MONGO_URI || 'mongodb+srv://raffaelewwo:Canebilli12@cluster0.7snmgc1.mongodb.net/?appName=Cluster0'; // Inserisci qui la stringa Mongo o usa Env Vars
+const MONGO_URI = process.env.MONGO_URI || 'mongodb+srv://raffaelewwo:Canebilli12@cluster0.7snmgc1.mongodb.net/?appName=Cluster0';
 
 // --- SERVER WEB (Per Koyeb/Render) ---
 const app = express();
@@ -42,11 +46,14 @@ const client = new Client({
         await mongoose.connect(MONGO_URI);
         console.log('✅ MongoDB Connesso!');
 
-        // 2. Avvia i sistemi modulari
+        // 2. Avvia i sistemi modulari esistenti
         await initHousingSystem(client, HousingModel);
         await initMeetingSystem(client, MeetingModel);
+        
+        // 3. MODIFICA: Avvia il nuovo sistema abilità
+        await initAbilitySystem(client, AbilityModel);
 
-        // 3. Login Discord
+        // 4. Login Discord
         await client.login(TOKEN);
         console.log(`🤖 Bot avviato come ${client.user ? client.user.tag : 'Token valido'}`);
 
