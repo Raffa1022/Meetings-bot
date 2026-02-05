@@ -1189,38 +1189,12 @@ async function executeHousingAction(queueItem) {
             await interaction.update({ content: `🏘️ **Modalità scelta**. Seleziona zona:`, components: [new ActionRowBuilder().addComponents(selectGroup)] });
         }
 
-        if (interaction.customId === 'knock_page_select') {
-            const parts = interaction.values[0].split('_'); 
-            const pageIndex = parseInt(parts[1]);
-            const currentMode = parts[2] + '_' + parts[3]; 
-            const userHomeId = dbCache.playerHomes[interaction.user.id];
-            
-            const currentHouseChannel = interaction.guild.channels.cache.find(c => c.parentId === ID_CATEGORIA_CASE && c.permissionsFor(interaction.user).has(PermissionsBitField.Flags.ViewChannel));
-            const currentHouseId = currentHouseChannel ? currentHouseChannel.id : null;
-
-            const tutteLeCase = interaction.guild.channels.cache
-                .filter(c => c.parentId === ID_CATEGORIA_CASE && c.type === ChannelType.GuildText)
-                .sort((a, b) => a.rawPosition - b.rawPosition);
-
-            const start = pageIndex * 25;
-            const caseSliceRaw = Array.from(tutteLeCase.values()).slice(start, start + 25);
-            const caseSliceFiltered = caseSliceRaw.filter(c => 
-                c.id !== userHomeId && c.id !== currentHouseId &&
-                (!dbCache.destroyedHouses || !dbCache.destroyedHouses.includes(c.id))
-            );
-
-            if (caseSliceFiltered.length === 0) return interaction.reply({ content: "❌ Nessuna casa visitabile qui.", ephemeral: true });
-
-            const selectHouse = new StringSelectMenuBuilder()
-                .setCustomId('knock_house_select')
-                .addOptions(caseSliceFiltered.map(c => 
-                    new StringSelectMenuOptionBuilder().setLabel(formatName(c.name)).setValue(`${c.id}_${currentMode}`).setEmoji('🏠')
-                ));
-            await interaction.update({ content: `📂 **Scegli la casa:**`, components: [new ActionRowBuilder().addComponents(selectHouse)] });
-        }
-if (interaction.customId === 'knock_house_select') {
+       if (interaction.customId === 'knock_house_select') {
             const parts = interaction.values[0].split('_'); 
             const targetChannelId = parts[0];
+            
+            // ✅ CORREZIONE: Definito 'knocker' subito qui in alto
+            const knocker = interaction.member;
 
             // 🛑 CONTROLLO CRITICO ANTI-DOUBLE-KNOCK
             if (QueueModel) {
@@ -1244,8 +1218,9 @@ if (interaction.customId === 'knock_house_select') {
                     });
                 }
             }
+            
             const mode = parts[1] + '_' + parts[2]; 
-            const knocker = interaction.member;
+            // const knocker = interaction.member; (Rimosso da qui perché spostato sopra)
 
             let base, extra;
             if (dbCache.currentMode === 'DAY') {
@@ -1360,7 +1335,6 @@ if (interaction.customId === 'knock_house_select') {
                 });
             }
         }
-
         // ==========================================
         // GESTIONE MENU !RIMUOVI
         // ==========================================
@@ -1469,6 +1443,7 @@ if (interaction.customId === 'knock_house_select') {
     // Restituisci la funzione esecutore alla coda
     return executeHousingAction;
 };
+
 
 
 
