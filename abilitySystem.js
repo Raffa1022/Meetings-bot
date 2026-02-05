@@ -1,36 +1,41 @@
 const { 
     EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, 
-    ModalBuilder, TextInputBuilder, TextInputStyle, PermissionsBitField 
+    ModalBuilder, TextInputBuilder, TextInputStyle 
 } = require('discord.js');
 
 // ==========================================
 // ⚙️ CONFIGURAZIONE ABILITÀ
 // ==========================================
-const ID_CHAT_PRIVATA_CAT = '1460741414357827747'; // La categoria/canale dove i player scrivono !abilità
-const ID_RUOLO_ABILITA = '1460741403331268661'; // Ruolo che PUÒ usare il comando
+const ID_CHAT_PRIVATA_CAT = '1460741414357827747'; // Categoria chat private
+const ID_RUOLO_ABILITA = '1460741403331268661'; // Ruolo che può usare !abilità
 
 let AbilityModel = null;
-let QueueSystem = null; // Variabile per il sistema coda
+let QueueSystem = null;
 
 module.exports = async (client, Model, QueueSys) => {
     AbilityModel = Model;
-    QueueSystem = QueueSys; // Salviamo il riferimento al sistema coda
-    console.log("✨ [Ability] Sistema caricato (Mode: Queue).");
+    QueueSystem = QueueSys;
+    console.log("✨ [Ability] Sistema caricato (integrato con Queue).");
 
-    // 1. COMANDO !abilità
+    // ==========================================
+    // 1️⃣ COMANDO !abilità
+    // ==========================================
     client.on('messageCreate', async message => {
         if (message.author.bot) return;
         if (message.content !== '!abilità') return;
 
-        // Controllo Canale (Deve essere quello specifico o nella categoria specifica)
-        if (message.channel.id !== ID_CHAT_PRIVATA_CAT && message.channel.parentId !== ID_CHAT_PRIVATA_CAT) return;
+        // Controllo Canale
+        if (message.channel.id !== ID_CHAT_PRIVATA_CAT && 
+            message.channel.parentId !== ID_CHAT_PRIVATA_CAT) {
+            return;
+        }
 
         // Controllo Ruolo
         if (!message.member.roles.cache.has(ID_RUOLO_ABILITA)) {
             return message.reply("⛔ Non possiedi l'abilità necessaria per usare questo comando.");
         }
 
-        // Invio bottone per aprire la "tendina" (Modal)
+        // Bottone per aprire il modal
         const row = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
                 .setCustomId('btn_open_ability')
@@ -45,13 +50,18 @@ module.exports = async (client, Model, QueueSys) => {
         });
     });
 
-    // 2. GESTIONE INTERAZIONI
+    // ==========================================
+    // 2️⃣ GESTIONE INTERAZIONI
+    // ==========================================
     client.on('interactionCreate', async interaction => {
         
-        // --- APERTURA MODALE (TENDINA) ---
+        // --- APERTURA MODAL ---
         if (interaction.isButton() && interaction.customId === 'btn_open_ability') {
             if (!interaction.member.roles.cache.has(ID_RUOLO_ABILITA)) {
-                return interaction.reply({ content: "⛔ Non hai il ruolo.", ephemeral: true });
+                return interaction.reply({ 
+                    content: "⛔ Non hai il ruolo necessario.", 
+                    ephemeral: true 
+                });
             }
 
             const modal = new ModalBuilder()
@@ -72,11 +82,11 @@ module.exports = async (client, Model, QueueSys) => {
             await interaction.showModal(modal);
         }
 
-        // --- RICEZIONE DATI DALLA TENDINA E INVIO ALLA CODA ---
+        // --- RICEZIONE DATI DAL MODAL ---
         if (interaction.isModalSubmit() && interaction.customId === 'modal_ability_submit') {
             const text = interaction.fields.getTextInputValue('input_ability_text');
             
-            // 1. Salva nel DB Abilità per storico (status QUEUED)
+            // 1. Salva nel DB per storico
             const newAbility = new AbilityModel({
                 userId: interaction.user.id,
                 content: text,
@@ -84,21 +94,29 @@ module.exports = async (client, Model, QueueSys) => {
             });
             await newAbility.save();
 
-            // 2. AGGIUNGI ALLA CODA (Il cuore del nuovo sistema)
+            // 2. AGGIUNGI ALLA CODA
             if (QueueSystem) {
                 await QueueSystem.add('ABILITY', interaction.user.id, {
-                    text: text, // Il testo che leggerà l'admin nella dashboard
+                    text: text,
                     mongoId: newAbility._id
                 });
                 
-                await interaction.reply({ content: "✅ Abilità messa in **Coda Cronologica**. Attendi che gli admin la elaborino.", ephemeral: true });
+                await interaction.reply({ 
+                    content: "✅ Abilità messa in **Coda Cronologica**. Attendi l'approvazione degli admin.", 
+                    ephemeral: true 
+                });
             } else {
-                console.error("❌ Errore: QueueSystem non inizializzato in abilitySystem.");
-                await interaction.reply({ content: "❌ Errore interno: Sistema Coda non disponibile.", ephemeral: true });
+                console.error("❌ [Ability] QueueSystem non inizializzato!");
+                await interaction.reply({ 
+                    content: "❌ Errore interno: Sistema Coda non disponibile.", 
+                    ephemeral: true 
+                });
             }
             
-            // Cancella il messaggio col bottone originale per pulizia
-            if (interaction.message) interaction.message.delete().catch(() => {});
+            // Pulizia messaggio bottone
+            if (interaction.message) {
+                interaction.message.delete().catch(() => {});
+            }
         }
     });
 };
