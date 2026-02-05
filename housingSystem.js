@@ -1108,15 +1108,6 @@ async function executeHousingAction(queueItem) {
         if (command === 'bussa') {
             message.delete().catch(()=>{}); 
             if (message.channel.parentId !== ID_CATEGORIA_CHAT_PRIVATE) return message.channel.send(`⛔ Solo chat private!`);
-            if ((dbCache.pendingKnocks && dbCache.pendingKnocks.includes(message.author.id))) return message.channel.send(`${message.author}, stai già bussando!`);
-
-            // Aggiungi a dbCache.pendingKnocks e salva su MongoDB
-            if (!dbCache.pendingKnocks) dbCache.pendingKnocks = [];
-            if (!dbCache.pendingKnocks.includes(message.author.id)) {
-                dbCache.pendingKnocks.push(message.author.id);
-                await saveDB();
-            }
-
 
             // 🛑 CONTROLLO: Non può bussare se ha già un'altra azione in corso
             if (QueueModel) {
@@ -1127,9 +1118,24 @@ async function executeHousingAction(queueItem) {
                 });
 
                 if (alreadyInQueue) {
+                    // Pulisci pendingKnocks se presente
+                    if (dbCache.pendingKnocks && dbCache.pendingKnocks.includes(message.author.id)) {
+                        dbCache.pendingKnocks = dbCache.pendingKnocks.filter(id => id !== message.author.id);
+                        await saveDB();
+                    }
                     const actionType = alreadyInQueue.type === 'KNOCK' ? 'bussa' : 'torna';
                     return message.channel.send(`⚠️ Hai già un'azione "${actionType}" in corso! Completa prima quella o usa \`!rimuovi\` per annullarla.`);
                 }
+            }
+
+            // Controlla se sta già bussando (menu aperto)
+            if ((dbCache.pendingKnocks && dbCache.pendingKnocks.includes(message.author.id))) return message.channel.send(`${message.author}, stai già bussando!`);
+
+            // Aggiungi a dbCache.pendingKnocks e salva su MongoDB
+            if (!dbCache.pendingKnocks) dbCache.pendingKnocks = [];
+            if (!dbCache.pendingKnocks.includes(message.author.id)) {
+                dbCache.pendingKnocks.push(message.author.id);
+                await saveDB();
             }
 
             const selectMode = new StringSelectMenuBuilder()
