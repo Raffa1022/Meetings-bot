@@ -1013,8 +1013,8 @@ module.exports = async (client, Model, QueueSys) => {
                 pendingKnocks.delete(message.author.id); 
             }, 300000);
         }
-    }
 
+    });
     client.on('interactionCreate', async interaction => {
         if (!interaction.isStringSelectMenu() && !interaction.isButton()) return;
         
