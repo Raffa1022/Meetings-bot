@@ -39,7 +39,7 @@ let HousingModel = null;
 let QueueSystem = null;
 let QueueModel = null; // ← AGGIUNTO per accedere al DB della coda
 let clientRef = null;
-const pendingKnocks = new Set();
+// pendingKnocks ora è dentro dbCache.pendingKnocks (array su MongoDB)
 
 // ==========================================
 // FUNZIONI DATABASE MONGO
@@ -53,6 +53,11 @@ async function loadDB() {
             await data.save();
         }
         dbCache = data.toObject();
+        
+        // Inizializza pendingKnocks se non esiste
+        if (!dbCache.pendingKnocks) {
+            dbCache.pendingKnocks = [];
+        }
         console.log("💾 [Housing] Database caricato da MongoDB!");
     } catch (e) {
         console.error("❌ [Housing] Errore caricamento DB:", e);
@@ -992,6 +997,18 @@ async function executeHousingAction(queueItem) {
                 c.permissionsFor(message.member).has(PermissionsBitField.Flags.ViewChannel)
             );
             if (!isVisiting) return message.channel.send("🏠 Sei già a casa.");
+
+            // --- MODIFICA CODA ---
+            if (QueueSystem) {
+                await QueueSystem.add('RETURN', message.author.id, {
+                    fromChannelId: message.channel.id
+                });
+                await message.channel.send("⏳ **Azione Torna** messa in coda. Attendi...");
+            } else {
+                await movePlayer(message.member, message.channel, homeChannel, `🏠 ${message.member} è ritornato.`, false);
+            }
+      }
+
           if (command === 'rimuovi') {
             message.delete().catch(()=>{});
             if (message.channel.parentId !== ID_CATEGORIA_CHAT_PRIVATE) return;
@@ -1092,9 +1109,14 @@ async function executeHousingAction(queueItem) {
         if (command === 'bussa') {
             message.delete().catch(()=>{}); 
             if (message.channel.parentId !== ID_CATEGORIA_CHAT_PRIVATE) return message.channel.send(`⛔ Solo chat private!`);
-            if (pendingKnocks.has(message.author.id)) return message.channel.send(`${message.author}, stai già bussando!`);
+            if ((dbCache.pendingKnocks && dbCache.pendingKnocks.includes(message.author.id))) return message.channel.send(`${message.author}, stai già bussando!`);
 
-            pendingKnocks.add(message.author.id);
+            // Aggiungi a dbCache.pendingKnocks e salva su MongoDB
+            if (!dbCache.pendingKnocks) dbCache.pendingKnocks = [];
+            if (!dbCache.pendingKnocks.includes(message.author.id)) {
+                dbCache.pendingKnocks.push(message.author.id);
+                await saveDB();
+            }
 
             const selectMode = new StringSelectMenuBuilder()
                 .setCustomId('knock_mode_select')
@@ -1109,9 +1131,13 @@ async function executeHousingAction(queueItem) {
                 content: `🎭 **${message.author}, scegli la modalità di visita:**`, 
                 components: [new ActionRowBuilder().addComponents(selectMode)]
             });
-            setTimeout(() => {
+            setTimeout(async () => {
                 menuMessage.delete().catch(() => {});
-                pendingKnocks.delete(message.author.id); 
+                // Rimuovi da dbCache.pendingKnocks e salva
+                if (dbCache.pendingKnocks) {
+                    dbCache.pendingKnocks = dbCache.pendingKnocks.filter(id => id !== message.author.id);
+                    await saveDB();
+                }
             }, 300000);
         }
 
@@ -1205,7 +1231,11 @@ if (interaction.customId === 'knock_house_select') {
 
             await saveDB();
             await interaction.message.delete().catch(()=>{});
-            pendingKnocks.delete(knocker.id);
+            // Rimuovi da dbCache.pendingKnocks e salva
+            if (dbCache.pendingKnocks) {
+                dbCache.pendingKnocks = dbCache.pendingKnocks.filter(id => id !== knocker.id);
+                await saveDB();
+            }
 
             // --- MODIFICA CODA ---
             if (QueueSystem) {
