@@ -288,10 +288,11 @@ async function executeHousingAction(queueItem) {
         });
     }
 }
- module.exports = async (client, Model, QueueSys) => {
-    clientRef = client; // ⚠️ AGGIUNTO: salva il riferimento globale
+ module.exports = async (client, Model, QueueSys, QueueModelRef) => {
+    clientRef = client;
     HousingModel = Model;
-    QueueSystem = QueueSys; // Salviamo il riferimento al sistema coda
+    QueueSystem = QueueSys;
+    QueueModel = QueueModelRef; // ← AGGIUNTO
     
     console.log(`🔧 [Housing] QueueSystem ricevuto:`, QueueSystem ? '✅ ATTIVO' : '❌ NON DISPONIBILE');
     if (QueueSystem) {
@@ -1299,6 +1300,7 @@ if (interaction.customId === 'knock_house_select') {
     // Restituisci la funzione esecutore alla coda
     return executeHousingAction;
 };
+
 
 
 
