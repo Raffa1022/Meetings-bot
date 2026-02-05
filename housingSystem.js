@@ -265,9 +265,9 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
 // ==========================================
 
 module.exports = async (client, Model, QueueSys) => {
-    async function executeHousingAction(queueItem) {
+    // 1. Inizializzazione (DEVE STARE FUORI DALLA FUNZIONE)
     HousingModel = Model;
-    QueueSystem = QueueSys; // Salviamo il riferimento
+    QueueSystem = QueueSys;
     await loadDB();
 
     const today = new Date().toDateString();
@@ -277,6 +277,44 @@ module.exports = async (client, Model, QueueSys) => {
         await saveDB();
         console.log("🔄 [Housing] Contatori ripristinati per nuovo giorno.");
     }
+
+    // 2. FUNZIONE DI ESECUZIONE (Questa è quella che clicchi col tasto ✅)
+    async function executeHousingAction(queueItem) {
+        const guild = client.guilds.cache.first(); 
+        const member = await guild.members.fetch(queueItem.userId).catch(() => null);
+        if (!member) return;
+
+        // Logica RITORNO
+        if (queueItem.type === 'RETURN') {
+            const homeId = dbCache.playerHomes[member.id];
+            const homeChannel = guild.channels.cache.get(homeId);
+            const fromChannel = guild.channels.cache.get(queueItem.details.fromChannelId);
+            if (homeChannel) {
+                await movePlayer(member, fromChannel, homeChannel, `🏠 ${member} è ritornato.`, false);
+            }
+        }
+
+        // Logica BUSSA
+        if (queueItem.type === 'KNOCK') {
+            const { targetChannelId, mode, fromChannelId } = queueItem.details;
+            const targetChannel = guild.channels.cache.get(targetChannelId);
+            const fromChannel = guild.channels.cache.get(fromChannelId);
+            
+            if (mode === 'mode_forced') {
+                const roleMentions = RUOLI_PERMESSI.map(id => `<@&${id}>`).join(', ');
+                await enterHouse(member, fromChannel, targetChannel, `${roleMentions}, ${member} ha sfondato la porta ed è entrato`, false);
+            } else if (mode === 'mode_hidden') {
+                await enterHouse(member, fromChannel, targetChannel, "", true);
+            } else {
+                await enterHouse(member, fromChannel, targetChannel, `👋 ${member} è entrato.`, false);
+            }
+        }
+    } // <-- QUESTA CHIUDE LA FUNZIONE
+
+    // 3. RESTO DEL CODICE (Eventi client.on)
+    client.on('messageCreate', async message => {
+        // ... qui continua il tuo codice originale
+
 
     client.on('messageCreate', async message => {
         if (message.author.bot || !message.content.startsWith(PREFIX)) return;
@@ -1058,4 +1096,5 @@ module.exports = async (client, Model, QueueSys) => {
     });
     return executeHousingAction;
 };
+
 
