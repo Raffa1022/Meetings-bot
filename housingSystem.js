@@ -161,7 +161,6 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
 }
 
 // --- ESECUTORE PER LA CODA (VERSIONE IDENTICA ALL'ORIGINALE) ---
-async function executeHousingAction(queueItem) {
     const guild = Object.values(dbCache.playerHomes).length > 0 
         ? (await client.channels.fetch(Object.values(dbCache.playerHomes)[0]).catch(()=>null))?.guild
         : client.guilds.cache.first();
@@ -266,6 +265,7 @@ async function executeHousingAction(queueItem) {
 // ==========================================
 
 module.exports = async (client, Model, QueueSys) => {
+    async function executeHousingAction(queueItem) {
     HousingModel = Model;
     QueueSystem = QueueSys; // Salviamo il riferimento
     await loadDB();
@@ -1058,3 +1058,4 @@ module.exports = async (client, Model, QueueSys) => {
     });
     return executeHousingAction;
 };
+
