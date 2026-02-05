@@ -33,6 +33,7 @@ const RUOLI_PUBBLICI = ['1460741403331268661', '1460741404497019002', '146074140
 const RUOLI_PERMESSI = ['1460741403331268661', '1460741404497019002']; 
 const DEFAULT_MAX_VISITS = 0;
 
+let AbilityModel = null;
 let dbCache = {}; 
 let HousingModel = null;
 let QueueSystem = null;
@@ -288,11 +289,12 @@ async function executeHousingAction(queueItem) {
         });
     }
 }
- module.exports = async (client, Model, QueueSys, QueueModelRef) => {
+ module.exports = async (client, Model, QueueSys, QueueModelRef, AbilityModelRef) => {
     clientRef = client;
     HousingModel = Model;
     QueueSystem = QueueSys;
-    QueueModel = QueueModelRef; // ← AGGIUNTO
+    QueueModel = QueueModelRef;    // ← AGGIUNGI
+    AbilityModel = AbilityModelRef; // ← AGGIUNGI
     
     console.log(`🔧 [Housing] QueueSystem ricevuto:`, QueueSystem ? '✅ ATTIVO' : '❌ NON DISPONIBILE');
     if (QueueSystem) {
@@ -1300,6 +1302,7 @@ if (interaction.customId === 'knock_house_select') {
     // Restituisci la funzione esecutore alla coda
     return executeHousingAction;
 };
+
 
 
 
