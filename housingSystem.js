@@ -1354,7 +1354,6 @@ if (interaction.customId === 'knock_house_select') {
                 });
             }
         }
-    }
 
         // ==========================================
         // GESTIONE MENU !RIMUOVI
