@@ -5,7 +5,7 @@ const express = require('express');
 // --- IMPORTA I MODULI ---
 const { HousingModel, MeetingModel, AbilityModel, QueueModel } = require('./database'); 
 
-const initHousingSystem = require('./housingSystem');
+const { init: initHousingSystem } = require('./housingSystem');
 const initMeetingSystem = require('./meetingSystem');
 const initAbilitySystem = require('./abilitySystem');
 const queueSystem = require('./queueSystem');
