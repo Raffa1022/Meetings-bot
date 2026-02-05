@@ -33,11 +33,12 @@ const RUOLI_PUBBLICI = ['1460741403331268661', '1460741404497019002', '146074140
 const RUOLI_PERMESSI = ['1460741403331268661', '1460741404497019002']; 
 const DEFAULT_MAX_VISITS = 0;
 
-let dbCache = {}; // Cache locale sincronizzata con Mongo
+let dbCache = {}; 
 let HousingModel = null;
 let QueueSystem = null;
-let client = null;
-const pendingKnocks = new Set(); 
+let QueueModel = null; // ← AGGIUNTO per accedere al DB della coda
+let clientRef = null;
+const pendingKnocks = new Set();
 
 // ==========================================
 // FUNZIONI DATABASE MONGO
@@ -988,6 +989,100 @@ async function executeHousingAction(queueItem) {
                 c.permissionsFor(message.member).has(PermissionsBitField.Flags.ViewChannel)
             );
             if (!isVisiting) return message.channel.send("🏠 Sei già a casa.");
+          if (command === 'rimuovi') {
+            message.delete().catch(()=>{});
+            if (message.channel.parentId !== ID_CATEGORIA_CHAT_PRIVATE) return;
+
+            const subCommand = args[0]?.toLowerCase();
+            
+            if (!subCommand) {
+                return message.channel.send("❌ Specifica cosa rimuovere: `!rimuovi bussa`, `!rimuovi torna`, `!rimuovi abilità`")
+                    .then(m => setTimeout(() => m.delete(), 10000));
+            }
+
+            // --- RIMUOVI BUSSA ---
+            if (subCommand === 'bussa') {
+                // Controlla se è in pendingKnocks (sta selezionando)
+                if (pendingKnocks.has(message.author.id)) {
+                    pendingKnocks.delete(message.author.id);
+                    return message.channel.send("✅ Selezione bussa annullata.")
+                        .then(m => setTimeout(() => m.delete(), 5000));
+                }
+
+                // Controlla se è in coda
+                if (QueueSystem) {
+                    const removed = await QueueModel.findOneAndDelete({
+                        type: 'KNOCK',
+                        userId: message.author.id,
+                        status: 'PENDING'
+                    });
+
+                    if (removed) {
+                        // Riprocessa la coda per continuare con il prossimo
+                        QueueSystem.process();
+                        return message.channel.send("✅ Bussa rimosso dalla coda.")
+                            .then(m => setTimeout(() => m.delete(), 5000));
+                    }
+                }
+
+                return message.channel.send("❌ Non hai nessun bussa in corso.")
+                    .then(m => setTimeout(() => m.delete(), 5000));
+            }
+
+            // --- RIMUOVI TORNA ---
+            if (subCommand === 'torna') {
+                if (QueueSystem) {
+                    const removed = await QueueModel.findOneAndDelete({
+                        type: 'RETURN',
+                        userId: message.author.id,
+                        status: 'PENDING'
+                    });
+
+                    if (removed) {
+                        QueueSystem.process();
+                        return message.channel.send("✅ Torna rimosso dalla coda.")
+                            .then(m => setTimeout(() => m.delete(), 5000));
+                    }
+                }
+
+                return message.channel.send("❌ Non hai nessun torna in corso.")
+                    .then(m => setTimeout(() => m.delete(), 5000));
+            }
+
+            // --- RIMUOVI ABILITÀ ---
+            if (subCommand === 'abilità' || subCommand === 'abilita') {
+                if (QueueSystem) {
+                    const removed = await QueueModel.findOneAndDelete({
+                        type: 'ABILITY',
+                        userId: message.author.id,
+                        status: 'PENDING'
+                    });
+
+                    if (removed) {
+                        // Aggiorna anche il DB delle abilità
+                        if (AbilityModel) {
+                            await AbilityModel.findByIdAndUpdate(
+                                removed.details.mongoId,
+                                { status: 'CANCELLED' }
+                            );
+                        }
+
+                        // IMPORTANTE: Riprendi la coda perché potrebbe essere bloccata da questa abilità
+                        QueueSystem.process();
+                        
+                        return message.channel.send("✅ Abilità rimossa dalla coda. Il sistema riprenderà a processare le altre azioni.")
+                            .then(m => setTimeout(() => m.delete(), 10000));
+                    }
+                }
+
+                return message.channel.send("❌ Non hai nessuna abilità in coda.")
+                    .then(m => setTimeout(() => m.delete(), 5000));
+            }
+
+            // Se il subCommand non è riconosciuto
+            return message.channel.send("❌ Comando non riconosciuto. Usa: `!rimuovi bussa`, `!rimuovi torna`, `!rimuovi abilità`")
+                .then(m => setTimeout(() => m.delete(), 10000));
+                    }
 
             // --- MODIFICA CODA ---
             if (QueueSystem) {
@@ -1204,6 +1299,7 @@ if (interaction.customId === 'knock_house_select') {
     // Restituisci la funzione esecutore alla coda
     return executeHousingAction;
 };
+
 
 
 
