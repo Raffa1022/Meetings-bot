@@ -124,13 +124,7 @@ function formatName(name) {
 }
 
 async function enterHouse(member, fromChannel, toChannel, entryMessage, isSilent) {
-    const isForcedEntry = entryMessage.includes("ha sfondato la porta");
-    
-    if (!isSilent && !isForcedEntry) {
-        const current = dbCache.playerVisits[member.id] || 0;
-        dbCache.playerVisits[member.id] = current + 1;
-        await saveDB();
-    }
+    // MODIFICA 1: Rimosso il conteggio visite qui (fix visite doppie)
     await movePlayer(member, fromChannel, toChannel, entryMessage, isSilent);
 }
 
@@ -139,24 +133,42 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
 
     let channelToLeave = oldChannel;
     
+    // Se arriva da chat privata, cerca la casa attuale
     if (oldChannel && oldChannel.parentId === ID_CATEGORIA_CHAT_PRIVATE) {
         const currentHouse = oldChannel.guild.channels.cache.find(c => 
             c.parentId === ID_CATEGORIA_CASE && 
-            c.permissionsFor(member).has(PermissionsBitField.Flags.ViewChannel)
+            c.permissionsFor(member).has(PermissionsBitField.Flags.ViewChannel) &&
+            c.permissionOverwrites.cache.has(member.id) 
         );
         if (currentHouse) channelToLeave = currentHouse;
     }
 
+    // Gestione uscita dal vecchio canale
     if (channelToLeave && channelToLeave.id !== newChannel.id) {
         if (channelToLeave.parentId === ID_CATEGORIA_CASE) {
             const prevMode = dbCache.playerModes ? dbCache.playerModes[member.id] : null;
             if (prevMode !== 'HIDDEN') {
                 await channelToLeave.send(`🚪 ${member} è uscito.`);
             }
-            await channelToLeave.permissionOverwrites.delete(member.id).catch(() => {});
+
+            // MODIFICA 2: Gestione uscita Casa Pubblica
+            // Se la casa è pubblica (ha il ruolo pubblico), l'utente smette di scrivere ma continua a vedere
+            const isPublic = channelToLeave.permissionOverwrites.cache.has(RUOLI_PUBBLICI[0]);
+            
+            if (isPublic) {
+                await channelToLeave.permissionOverwrites.edit(member.id, { 
+                    ViewChannel: true, 
+                    SendMessages: false, 
+                    ReadMessageHistory: true 
+                }).catch(() => {});
+            } else {
+                // Se è privata, rimuovi completamente l'accesso
+                await channelToLeave.permissionOverwrites.delete(member.id).catch(() => {});
+            }
         }
     }
 
+    // Ingresso nel nuovo canale
    await newChannel.permissionOverwrites.create(member.id, { 
         ViewChannel: true, SendMessages: true, ReadMessageHistory: true 
     });
@@ -972,10 +984,37 @@ async function executeHousingAction(queueItem) {
             if (!targetChannel || targetChannel.parentId !== ID_CATEGORIA_CASE) {
                 return message.channel.send("⛔ Devi essere in una casa o (se admin) specificare una casa valida.").then(m => setTimeout(() => m.delete(), 5000));
             }
+                    if (command === 'chi') {
+            message.delete().catch(()=>{});
+            
+            const isAdmin = message.member.permissions.has(PermissionsBitField.Flags.Administrator);
+            let targetChannel = null;
+
+            // Logica di selezione canale
+            if (isAdmin && message.mentions.channels.size > 0) {
+                // Se è admin e ha menzionato un canale, usa quello
+                targetChannel = message.mentions.channels.first();
+            } else {
+                // Altrimenti usa il canale corrente se è una casa
+                if (message.channel.parentId === ID_CATEGORIA_CASE) {
+                    targetChannel = message.channel;
+                }
+            }
+
+            // Controllo validità
+            if (!targetChannel || targetChannel.parentId !== ID_CATEGORIA_CASE) {
+                return message.channel.send("⛔ Devi essere in una casa o (se admin) specificare una casa valida.").then(m => setTimeout(() => m.delete(), 5000));
+            }
 
             const ownerIds = Object.keys(dbCache.playerHomes).filter(key => dbCache.playerHomes[key] === targetChannel.id);
             const ownerMention = ownerIds.length > 0 ? ownerIds.map(id => `<@${id}>`).join(', ') : "Nessuno";
-            const playersInHouse = targetChannel.members.filter(m => !m.user.bot && targetChannel.permissionOverwrites.cache.has(m.id));
+            
+            // MODIFICA: Filtra SOLO chi ha il ruolo specifico (ID_RUOLO_NOTIFICA_1)
+            const playersInHouse = targetChannel.members.filter(m => 
+                !m.user.bot && 
+                m.roles.cache.has(ID_RUOLO_NOTIFICA_1)
+            );
+            
             let description = playersInHouse.size > 0 ? playersInHouse.map(p => `👤 ${p}`).join('\n') : "Nessuno.";
 
             const embed = new EmbedBuilder().setTitle(`👥 Persone in casa`).setDescription(description).addFields({ name: '🔑 Proprietario', value: ownerMention });
@@ -1217,20 +1256,17 @@ async function executeHousingAction(queueItem) {
             await interaction.update({ content: `🏘️ **Modalità scelta**. Seleziona zona:`, components: [new ActionRowBuilder().addComponents(selectGroup)] });
         }
                 // --- 🔴 PEZZO MANCANTE: GESTIONE SELEZIONE PAGINA ---
+       // --- 🔴 PEZZO MODIFICATO: GESTIONE SELEZIONE PAGINA (CON FILTRO CASA PROPRIA) ---
         if (interaction.customId === 'knock_page_select') {
-            // I valori sono salvati come: "page_NUMERO_MODALITÀ" (es: page_0_mode_normal)
             const parts = interaction.values[0].split('_');
             const pageIndex = parseInt(parts[1]);
-            // Ricostruiamo la modalità (es: mode_normal, mode_forced, etc.)
             const mode = parts.slice(2).join('_'); 
             
-            // Recuperiamo di nuovo le case
             const tutteLeCase = interaction.guild.channels.cache
                 .filter(c => c.parentId === ID_CATEGORIA_CASE && c.type === ChannelType.GuildText)
                 .sort((a, b) => a.rawPosition - b.rawPosition);
 
             const PAGE_SIZE = 25;
-            // Calcoliamo quali case mostrare in base alla pagina scelta
             const start = pageIndex * PAGE_SIZE;
             const end = start + PAGE_SIZE;
             const casePagina = [...tutteLeCase.values()].slice(start, end);
@@ -1239,9 +1275,17 @@ async function executeHousingAction(queueItem) {
                 return interaction.reply({ content: "❌ Nessuna casa in questa pagina.", ephemeral: true });
             }
 
-           // CREAZIONE OPZIONI (CON FILTRO: Nasconde la casa dove sei già)
+            // Recupera ID casa di proprietà dell'utente
+            const myHomeId = dbCache.playerHomes[interaction.user.id];
+
+            // CREAZIONE OPZIONI (CON FILTRI)
+            // 1. Non mostrare dove sei già (members.has)
+            // 2. Non mostrare la TUA casa di proprietà (channel.id !== myHomeId)
             const houseOptions = casePagina
-                .filter(channel => !channel.members.has(interaction.user.id)) 
+                .filter(channel => 
+                    !channel.members.has(interaction.user.id) && 
+                    channel.id !== myHomeId
+                ) 
                 .map(channel => 
                     new StringSelectMenuOptionBuilder()
                         .setLabel(formatName(channel.name)) 
@@ -1249,15 +1293,15 @@ async function executeHousingAction(queueItem) {
                         .setEmoji('🏠')
                 );
 
-            // Se dopo aver filtrato non rimane nessuna casa (es. eri nell'unica casa della pagina)
             if (houseOptions.length === 0) {
                 return interaction.reply({ 
-                    content: "❌ In questa pagina non ci sono case disponibili (o sei già dentro l'unica presente).", 
+                    content: "❌ Nessuna casa disponibile in questa pagina (o sono la tua casa/dove sei già).", 
                     ephemeral: true 
                 });
             }
+            
             const selectHouse = new StringSelectMenuBuilder()
-                .setCustomId('knock_house_select') // Questo triggera il prossimo blocco già esistente
+                .setCustomId('knock_house_select')
                 .setPlaceholder('Scegli la casa specifica...')
                 .addOptions(houseOptions);
 
@@ -1544,6 +1588,7 @@ async function executeHousingAction(queueItem) {
     // Restituisci la funzione esecutore alla coda
     return executeHousingAction;
 };
+
 
 
 
