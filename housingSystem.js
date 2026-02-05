@@ -998,7 +998,7 @@ async function executeHousingAction(queueItem) {
             );
             if (!isVisiting) return message.channel.send("🏠 Sei già a casa.");
 
-            // 🛑 CONTROLLO SE HA GIÀ UN'AZIONE IN CODA
+            // 🛑 CONTROLLO: Non può fare !torna se ha già un KNOCK o RETURN in corso
             if (QueueModel) {
                 const alreadyInQueue = await QueueModel.findOne({
                     userId: message.author.id,
@@ -1007,7 +1007,8 @@ async function executeHousingAction(queueItem) {
                 });
 
                 if (alreadyInQueue) {
-                    return message.channel.send('⚠️ Hai già un\'azione in coda! Attendi che venga completata.');
+                    const actionType = alreadyInQueue.type === 'KNOCK' ? 'bussa' : 'torna';
+                    return message.channel.send(`⚠️ Hai già un'azione "${actionType}" in corso! Completa prima quella o usa \`!rimuovi\` per annullarla.`);
                 }
             }
 
@@ -1026,115 +1027,88 @@ async function executeHousingAction(queueItem) {
             message.delete().catch(()=>{});
             if (message.channel.parentId !== ID_CATEGORIA_CHAT_PRIVATE) return;
 
-            const subCommand = args[0]?.toLowerCase();
+            // Controlla cosa può rimuovere
+            const options = [];
             
-            if (!subCommand) {
-                return message.channel.send("❌ Specifica cosa rimuovere: `!rimuovi bussa`, `!rimuovi torna`, `!rimuovi abilità`")
-                    .then(m => setTimeout(() => m.delete(), 10000));
+            // Controlla se è in pendingKnocks (sta selezionando casa)
+            const isSelectingHouse = dbCache.pendingKnocks && dbCache.pendingKnocks.includes(message.author.id);
+            
+            // Controlla cosa c'è in coda
+            let queueItems = [];
+            if (QueueModel) {
+                queueItems = await QueueModel.find({
+                    userId: message.author.id,
+                    status: 'PENDING'
+                });
             }
-
-            // --- RIMUOVI BUSSA ---
-            if (subCommand === 'bussa') {
-                // Controlla se è in pendingKnocks (sta selezionando)
-                if (dbCache.pendingKnocks && dbCache.pendingKnocks.includes(message.author.id)) {
-                    dbCache.pendingKnocks = dbCache.pendingKnocks.filter(id => id !== message.author.id);
-                    await saveDB();
-                    return message.channel.send("✅ Selezione bussa annullata.")
-                        .then(m => setTimeout(() => m.delete(), 5000));
+            
+            // Aggiungi opzioni disponibili
+            if (isSelectingHouse) {
+                options.push(
+                    new StringSelectMenuOptionBuilder()
+                        .setLabel('Annulla selezione casa (Bussa)')
+                        .setValue('remove_selecting')
+                        .setEmoji('🚫')
+                        .setDescription('Annulla il menu di selezione casa attuale')
+                );
+            }
+            
+            for (const item of queueItems) {
+                if (item.type === 'KNOCK') {
+                    options.push(
+                        new StringSelectMenuOptionBuilder()
+                            .setLabel('Rimuovi Bussa dalla coda')
+                            .setValue('remove_knock')
+                            .setEmoji('🚪')
+                            .setDescription('Annulla la visita in attesa')
+                    );
+                } else if (item.type === 'RETURN') {
+                    options.push(
+                        new StringSelectMenuOptionBuilder()
+                            .setLabel('Rimuovi Torna dalla coda')
+                            .setValue('remove_return')
+                            .setEmoji('🏠')
+                            .setDescription('Annulla il ritorno a casa')
+                    );
+                } else if (item.type === 'ABILITY') {
+                    options.push(
+                        new StringSelectMenuOptionBuilder()
+                            .setLabel('Rimuovi Abilità dalla coda')
+                            .setValue('remove_ability')
+                            .setEmoji('✨')
+                            .setDescription('Annulla l\'abilità in attesa')
+                    );
                 }
-
-                // Controlla se è in coda
-                if (QueueModel) {
-                    const removed = await QueueModel.findOneAndDelete({
-                        type: 'KNOCK',
-                        userId: message.author.id,
-                        status: 'PENDING'
-                    });
-
-                    if (removed) {
-                        // Riprocessa la coda per continuare con il prossimo
-                        if (QueueSystem) QueueSystem.process();
-                        return message.channel.send("✅ Bussa rimosso dalla coda.")
-                            .then(m => setTimeout(() => m.delete(), 5000));
-                    }
-                }
-
-                return message.channel.send("❌ Non hai nessun bussa in corso.")
+            }
+            
+            // Se non c'è nulla da rimuovere
+            if (options.length === 0) {
+                return message.channel.send("❌ Non hai nessuna azione in corso da rimuovere!")
                     .then(m => setTimeout(() => m.delete(), 5000));
             }
-
-            // --- RIMUOVI TORNA ---
-            if (subCommand === 'torna') {
-                if (QueueModel) {
-                    const removed = await QueueModel.findOneAndDelete({
-                        type: 'RETURN',
-                        userId: message.author.id,
-                        status: 'PENDING'
-                    });
-
-                    if (removed) {
-                        if (QueueSystem) QueueSystem.process();
-                        return message.channel.send("✅ Torna rimosso dalla coda.")
-                            .then(m => setTimeout(() => m.delete(), 5000));
-                    }
-                }
-
-                return message.channel.send("❌ Non hai nessun torna in corso.")
-                    .then(m => setTimeout(() => m.delete(), 5000));
-            }
-
-            // --- RIMUOVI ABILITÀ ---
-            if (subCommand === 'abilità' || subCommand === 'abilita') {
-                if (QueueModel) {
-                    const removed = await QueueModel.findOneAndDelete({
-                        type: 'ABILITY',
-                        userId: message.author.id,
-                        status: 'PENDING'
-                    });
-
-                    if (removed) {
-                        // Aggiorna anche il DB delle abilità
-                        if (AbilityModel && removed.details && removed.details.mongoId) {
-                            await AbilityModel.findByIdAndUpdate(
-                                removed.details.mongoId,
-                                { status: 'CANCELLED' }
-                            );
-                        }
-
-                        // IMPORTANTE: Riprendi la coda
-                        if (QueueSystem) QueueSystem.process();
-                        
-                        return message.channel.send("✅ Abilità rimossa dalla coda. Il sistema riprenderà a processare le altre azioni.")
-                            .then(m => setTimeout(() => m.delete(), 10000));
-                    }
-                }
-
-                return message.channel.send("❌ Non hai nessuna abilità in coda.")
-                    .then(m => setTimeout(() => m.delete(), 5000));
-            }
-
-            // Se il subCommand non è riconosciuto
-            return message.channel.send("❌ Comando non riconosciuto. Usa: `!rimuovi bussa`, `!rimuovi torna`, `!rimuovi abilità`")
-                .then(m => setTimeout(() => m.delete(), 10000));
+            
+            // Crea il menu
+            const selectMenu = new StringSelectMenuBuilder()
+                .setCustomId('remove_action_select')
+                .setPlaceholder('Cosa vuoi rimuovere?')
+                .addOptions(options);
+            
+            const row = new ActionRowBuilder().addComponents(selectMenu);
+            
+            const menuMsg = await message.channel.send({
+                content: '🗑️ **Seleziona cosa vuoi rimuovere:**',
+                components: [row]
+            });
+            
+            // Auto-delete dopo 60 secondi
+            setTimeout(() => menuMsg.delete().catch(() => {}), 60000);
           }
+
 
         if (command === 'bussa') {
             message.delete().catch(()=>{}); 
             if (message.channel.parentId !== ID_CATEGORIA_CHAT_PRIVATE) return message.channel.send(`⛔ Solo chat private!`);
             if ((dbCache.pendingKnocks && dbCache.pendingKnocks.includes(message.author.id))) return message.channel.send(`${message.author}, stai già bussando!`);
-
-            // 🛑 CONTROLLO SE HA GIÀ UN'AZIONE IN CODA
-            if (QueueModel) {
-                const alreadyInQueue = await QueueModel.findOne({
-                    userId: message.author.id,
-                    status: 'PENDING',
-                    type: { $in: ['RETURN', 'KNOCK'] }
-                });
-
-                if (alreadyInQueue) {
-                    return message.channel.send('⚠️ Hai già un\'azione in coda! Attendi che venga completata.');
-                }
-            }
 
             // Aggiungi a dbCache.pendingKnocks e salva su MongoDB
             if (!dbCache.pendingKnocks) dbCache.pendingKnocks = [];
@@ -1147,6 +1121,20 @@ async function executeHousingAction(queueItem) {
                 .setCustomId('knock_mode_select')
                 .setPlaceholder('Come vuoi entrare?')
                 .addOptions(
+
+            // 🛑 CONTROLLO: Non può bussare se ha già un'altra azione in corso
+            if (QueueModel) {
+                const alreadyInQueue = await QueueModel.findOne({
+                    userId: message.author.id,
+                    status: 'PENDING',
+                    type: { $in: ['RETURN', 'KNOCK'] }
+                });
+
+                if (alreadyInQueue) {
+                    const actionType = alreadyInQueue.type === 'KNOCK' ? 'bussa' : 'torna';
+                    return message.channel.send(`⚠️ Hai già un'azione "${actionType}" in corso! Completa prima quella o usa \`!rimuovi\` per annullarla.`);
+                }
+            }
                     new StringSelectMenuOptionBuilder().setLabel('Visita Normale').setValue('mode_normal').setEmoji('👋'),
                     new StringSelectMenuOptionBuilder().setLabel('Visita Forzata').setValue('mode_forced').setEmoji('🧨'),
                     new StringSelectMenuOptionBuilder().setLabel('Visita Nascosta').setValue('mode_hidden').setEmoji('🕵️')
@@ -1226,10 +1214,8 @@ async function executeHousingAction(queueItem) {
 if (interaction.customId === 'knock_house_select') {
             const parts = interaction.values[0].split('_'); 
             const targetChannelId = parts[0];
-            const mode = parts[1] + '_' + parts[2]; 
-            const knocker = interaction.member;
 
-            // 🛑 CONTROLLO DOUBLE KNOCK - Verifica se ha già un'azione in coda
+            // 🛑 CONTROLLO CRITICO ANTI-DOUBLE-KNOCK
             if (QueueModel) {
                 const alreadyInQueue = await QueueModel.findOne({
                     userId: knocker.id,
@@ -1238,18 +1224,21 @@ if (interaction.customId === 'knock_house_select') {
                 });
 
                 if (alreadyInQueue) {
-                    // Rimuovi da pendingKnocks
+                    // Pulisci pendingKnocks
                     if (dbCache.pendingKnocks) {
                         dbCache.pendingKnocks = dbCache.pendingKnocks.filter(id => id !== knocker.id);
                         await saveDB();
                     }
                     
+                    const actionType = alreadyInQueue.type === 'KNOCK' ? 'bussa' : 'torna';
                     return interaction.reply({
-                        content: '⚠️ Hai già un\'azione in coda! Attendi che venga completata.',
+                        content: `⚠️ Hai già un'azione "${actionType}" in corso! Usa \`!rimuovi\` per annullarla.`,
                         ephemeral: true
                     });
                 }
             }
+            const mode = parts[1] + '_' + parts[2]; 
+            const knocker = interaction.member;
 
             let base, extra;
             if (dbCache.currentMode === 'DAY') {
@@ -1364,6 +1353,110 @@ if (interaction.customId === 'knock_house_select') {
                 });
             }
     }
+
+        // ==========================================
+        // GESTIONE MENU !RIMUOVI
+        // ==========================================
+        if (interaction.customId === 'remove_action_select') {
+            const action = interaction.values[0];
+            
+            if (action === 'remove_selecting') {
+                // Rimuovi da pendingKnocks
+                if (dbCache.pendingKnocks) {
+                    dbCache.pendingKnocks = dbCache.pendingKnocks.filter(id => id !== interaction.user.id);
+                    await saveDB();
+                }
+                await interaction.update({ 
+                    content: '✅ Selezione casa annullata!', 
+                    components: [] 
+                });
+                setTimeout(() => interaction.message.delete().catch(() => {}), 3000);
+                return;
+            }
+            
+            if (action === 'remove_knock') {
+                if (QueueModel) {
+                    const removed = await QueueModel.findOneAndDelete({
+                        type: 'KNOCK',
+                        userId: interaction.user.id,
+                        status: 'PENDING'
+                    });
+                    
+                    if (removed) {
+                        if (QueueSystem) QueueSystem.process();
+                        await interaction.update({ 
+                            content: '✅ Bussa rimosso dalla coda!', 
+                            components: [] 
+                        });
+                        setTimeout(() => interaction.message.delete().catch(() => {}), 3000);
+                        return;
+                    }
+                }
+                await interaction.update({ 
+                    content: '❌ Errore nella rimozione.', 
+                    components: [] 
+                });
+                return;
+            }
+            
+            if (action === 'remove_return') {
+                if (QueueModel) {
+                    const removed = await QueueModel.findOneAndDelete({
+                        type: 'RETURN',
+                        userId: interaction.user.id,
+                        status: 'PENDING'
+                    });
+                    
+                    if (removed) {
+                        if (QueueSystem) QueueSystem.process();
+                        await interaction.update({ 
+                            content: '✅ Torna rimosso dalla coda!', 
+                            components: [] 
+                        });
+                        setTimeout(() => interaction.message.delete().catch(() => {}), 3000);
+                        return;
+                    }
+                }
+                await interaction.update({ 
+                    content: '❌ Errore nella rimozione.', 
+                    components: [] 
+                });
+                return;
+            }
+            
+            if (action === 'remove_ability') {
+                if (QueueModel) {
+                    const removed = await QueueModel.findOneAndDelete({
+                        type: 'ABILITY',
+                        userId: interaction.user.id,
+                        status: 'PENDING'
+                    });
+                    
+                    if (removed) {
+                        // Aggiorna DB abilità
+                        if (AbilityModel && removed.details && removed.details.mongoId) {
+                            await AbilityModel.findByIdAndUpdate(
+                                removed.details.mongoId,
+                                { status: 'CANCELLED' }
+                            );
+                        }
+                        
+                        if (QueueSystem) QueueSystem.process();
+                        await interaction.update({ 
+                            content: '✅ Abilità rimossa dalla coda!', 
+                            components: [] 
+                        });
+                        setTimeout(() => interaction.message.delete().catch(() => {}), 5000);
+                        return;
+                    }
+                }
+                await interaction.update({ 
+                    content: '❌ Errore nella rimozione.', 
+                    components: [] 
+                });
+                return;
+            }
+        }
     }); // Chiude il client.on('interactionCreate'...)
 
     // Restituisci la funzione esecutore alla coda
