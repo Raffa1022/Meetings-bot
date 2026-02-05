@@ -1104,7 +1104,6 @@ async function executeHousingAction(queueItem) {
             return message.channel.send("❌ Comando non riconosciuto. Usa: `!rimuovi bussa`, `!rimuovi torna`, `!rimuovi abilità`")
                 .then(m => setTimeout(() => m.delete(), 10000));
           }
-      }
 
         if (command === 'bussa') {
             message.delete().catch(()=>{}); 
