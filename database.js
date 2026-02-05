@@ -44,8 +44,7 @@ const meetingSchema = new mongoose.Schema({
 const abilitySchema = new mongoose.Schema({
     userId: String,         // Chi ha inviato la richiesta
     content: String,        // Il testo scritto nella tendina
-    status: { type: String, default: 'PENDING' }, // PENDING, APPROVED, REJECTED
-    adminMessageId: String, // ID del messaggio nel canale admin
+    status: { type: String, default: 'QUEUED' }, // QUEUED, APPROVED, REJECTED
     timestamp: { type: Date, default: Date.now }
 }, { minimize: false });
 
@@ -53,9 +52,9 @@ const abilitySchema = new mongoose.Schema({
 const queueSchema = new mongoose.Schema({
     type: { type: String, required: true }, // 'ABILITY', 'RETURN', 'KNOCK'
     userId: { type: String, required: true },
-    details: { type: Object, default: {} }, // Dati extra (testo abilità, canale target, modalità bussa)
-    timestamp: { type: Date, default: Date.now },
-    status: { type: String, default: 'PENDING' } // PENDING, DONE
+    status: { type: String, default: 'PENDING' }, // PENDING, COMPLETED
+    details: { type: Object, default: {} }, // Dati specifici per ogni tipo di azione
+    timestamp: { type: Date, default: Date.now }
 }, { minimize: false });
 
 // Creazione Modelli
