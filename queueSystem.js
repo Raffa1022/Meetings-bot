@@ -1,4 +1,11 @@
-// Sostituisci le funzioni updateDashboard, processQueue e l'init in queueSystem.js
+const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+
+const ID_CANALE_LOG = '1465768646906220700'; //
+const ID_RUOLO_ADMIN = '1460741401435181295'; //
+
+let QueueModel = null;
+let clientRef = null;
+let housingExecutor = null;
 
 async function updateDashboard() {
     const channel = clientRef.channels.cache.get(ID_CANALE_LOG);
@@ -30,14 +37,12 @@ async function updateDashboard() {
     if (queue.length > 0) {
         contentText = `<@&${ID_RUOLO_ADMIN}> 🔔 Nuova azione da gestire!`;
         
-        // Aggiungiamo i bottoni per QUALSIASI tipo di azione in cima alla coda
         const row = new ActionRowBuilder().addComponents(
             new ButtonBuilder().setCustomId(`q_approve_${queue[0]._id}`).setLabel('Approva ed Esegui').setStyle(ButtonStyle.Success).setEmoji('✅'),
             new ButtonBuilder().setCustomId(`q_reject_${queue[0]._id}`).setLabel('Rifiuta e Rimuovi').setStyle(ButtonStyle.Danger).setEmoji('❌')
         );
         components.push(row);
 
-        // Dettagli dinamici nell'embed
         if (queue[0].type === 'ABILITY') {
             embed.addFields({ name: '📜 Dettaglio Abilità', value: queue[0].details.text || "Nessun testo" });
         } else if (queue[0].type === 'KNOCK') {
@@ -55,35 +60,41 @@ async function updateDashboard() {
 }
 
 async function processQueue() {
-    // Ora processQueue si limita ad aggiornare la grafica. 
-    // L'esecuzione vera avviene nell'interactionCreate sotto.
     await updateDashboard();
 }
 
-// Nel metodo init, modifichiamo il gestore dei bottoni:
-// Cerca la sezione client.on('interactionCreate', ...) dentro module.exports.init
-client.on('interactionCreate', async interaction => {
-    if (!interaction.isButton() || !interaction.customId.startsWith('q_')) return;
+module.exports = {
+    init: async (client, Model, executor) => {
+        clientRef = client;
+        QueueModel = Model;
+        housingExecutor = executor;
+        
+        processQueue();
 
-    const [prefix, action, itemId] = interaction.customId.split('_');
-    const item = await QueueModel.findById(itemId);
-    
-    if (!item) return interaction.reply({ content: "❌ Azione non trovata o già gestita.", ephemeral: true });
+        client.on('interactionCreate', async interaction => {
+            if (!interaction.isButton() || !interaction.customId.startsWith('q_')) return;
 
-    if (action === 'approve') {
-        // Se è Housing, eseguiamo il movimento reale
-        if (item.type === 'RETURN' || item.type === 'KNOCK') {
-            if (housingExecutor) {
-                await housingExecutor(item);
+            const [prefix, action, itemId] = interaction.customId.split('_');
+            const item = await QueueModel.findById(itemId);
+            
+            if (!item) return interaction.reply({ content: "❌ Azione non trovata o già gestita.", ephemeral: true });
+
+            if (action === 'approve') {
+                if (item.type === 'RETURN' || item.type === 'KNOCK') {
+                    if (housingExecutor) await housingExecutor(item);
+                }
+                await QueueModel.findByIdAndDelete(itemId);
+                await interaction.reply({ content: `✅ Azione di <@${item.userId}> APPROVATA ed eseguita.`, ephemeral: true });
+            } else {
+                await QueueModel.findByIdAndDelete(itemId);
+                await interaction.reply({ content: `❌ Azione di <@${item.userId}> RIFIUTATA.`, ephemeral: true });
             }
-        }
-        // Se è Ability, non facciamo nulla (l'admin narra manualmente dopo aver approvato)
-        await QueueModel.findByIdAndDelete(itemId);
-        await interaction.reply({ content: `✅ Azione di <@${item.userId}> APPROVATA ed eseguita.`, ephemeral: true });
-    } else {
-        await QueueModel.findByIdAndDelete(itemId);
-        await interaction.reply({ content: `❌ Azione di <@${item.userId}> RIFIUTATA.`, ephemeral: true });
+            processQueue();
+        });
+    },
+    add: async (type, userId, details) => {
+        const newItem = new QueueModel({ type, userId, details });
+        await newItem.save();
+        processQueue();
     }
-    
-    processQueue(); // Aggiorna la lista per il prossimo utente
-});
+};
