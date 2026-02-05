@@ -424,8 +424,15 @@ async function executeHousingAction(queueItem) {
             
             await saveDB();
             message.reply("♻️ **RESET GLOBALE COMPLETATO**");
-        }
-
+            
+}
+                if (command === 'sblocca') {
+            // Svuota la lista di chi sta bussando
+            dbCache.pendingKnocks = [];
+            await saveDB();
+            message.reply("✅ **Sblocco effettuato!** Tutte le selezioni 'Bussa' pendenti sono state cancellate. Riprova ora.");
+                    
+}
         if (command === 'notte') {
              if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) return message.reply("⛔ Non sei admin.");
              const numero = args[0];
@@ -1443,6 +1450,7 @@ async function executeHousingAction(queueItem) {
     // Restituisci la funzione esecutore alla coda
     return executeHousingAction;
 };
+
 
 
 
