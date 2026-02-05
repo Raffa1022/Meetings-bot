@@ -2,25 +2,23 @@ const { Client, GatewayIntentBits, Partials, Options } = require('discord.js');
 const mongoose = require('mongoose');
 const express = require('express');
 
-// --- IMPORTA I MODULI ---
-// 1. MODIFICA: Aggiunto AbilityModel nella lista
-const { HousingModel, MeetingModel, AbilityModel } = require('./database'); 
+// IMPORT DATI
+// Assicurati che in database.js ci sia QueueModel!
+const { HousingModel, MeetingModel, AbilityModel, QueueModel } = require('./database'); 
 
+// IMPORT SISTEMI
 const initHousingSystem = require('./housingSystem');
 const initMeetingSystem = require('./meetingSystem');
-// 2. MODIFICA: Importa il file del nuovo sistema
 const initAbilitySystem = require('./abilitySystem');
+const queueSystem = require('./queueSystem'); // <--- NUOVO IMPORT
 
-// CONFIGURAZIONE
-const TOKEN = 'MTQ2MzU5NDkwMTAzOTIyMjg3Nw.G2ZqJU.HRxjqWMs2fIwblzW2B2SUXcYhUZ8BkeWioLmss'; 
-const MONGO_URI = process.env.MONGO_URI || 'mongodb+srv://raffaelewwo:Canebilli12@cluster0.7snmgc1.mongodb.net/?appName=Cluster0';
+const TOKEN = '...'; 
+const MONGO_URI = '...';
 
-// --- SERVER WEB (Per Koyeb/Render) ---
 const app = express();
-app.get('/', (req, res) => res.send('Bot Modular System Online'));
-app.listen(8000, () => console.log('🌍 Web Server pronto sulla porta 8000'));
+app.get('/', (req, res) => res.send('Bot Online'));
+app.listen(8000);
 
-// --- CLIENT DISCORD ---
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -28,36 +26,31 @@ const client = new Client({
         GatewayIntentBits.MessageContent,
         GatewayIntentBits.GuildMembers,
         GatewayIntentBits.GuildMessageReactions,
-        GatewayIntentBits.GuildVoiceStates,
-        GatewayIntentBits.GuildPresences
     ],
     partials: [Partials.Message, Partials.Channel, Partials.Reaction, Partials.User, Partials.GuildMember],
-    makeCache: Options.cacheWithLimits({
-        MessageManager: 50,
-        PresenceManager: 0,
-        GuildMemberManager: 50,
-    }),
 });
 
-// --- AVVIO ---
 (async () => {
     try {
-        // 1. Connetti Mongo
         await mongoose.connect(MONGO_URI);
         console.log('✅ MongoDB Connesso!');
 
-        // 2. Avvia i sistemi modulari esistenti
-        await initHousingSystem(client, HousingModel);
-        await initMeetingSystem(client, MeetingModel);
+        // 1. Avvia Housing e prendi l'esecutore per passarlo alla coda
+        // Passiamo queueSystem dentro housingSystem così housing può aggiungere cose alla coda
+        const housingExecutor = await initHousingSystem(client, HousingModel, queueSystem);
         
-        // 3. MODIFICA: Avvia il nuovo sistema abilità
-        await initAbilitySystem(client, AbilityModel);
+        // 2. Avvia la Coda (dandogli l'esecutore housing per quando tocca a lui)
+        await queueSystem.init(client, QueueModel, housingExecutor);
 
-        // 4. Login Discord
+        // 3. Altri sistemi
+        await initMeetingSystem(client, MeetingModel);
+        // Passiamo queueSystem anche ad abilitySystem
+        await initAbilitySystem(client, AbilityModel, queueSystem);
+
         await client.login(TOKEN);
-        console.log(`🤖 Bot avviato come ${client.user ? client.user.tag : 'Token valido'}`);
 
     } catch (error) {
         console.error("❌ Errore critico avvio:", error);
     }
 })();
+
