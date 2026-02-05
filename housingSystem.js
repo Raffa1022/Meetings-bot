@@ -1341,57 +1341,78 @@ async function executeHousingAction(queueItem) {
                     return;
                 }
 
-                // B. Visita Normale -> TOC TOC
-                const membersWithAccess = targetChannel.members.filter(m => 
-                    !m.user.bot && m.id !== knocker.id && m.roles.cache.hasAny(...RUOLI_PERMESSI)
-                );
+              // B. Visita Normale -> TOC TOC
+        const getOccupants = () => targetChannel.members.filter(m => 
+            !m.user.bot && m.id !== knocker.id && m.roles.cache.hasAny(...RUOLI_PERMESSI)
+        );
 
-                // Se vuota, entra subito
-                if (membersWithAccess.size === 0) {
-                    await enterHouse(knocker, fromChannel, targetChannel, `👋 ${knocker} è entrato.`, false);
-                    return;
-                }
+        const membersWithAccess = getOccupants();
 
-                // Se c'è gente, invia il messaggio TOC TOC
-                const roleMentions = RUOLI_PERMESSI.map(id => `<@&${id}>`).join(' ');
-                const msg = await targetChannel.send(`🔔 **TOC TOC!** ${roleMentions}\nQualcuno sta bussando\n✅ = Apri | ❌ = Rifiuta`);
-                await msg.react('✅'); 
-                await msg.react('❌');
+        // Se la casa è GIÀ vuota in partenza, entra subito
+        if (membersWithAccess.size === 0) {
+            await enterHouse(knocker, fromChannel, targetChannel, `👋 ${knocker} è entrato.`, false);
+            return;
+        }
 
-                const filter = (reaction, user) => 
-                    ['✅', '❌'].includes(reaction.emoji.name) && 
-                    membersWithAccess.has(user.id);
+        // Se c'è gente, invia il messaggio TOC TOC
+        const roleMentions = RUOLI_PERMESSI.map(id => `<@&${id}>`).join(' ');
+        const msg = await targetChannel.send(`🔔 **TOC TOC!** ${roleMentions}\nQualcuno sta bussando\n✅ = Apri | ❌ = Rifiuta`);
+        await msg.react('✅'); 
+        await msg.react('❌');
+
+        const filter = (reaction, user) => 
+            ['✅', '❌'].includes(reaction.emoji.name) && 
+            getOccupants().has(user.id); 
+        
+        const collector = msg.createReactionCollector({ filter, time: 300000, max: 1 });
+
+        // ⏱️ MONITORAGGIO PRESENZE
+        const monitorInterval = setInterval(() => {
+            const currentOccupants = getOccupants();
+            if (currentOccupants.size === 0) {
+                collector.stop('everyone_left');
+            }
+        }, 2000);
+
+        collector.on('collect', async (reaction, user) => {
+            clearInterval(monitorInterval);
+
+            if (reaction.emoji.name === '✅') {
+                await msg.reply(`✅ Qualcuno ha aperto.`);
+                await enterHouse(knocker, fromChannel, targetChannel, `👋 ${knocker} è entrato.`, false);
+            } else {
+                // RIFIUTATO
+                const currentRefused = dbCache.playerVisits[knocker.id] || 0;
+                dbCache.playerVisits[knocker.id] = currentRefused + 1;
+                await saveDB();
+
+                await msg.reply(`❌ Qualcuno ha rifiutato.`);
                 
-                const collector = msg.createReactionCollector({ filter, time: 300000, max: 1 });
+                const presentPlayers = targetChannel.members
+                    .filter(m => !m.user.bot && m.id !== knocker.id && !m.permissions.has(PermissionsBitField.Flags.Administrator))
+                    .map(m => m.displayName)
+                    .join(', ');
 
-                collector.on('collect', async (reaction, user) => {
-                    if (reaction.emoji.name === '✅') {
-                        await msg.reply(`✅ Qualcuno ha aperto.`);
-                        await enterHouse(knocker, fromChannel, targetChannel, `👋 ${knocker} è entrato.`, false);
-                    } else {
-                        const currentRefused = dbCache.playerVisits[knocker.id] || 0;
-                        dbCache.playerVisits[knocker.id] = currentRefused + 1;
-                        await saveDB();
+                if (fromChannel) {
+                    await fromChannel.send(`⛔ ${knocker}, entrata rifiutata. I giocatori presenti in quella casa sono: ${presentPlayers || 'Nessuno'}`);
+                }
+            }
+        });
 
-                        await msg.reply(`❌ Qualcuno ha rifiutato.`);
+        collector.on('end', async (collected, reason) => {
+            clearInterval(monitorInterval);
 
-                        const presentPlayers = targetChannel.members
-                            .filter(m => !m.user.bot && m.id !== knocker.id && !m.permissions.has(PermissionsBitField.Flags.Administrator))
-                            .map(m => m.displayName)
-                            .join(', ');
-
-                        if (fromChannel) {
-                            await fromChannel.send(`⛔ ${knocker}, entrata rifiutata. I giocatori presenti in quella casa sono: ${presentPlayers || 'Nessuno'}`);
-                        }
-                    }
-                });
-
-                collector.on('end', async collected => {
-                    if (collected.size === 0) {
-                        await msg.reply('⏳ Nessuno ha risposto. La porta viene forzata.');
-                        await enterHouse(knocker, fromChannel, targetChannel, `👋 ${knocker} è entrato.`, false);
-                    }
-                });
+            // CASO 1: Tutti sono usciti
+            if (reason === 'everyone_left') {
+                await msg.reply(` ${knocker} è entrato.`);
+                await enterHouse(knocker, fromChannel, targetChannel, `👋 ${knocker} è entrato (tutti usciti).`, false);
+            }
+            // CASO 2: Timeout classico
+            else if (reason === 'time' && collected.size === 0) {
+                await msg.reply('⏳ Nessuno ha risposto. La porta viene forzata.');
+                await enterHouse(knocker, fromChannel, targetChannel, `👋 ${knocker} è entrato.`, false);
+            }
+        });
             }
         }
         // ==========================================
@@ -1502,6 +1523,7 @@ async function executeHousingAction(queueItem) {
     // Restituisci la funzione esecutore alla coda
     return executeHousingAction;
 };
+
 
 
 
