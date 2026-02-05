@@ -1006,14 +1006,15 @@ async function executeHousingAction(queueItem) {
             // --- RIMUOVI BUSSA ---
             if (subCommand === 'bussa') {
                 // Controlla se è in pendingKnocks (sta selezionando)
-                if (pendingKnocks.has(message.author.id)) {
-                    pendingKnocks.delete(message.author.id);
+                if (dbCache.pendingKnocks && dbCache.pendingKnocks.includes(message.author.id)) {
+                    dbCache.pendingKnocks = dbCache.pendingKnocks.filter(id => id !== message.author.id);
+                    await saveDB();
                     return message.channel.send("✅ Selezione bussa annullata.")
                         .then(m => setTimeout(() => m.delete(), 5000));
                 }
 
                 // Controlla se è in coda
-                if (QueueSystem) {
+                if (QueueModel) {
                     const removed = await QueueModel.findOneAndDelete({
                         type: 'KNOCK',
                         userId: message.author.id,
@@ -1022,7 +1023,7 @@ async function executeHousingAction(queueItem) {
 
                     if (removed) {
                         // Riprocessa la coda per continuare con il prossimo
-                        QueueSystem.process();
+                        if (QueueSystem) QueueSystem.process();
                         return message.channel.send("✅ Bussa rimosso dalla coda.")
                             .then(m => setTimeout(() => m.delete(), 5000));
                     }
@@ -1034,7 +1035,7 @@ async function executeHousingAction(queueItem) {
 
             // --- RIMUOVI TORNA ---
             if (subCommand === 'torna') {
-                if (QueueSystem) {
+                if (QueueModel) {
                     const removed = await QueueModel.findOneAndDelete({
                         type: 'RETURN',
                         userId: message.author.id,
@@ -1042,7 +1043,7 @@ async function executeHousingAction(queueItem) {
                     });
 
                     if (removed) {
-                        QueueSystem.process();
+                        if (QueueSystem) QueueSystem.process();
                         return message.channel.send("✅ Torna rimosso dalla coda.")
                             .then(m => setTimeout(() => m.delete(), 5000));
                     }
@@ -1054,7 +1055,7 @@ async function executeHousingAction(queueItem) {
 
             // --- RIMUOVI ABILITÀ ---
             if (subCommand === 'abilità' || subCommand === 'abilita') {
-                if (QueueSystem) {
+                if (QueueModel) {
                     const removed = await QueueModel.findOneAndDelete({
                         type: 'ABILITY',
                         userId: message.author.id,
@@ -1063,15 +1064,15 @@ async function executeHousingAction(queueItem) {
 
                     if (removed) {
                         // Aggiorna anche il DB delle abilità
-                        if (AbilityModel) {
+                        if (AbilityModel && removed.details && removed.details.mongoId) {
                             await AbilityModel.findByIdAndUpdate(
                                 removed.details.mongoId,
                                 { status: 'CANCELLED' }
                             );
                         }
 
-                        // IMPORTANTE: Riprendi la coda perché potrebbe essere bloccata da questa abilità
-                        QueueSystem.process();
+                        // IMPORTANTE: Riprendi la coda
+                        if (QueueSystem) QueueSystem.process();
                         
                         return message.channel.send("✅ Abilità rimossa dalla coda. Il sistema riprenderà a processare le altre azioni.")
                             .then(m => setTimeout(() => m.delete(), 10000));
@@ -1085,18 +1086,7 @@ async function executeHousingAction(queueItem) {
             // Se il subCommand non è riconosciuto
             return message.channel.send("❌ Comando non riconosciuto. Usa: `!rimuovi bussa`, `!rimuovi torna`, `!rimuovi abilità`")
                 .then(m => setTimeout(() => m.delete(), 10000));
-                    }
-
-            // --- MODIFICA CODA ---
-            if (QueueSystem) {
-                await QueueSystem.add('RETURN', message.author.id, {
-                    fromChannelId: message.channel.id
-                });
-                await message.channel.send("⏳ **Azione Torna** messa in coda. Attendi...");
-            } else {
-                // Fallback se coda non disponibile
-                await movePlayer(message.member, message.channel, homeChannel, `🏠 ${message.member} è ritornato.`, false);
-            }
+          }
       }
 
         if (command === 'bussa') {
@@ -1302,6 +1292,7 @@ if (interaction.customId === 'knock_house_select') {
     // Restituisci la funzione esecutore alla coda
     return executeHousingAction;
 };
+
 
 
 
