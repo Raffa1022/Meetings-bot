@@ -1218,13 +1218,23 @@ async function executeHousingAction(queueItem) {
                 return interaction.reply({ content: "❌ Nessuna casa in questa pagina.", ephemeral: true });
             }
 
-            const houseOptions = casePagina.map(channel => 
-                new StringSelectMenuOptionBuilder()
-                    .setLabel(formatName(channel.name)) // Usa la tua funzione helper formatName
-                    .setValue(`${channel.id}_${mode}`)  // Passiamo ID e MODALITÀ al prossimo step
-                    .setEmoji('🏠')
-            );
+           // CREAZIONE OPZIONI (CON FILTRO: Nasconde la casa dove sei già)
+            const houseOptions = casePagina
+                .filter(channel => !channel.members.has(interaction.user.id)) 
+                .map(channel => 
+                    new StringSelectMenuOptionBuilder()
+                        .setLabel(formatName(channel.name)) 
+                        .setValue(`${channel.id}_${mode}`)  
+                        .setEmoji('🏠')
+                );
 
+            // Se dopo aver filtrato non rimane nessuna casa (es. eri nell'unica casa della pagina)
+            if (houseOptions.length === 0) {
+                return interaction.reply({ 
+                    content: "❌ In questa pagina non ci sono case disponibili (o sei già dentro l'unica presente).", 
+                    ephemeral: true 
+                });
+            }
             const selectHouse = new StringSelectMenuBuilder()
                 .setCustomId('knock_house_select') // Questo triggera il prossimo blocco già esistente
                 .setPlaceholder('Scegli la casa specifica...')
@@ -1492,6 +1502,7 @@ async function executeHousingAction(queueItem) {
     // Restituisci la funzione esecutore alla coda
     return executeHousingAction;
 };
+
 
 
 
