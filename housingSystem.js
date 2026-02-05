@@ -35,7 +35,7 @@ const DEFAULT_MAX_VISITS = 0;
 
 let dbCache = {}; // Cache locale sincronizzata con Mongo
 let HousingModel = null;
-let QueueSystem = null; // Riferimento al sistema code
+let QueueSystem = null;
 const pendingKnocks = new Set(); 
 
 // ==========================================
@@ -160,51 +160,68 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
     if (!isSilent) await newChannel.send(entryMessage);
 }
 
-// --- ESECUTORE PER LA CODA (VERSIONE IDENTICA ALL'ORIGINALE) ---
+// ==========================================
+// EXPORT INIT
+// ==========================================
+// ==========================================
+// 🎯 ESECUTORE AZIONI HOUSING PER CODA
+// ==========================================
+async function executeHousingAction(queueItem) {
+    // Trova il guild (server Discord)
     const guild = Object.values(dbCache.playerHomes).length > 0 
         ? (await client.channels.fetch(Object.values(dbCache.playerHomes)[0]).catch(()=>null))?.guild
         : client.guilds.cache.first();
 
-    if (!guild) return console.error("Guild non trovata.");
+    if (!guild) {
+        console.error("❌ [Housing] Guild non trovata.");
+        return;
+    }
     
     const member = await guild.members.fetch(queueItem.userId).catch(() => null);
-    if (!member) return;
+    if (!member) {
+        console.warn(`⚠️ [Housing] Membro ${queueItem.userId} non trovato.`);
+        return;
+    }
 
-    // 1. GESTIONE "TORNA"
+    // 1️⃣ GESTIONE "TORNA"
     if (queueItem.type === 'RETURN') {
         const homeId = dbCache.playerHomes[member.id];
         if (homeId && !dbCache.destroyedHouses.includes(homeId)) {
             const homeChannel = guild.channels.cache.get(homeId);
             const currentChannel = guild.channels.cache.get(queueItem.details.fromChannelId);
             if (homeChannel) {
-                // Controllo originale: Narrazione pulita come prima
                 await movePlayer(member, currentChannel, homeChannel, `🏠 ${member} è ritornato.`, false);
+                console.log(`✅ [Housing] ${member.user.tag} è tornato a casa.`);
             }
         }
         return; 
     }
 
-    // 2. GESTIONE "BUSSA"
+    // 2️⃣ GESTIONE "BUSSA"
     if (queueItem.type === 'KNOCK') {
         const { targetChannelId, mode, fromChannelId } = queueItem.details;
         const targetChannel = guild.channels.cache.get(targetChannelId);
         const fromChannel = guild.channels.cache.get(fromChannelId);
         
-        if (!targetChannel || !fromChannel) return;
+        if (!targetChannel || !fromChannel) {
+            console.error("❌ [Housing] Canali non trovati per KNOCK.");
+            return;
+        }
 
         // A. Ingressi immediati (Forzata/Nascosta)
         if (mode === 'mode_forced') {
-             // Ripristino messaggio originale sfondamento
-             const roleMentions = RUOLI_PERMESSI.map(id => `<@&${id}>`).join(', ');
-             await enterHouse(member, fromChannel, targetChannel, `${roleMentions}, ${member} ha sfondato la porta ed è entrato`, false);
-             return;
+            const roleMentions = RUOLI_PERMESSI.map(id => `<@&${id}>`).join(', ');
+            await enterHouse(member, fromChannel, targetChannel, `${roleMentions}, ${member} ha sfondato la porta ed è entrato`, false);
+            console.log(`✅ [Housing] ${member.user.tag} ha sfondato la porta.`);
+            return;
         } 
         if (mode === 'mode_hidden') {
-             await enterHouse(member, fromChannel, targetChannel, "", true);
-             return;
+            await enterHouse(member, fromChannel, targetChannel, "", true);
+            console.log(`✅ [Housing] ${member.user.tag} è entrato nascosto.`);
+            return;
         }
 
-        // B. Visita Normale -> TOC TOC (Non bloccante)
+        // B. Visita Normale -> TOC TOC
         const membersWithAccess = targetChannel.members.filter(m => 
             !m.user.bot && m.id !== member.id && m.roles.cache.hasAny(...RUOLI_PERMESSI)
         );
@@ -212,62 +229,63 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
         // Se vuota, entra subito
         if (membersWithAccess.size === 0) {
             await enterHouse(member, fromChannel, targetChannel, `👋 ${member} è entrato.`, false);
+            console.log(`✅ [Housing] ${member.user.tag} è entrato (casa vuota).`);
             return;
         }
 
         // Se c'è gente, invia il messaggio TOC TOC
         const roleMentions = RUOLI_PERMESSI.map(id => `<@&${id}>`).join(' ');
         const msg = await targetChannel.send(`🔔 **TOC TOC!** ${roleMentions}\nQualcuno sta bussando\n✅ = Apri | ❌ = Rifiuta`);
-        await msg.react('✅'); await msg.react('❌');
+        await msg.react('✅'); 
+        await msg.react('❌');
+        console.log(`🔔 [Housing] ${member.user.tag} sta bussando...`);
 
-        const filter = (reaction, user) => ['✅', '❌'].includes(reaction.emoji.name) && membersWithAccess.has(user.id);
-        const collector = msg.createReactionCollector({ filter, time: 300000, max: 1 }); 
+        const filter = (reaction, user) => 
+            ['✅', '❌'].includes(reaction.emoji.name) && 
+            membersWithAccess.has(user.id);
+        
+        const collector = msg.createReactionCollector({ filter, time: 300000, max: 1 });
 
         collector.on('collect', async (reaction, user) => {
             if (reaction.emoji.name === '✅') {
                 // ACCETTATO
                 await msg.reply(`✅ Qualcuno ha aperto.`);
                 await enterHouse(member, fromChannel, targetChannel, `👋 ${member} è entrato.`, false);
+                console.log(`✅ [Housing] ${member.user.tag} è stato fatto entrare.`);
             } else {
-                // RIFIUTATO - Logica identica all'originale
+                // RIFIUTATO
                 const currentRefused = dbCache.playerVisits[member.id] || 0;
                 dbCache.playerVisits[member.id] = currentRefused + 1;
                 await saveDB();
 
                 await msg.reply(`❌ Qualcuno ha rifiutato.`);
 
-                // Calcolo lista presenti per il messaggio di rifiuto
+                // Lista presenti
                 const presentPlayers = targetChannel.members
                     .filter(m => !m.user.bot && m.id !== member.id && !m.permissions.has(PermissionsBitField.Flags.Administrator))
                     .map(m => m.displayName)
                     .join(', ');
 
-                // Invio messaggio rifiuto nel canale di provenienza (Chat privata)
+                // Messaggio di rifiuto
                 if (fromChannel) {
                     await fromChannel.send(`⛔ ${member}, entrata rifiutata. I giocatori presenti in quella casa sono: ${presentPlayers || 'Nessuno'}`);
                 }
+                console.log(`❌ [Housing] ${member.user.tag} è stato rifiutato.`);
             }
         });
 
-        collector.on('end', async (collected, reason) => {
-            if (reason === 'time') {
+        collector.on('end', async collected => {
+            if (collected.size === 0) {
                 await msg.reply('⏳ Nessuno ha risposto. La porta viene forzata.');
                 await enterHouse(member, fromChannel, targetChannel, `👋 ${member} è entrato.`, false);
+                console.log(`✅ [Housing] ${member.user.tag} è entrato (timeout).`);
             }
         });
-
-        return;
     }
 }
-
-// ==========================================
-// EXPORT INIT
-// ==========================================
-
 module.exports = async (client, Model, QueueSys) => {
-    // 1. Inizializzazione (DEVE STARE FUORI DALLA FUNZIONE)
     HousingModel = Model;
-    QueueSystem = QueueSys;
+    QueueSystem = QueueSys; // Salviamo il riferimento al sistema coda
     await loadDB();
 
     const today = new Date().toDateString();
@@ -277,44 +295,6 @@ module.exports = async (client, Model, QueueSys) => {
         await saveDB();
         console.log("🔄 [Housing] Contatori ripristinati per nuovo giorno.");
     }
-
-    // 2. FUNZIONE DI ESECUZIONE (Questa è quella che clicchi col tasto ✅)
-    async function executeHousingAction(queueItem) {
-        const guild = client.guilds.cache.first(); 
-        const member = await guild.members.fetch(queueItem.userId).catch(() => null);
-        if (!member) return;
-
-        // Logica RITORNO
-        if (queueItem.type === 'RETURN') {
-            const homeId = dbCache.playerHomes[member.id];
-            const homeChannel = guild.channels.cache.get(homeId);
-            const fromChannel = guild.channels.cache.get(queueItem.details.fromChannelId);
-            if (homeChannel) {
-                await movePlayer(member, fromChannel, homeChannel, `🏠 ${member} è ritornato.`, false);
-            }
-        }
-
-        // Logica BUSSA
-        if (queueItem.type === 'KNOCK') {
-            const { targetChannelId, mode, fromChannelId } = queueItem.details;
-            const targetChannel = guild.channels.cache.get(targetChannelId);
-            const fromChannel = guild.channels.cache.get(fromChannelId);
-            
-            if (mode === 'mode_forced') {
-                const roleMentions = RUOLI_PERMESSI.map(id => `<@&${id}>`).join(', ');
-                await enterHouse(member, fromChannel, targetChannel, `${roleMentions}, ${member} ha sfondato la porta ed è entrato`, false);
-            } else if (mode === 'mode_hidden') {
-                await enterHouse(member, fromChannel, targetChannel, "", true);
-            } else {
-                await enterHouse(member, fromChannel, targetChannel, `👋 ${member} è entrato.`, false);
-            }
-        }
-    } // <-- QUESTA CHIUDE LA FUNZIONE
-
-    // 3. RESTO DEL CODICE (Eventi client.on)
-    client.on('messageCreate', async message => {
-        // ... qui continua il tuo codice originale
-
 
     client.on('messageCreate', async message => {
         if (message.author.bot || !message.content.startsWith(PREFIX)) return;
@@ -741,27 +721,44 @@ module.exports = async (client, Model, QueueSys) => {
             }
             await saveDB();
         }
-
+       // ---------------------------------------------------------
+        // 🔄 COMANDO CAMBIO IDENTITÀ
+        // ---------------------------------------------------------
         if (command === 'cambio') {
+            // 1. Controllo Canale (Solo Categoria Chat Private)
             if (message.channel.parentId !== ID_CATEGORIA_CHAT_PRIVATE) return;
-            const R1 = ID_RUOLO_NOTIFICA_1; 
-            const R2 = ID_RUOLO_NOTIFICA_2; 
+
+            // 2. Definizione Ruoli da scambiare
+            const R1 = ID_RUOLO_NOTIFICA_1; // Ruolo 1
+            const R2 = ID_RUOLO_NOTIFICA_2; // Ruolo 2
+
+            // 3. Controllo Permessi Esecutore
             const isAdmin = message.member.permissions.has(PermissionsBitField.Flags.Administrator);
             const hasRole1 = message.member.roles.cache.has(R1);
             const hasRole2 = message.member.roles.cache.has(R2);
 
             if (!isAdmin && !hasRole1 && !hasRole2) return message.reply("⛔ Non hai i permessi per usare questo comando.");
 
+            // 4. Identificazione dei due giocatori nel canale
+            // Cerchiamo nel canale membri che non siano bot e abbiano uno dei due ruoli
             const membersInChannel = message.channel.members.filter(m => !m.user.bot);
             const player1 = membersInChannel.find(m => m.roles.cache.has(R1));
             const player2 = membersInChannel.find(m => m.roles.cache.has(R2));
 
-            if (!player1 || !player2) return message.reply("❌ Errore: Non trovo entrambi i giocatori con i ruoli necessari in questa chat per effettuare lo scambio.");
-            if (!isAdmin && message.member.id !== player1.id && message.member.id !== player2.id) return message.reply("⛔ Non sei coinvolto in questo scambio.");
+            if (!player1 || !player2) {
+                return message.reply("❌ Errore: Non trovo entrambi i giocatori con i ruoli necessari in questa chat per effettuare lo scambio.");
+            }
+
+            // Se chi digita non è admin, deve essere uno dei due coinvolti
+            if (!isAdmin && message.member.id !== player1.id && message.member.id !== player2.id) {
+                return message.reply("⛔ Non sei coinvolto in questo scambio.");
+            }
 
             message.channel.send("🔄 **Inizio procedura di scambio identità...**");
 
             try {
+                // A. SCAMBIO DATI HOUSING (Database Locale dbCache)
+                // Scambiamo tutti i contatori pertinenti tra ID P1 e ID P2
                 const swapKeys = [
                     'playerVisits', 'baseVisits', 'forcedLimits', 'hiddenLimits', 
                     'dayLimits', 'forcedVisits', 'hiddenVisits', 'extraVisits', 'extraVisitsDay'
@@ -771,12 +768,18 @@ module.exports = async (client, Model, QueueSys) => {
                     if (!dbCache[key]) dbCache[key] = {};
                     const val1 = dbCache[key][player1.id];
                     const val2 = dbCache[key][player2.id];
-                    if (val1 === undefined) delete dbCache[key][player2.id]; else dbCache[key][player2.id] = val1;
-                    if (val2 === undefined) delete dbCache[key][player1.id]; else dbCache[key][player1.id] = val2;
+                    
+                    // Scambio
+                    if (val1 === undefined) delete dbCache[key][player2.id];
+                    else dbCache[key][player2.id] = val1;
+
+                    if (val2 === undefined) delete dbCache[key][player1.id];
+                    else dbCache[key][player1.id] = val2;
                 });
 
-                await saveDB();
+                await saveDB(); // Salva Housing
 
+                // B. SCAMBIO DATI MEETING (Database Mongoose Diretto)
                 try {
                     const MeetingData = mongoose.model('MeetingData');
                     const meetingDB = await MeetingData.findOne({ id: 'main_meeting' });
@@ -787,10 +790,17 @@ module.exports = async (client, Model, QueueSys) => {
 
                         meetingKeys.forEach(key => {
                             if (!meetingDB[key]) meetingDB[key] = {};
+                            // Mongoose Map/Object manipulation
                             const val1 = meetingDB[key][player1.id];
                             const val2 = meetingDB[key][player2.id];
-                            if (val1 === undefined) delete meetingDB[key][player2.id]; else meetingDB[key][player2.id] = val1;
-                            if (val2 === undefined) delete meetingDB[key][player1.id]; else meetingDB[key][player1.id] = val2;
+
+                            // Scambio
+                            if (val1 === undefined) delete meetingDB[key][player2.id];
+                            else meetingDB[key][player2.id] = val1;
+
+                            if (val2 === undefined) delete meetingDB[key][player1.id];
+                            else meetingDB[key][player1.id] = val2;
+                            
                             modified = true;
                         });
 
@@ -805,6 +815,8 @@ module.exports = async (client, Model, QueueSys) => {
                     message.channel.send("⚠️ Errore nello scambio dati Meeting (i ruoli verranno comunque scambiati).");
                 }
 
+                // C. SCAMBIO RUOLI DISCORD
+                // Rimuovi e aggiungi in parallelo per velocità
                 await Promise.all([
                     player1.roles.remove(R1),
                     player1.roles.add(R2),
@@ -819,7 +831,6 @@ module.exports = async (client, Model, QueueSys) => {
                 message.reply("❌ Si è verificato un errore critico durante lo scambio.");
             }
         }
-
         // ---------------------------------------------------------
         // 👤 COMANDI GIOCATORE
         // ---------------------------------------------------------
@@ -832,7 +843,10 @@ module.exports = async (client, Model, QueueSys) => {
             const newHomeChannel = message.channel;
             const ownerId = Object.keys(dbCache.playerHomes).find(key => dbCache.playerHomes[key] === message.channel.id);
             
-            if (ownerId === requester.id) return message.reply("❌ Sei già a casa tua, non puoi trasferirti qui!");
+            // MODIFICA: Controllo se il proprietario è già in casa sua
+            if (ownerId === requester.id) {
+                return message.reply("❌ Sei già a casa tua, non puoi trasferirti qui!");
+            }
 
             if (!ownerId) {
                 await cleanOldHome(requester.id, message.guild);
@@ -889,18 +903,27 @@ module.exports = async (client, Model, QueueSys) => {
             });
         }
 
-        if (command === 'chi') {
+                if (command === 'chi') {
             message.delete().catch(()=>{});
+            
             const isAdmin = message.member.permissions.has(PermissionsBitField.Flags.Administrator);
             let targetChannel = null;
 
+            // Logica di selezione canale
             if (isAdmin && message.mentions.channels.size > 0) {
+                // Se è admin e ha menzionato un canale, usa quello
                 targetChannel = message.mentions.channels.first();
             } else {
-                if (message.channel.parentId === ID_CATEGORIA_CASE) targetChannel = message.channel;
+                // Altrimenti usa il canale corrente se è una casa
+                if (message.channel.parentId === ID_CATEGORIA_CASE) {
+                    targetChannel = message.channel;
+                }
             }
 
-            if (!targetChannel || targetChannel.parentId !== ID_CATEGORIA_CASE) return message.channel.send("⛔ Devi essere in una casa o (se admin) specificare una casa valida.").then(m => setTimeout(() => m.delete(), 5000));
+            // Controllo validità
+            if (!targetChannel || targetChannel.parentId !== ID_CATEGORIA_CASE) {
+                return message.channel.send("⛔ Devi essere in una casa o (se admin) specificare una casa valida.").then(m => setTimeout(() => m.delete(), 5000));
+            }
 
             const ownerIds = Object.keys(dbCache.playerHomes).filter(key => dbCache.playerHomes[key] === targetChannel.id);
             const ownerMention = ownerIds.length > 0 ? ownerIds.map(id => `<@${id}>`).join(', ') : "Nessuno";
@@ -910,6 +933,7 @@ module.exports = async (client, Model, QueueSys) => {
             const embed = new EmbedBuilder().setTitle(`👥 Persone in casa`).setDescription(description).addFields({ name: '🔑 Proprietario', value: ownerMention });
             message.channel.send({ embeds: [embed] }).then(msg => setTimeout(() => msg.delete().catch(() => {}), 300000));
         }
+
 
         if (command === 'rimaste') {
             message.delete().catch(()=>{});
@@ -935,29 +959,36 @@ module.exports = async (client, Model, QueueSys) => {
             }
         }
 
-        if (command === 'torna') {
+      if (command === 'torna') {
             message.delete().catch(()=>{}); 
             if (message.channel.parentId !== ID_CATEGORIA_CHAT_PRIVATE) return;
 
             const homeId = dbCache.playerHomes[message.author.id];
-            if (!homeId) return message.channel.send("❌ **Non hai una casa!**").then(m => setTimeout(() => m.delete(), 3000));
-            if (dbCache.destroyedHouses.includes(homeId)) return message.channel.send("🏚️ **Casa distrutta!**").then(m => setTimeout(() => m.delete(), 3000));
+            if (!homeId) return message.channel.send("❌ **Non hai una casa!**"); 
+            if (dbCache.destroyedHouses.includes(homeId)) return message.channel.send("🏚️ **Casa distrutta!**");
 
-            // RIPRISTINATO CONTROLLO ORIGINALE: SE SEI GIÀ A CASA
-            const isVisiting = message.guild.channels.cache.some(c => c.parentId === ID_CATEGORIA_CASE && c.type === ChannelType.GuildText && c.id !== homeId && c.permissionsFor(message.member).has(PermissionsBitField.Flags.ViewChannel));
-            if (!isVisiting) return message.channel.send("🏠 Sei già a casa.").then(m => setTimeout(() => m.delete(), 3000));
+            const homeChannel = message.guild.channels.cache.get(homeId);
+            if (!homeChannel) return message.channel.send("❌ Errore casa.");
+
+            const isVisiting = message.guild.channels.cache.some(c => 
+                c.parentId === ID_CATEGORIA_CASE && 
+                c.type === ChannelType.GuildText && 
+                c.id !== homeId && 
+                c.permissionsFor(message.member).has(PermissionsBitField.Flags.ViewChannel)
+            );
+            if (!isVisiting) return message.channel.send("🏠 Sei già a casa.");
 
             // --- MODIFICA CODA ---
             if (QueueSystem) {
-                await QueueSystem.add('RETURN', message.author.id, { 
-                    fromChannelId: message.channel.id 
+                await QueueSystem.add('RETURN', message.author.id, {
+                    fromChannelId: message.channel.id
                 });
-                message.channel.send("⏳ Richiesta **Torna** messa in coda.").then(m => setTimeout(() => m.delete(), 3000));
+                await message.channel.send("⏳ **Azione Torna** messa in coda. Attendi...");
             } else {
-                const homeChannel = message.guild.channels.cache.get(homeId);
-                if (homeChannel) await movePlayer(message.member, message.channel, homeChannel, `🏠 ${message.member} è ritornato.`, false);
+                // Fallback se coda non disponibile
+                await movePlayer(message.member, message.channel, homeChannel, `🏠 ${message.member} è ritornato.`, false);
             }
-        }
+      }
 
         if (command === 'bussa') {
             message.delete().catch(()=>{}); 
@@ -982,7 +1013,6 @@ module.exports = async (client, Model, QueueSys) => {
                 pendingKnocks.delete(message.author.id); 
             }, 300000);
         }
-    });
 
     client.on('interactionCreate', async interaction => {
         if (!interaction.isStringSelectMenu() && !interaction.isButton()) return;
@@ -1040,8 +1070,7 @@ module.exports = async (client, Model, QueueSys) => {
                 ));
             await interaction.update({ content: `📂 **Scegli la casa:**`, components: [new ActionRowBuilder().addComponents(selectHouse)] });
         }
-
-        if (interaction.customId === 'knock_house_select') {
+if (interaction.customId === 'knock_house_select') {
             const parts = interaction.values[0].split('_'); 
             const targetChannelId = parts[0];
             const mode = parts[1] + '_' + parts[2]; 
@@ -1084,17 +1113,20 @@ module.exports = async (client, Model, QueueSys) => {
                 });
                 await interaction.reply({ content: "⏳ **Azione Bussa** messa in coda. Attendi...", ephemeral: true });
             } else {
+                // Fallback se coda non disponibile (esecuzione immediata)
                 const targetChannel = interaction.guild.channels.cache.get(targetChannelId);
-                // Ripristino narrazione originale sfondamento per fallback
                 const roleMentions = RUOLI_PERMESSI.map(id => `<@&${id}>`).join(', ');
 
-                if (mode === 'mode_forced') await enterHouse(knocker, interaction.channel, targetChannel, `${roleMentions}, ${knocker} ha sfondato la porta ed è entrato`, false);
-                else if (mode === 'mode_hidden') await enterHouse(knocker, interaction.channel, targetChannel, "", true);
-                else await enterHouse(knocker, interaction.channel, targetChannel, `👋 ${knocker} è entrato.`, false);
+                if (mode === 'mode_forced') {
+                    await enterHouse(knocker, interaction.channel, targetChannel, `${roleMentions}, ${knocker} ha sfondato la porta ed è entrato`, false);
+                } else if (mode === 'mode_hidden') {
+                    await enterHouse(knocker, interaction.channel, targetChannel, "", true);
+                } else {
+                    await enterHouse(knocker, interaction.channel, targetChannel, `👋 ${knocker} è entrato.`, false);
+                }
             }
-        }
-    });
-    return executeHousingAction;
-};
+}
 
-
+        // Restituisci la funzione esecutore alla coda
+        return executeHousingAction;
+        };
