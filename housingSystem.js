@@ -1013,6 +1013,7 @@ module.exports = async (client, Model, QueueSys) => {
                 pendingKnocks.delete(message.author.id); 
             }, 300000);
         }
+        }
 
     client.on('interactionCreate', async interaction => {
         if (!interaction.isStringSelectMenu() && !interaction.isButton()) return;
@@ -1125,8 +1126,10 @@ if (interaction.customId === 'knock_house_select') {
                     await enterHouse(knocker, interaction.channel, targetChannel, `👋 ${knocker} è entrato.`, false);
                 }
             }
-}
+    }
+    }); // Chiude il client.on('interactionCreate'...)
 
-        // Restituisci la funzione esecutore alla coda
-        return executeHousingAction;
-        };
+    // Restituisci la funzione esecutore alla coda
+    return executeHousingAction;
+};
+
