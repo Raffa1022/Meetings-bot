@@ -2,23 +2,26 @@ const { Client, GatewayIntentBits, Partials, Options } = require('discord.js');
 const mongoose = require('mongoose');
 const express = require('express');
 
-// IMPORT DATI
-// Assicurati che in database.js ci sia QueueModel!
+// --- IMPORTA I MODULI ---
+// Importiamo tutti i modelli, incluso QueueModel per la coda
 const { HousingModel, MeetingModel, AbilityModel, QueueModel } = require('./database'); 
 
-// IMPORT SISTEMI
 const initHousingSystem = require('./housingSystem');
 const initMeetingSystem = require('./meetingSystem');
 const initAbilitySystem = require('./abilitySystem');
-const queueSystem = require('./queueSystem'); // <--- NUOVO IMPORT
+const queueSystem = require('./queueSystem'); // Il cervello della coda
 
-const TOKEN = '...'; 
-const MONGO_URI = '...';
+// CONFIGURAZIONE
+const TOKEN = 'MTQ2MzU5NDkwMTAzOTIyMjg3Nw.G2ZqJU.HRxjqWMs2fIwblzW2B2SUXcYhUZ8BkeWioLmss'; 
+// Usiamo .trim() per evitare l'errore "Invalid scheme" causato da spazi invisibili
+const MONGO_URI = (process.env.MONGO_URI || 'mongodb+srv://raffaelewwo:Canebilli12@cluster0.7snmgc1.mongodb.net/?appName=Cluster0').trim();
 
+// --- SERVER WEB ---
 const app = express();
-app.get('/', (req, res) => res.send('Bot Online'));
+app.get('/', (req, res) => res.send('Bot System Online'));
 app.listen(8000);
 
+// --- CLIENT DISCORD ---
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -30,24 +33,30 @@ const client = new Client({
     partials: [Partials.Message, Partials.Channel, Partials.Reaction, Partials.User, Partials.GuildMember],
 });
 
+// --- AVVIO ---
 (async () => {
     try {
+        // 1. Connessione a MongoDB
         await mongoose.connect(MONGO_URI);
         console.log('✅ MongoDB Connesso!');
 
-        // 1. Avvia Housing e prendi l'esecutore per passarlo alla coda
-        // Passiamo queueSystem dentro housingSystem così housing può aggiungere cose alla coda
+        // 2. Avvia Housing e ottieni l'esecutore per la coda
+        // Passiamo queueSystem a housingSystem per permettergli di aggiungere azioni
         const housingExecutor = await initHousingSystem(client, HousingModel, queueSystem);
         
-        // 2. Avvia la Coda (dandogli l'esecutore housing per quando tocca a lui)
+        // 3. Avvia la Coda Cronologica
+        // Gli diamo il modello DB e la funzione per muovere i player
         await queueSystem.init(client, QueueModel, housingExecutor);
 
-        // 3. Altri sistemi
+        // 4. Avvia il sistema Meeting
         await initMeetingSystem(client, MeetingModel);
-        // Passiamo queueSystem anche ad abilitySystem
+        
+        // 5. Avvia il sistema Abilità (passando la coda)
         await initAbilitySystem(client, AbilityModel, queueSystem);
 
+        // 6. Login
         await client.login(TOKEN);
+        console.log(`🤖 Bot avviato con successo!`);
 
     } catch (error) {
         console.error("❌ Errore critico avvio:", error);
