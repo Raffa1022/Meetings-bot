@@ -1013,7 +1013,7 @@ module.exports = async (client, Model, QueueSys) => {
                 pendingKnocks.delete(message.author.id); 
             }, 300000);
         }
-        }
+    }  // <-- Aggiungi questa riga (chiude if (command === 'bussa'))
 
     client.on('interactionCreate', async interaction => {
         if (!interaction.isStringSelectMenu() && !interaction.isButton()) return;
@@ -1132,4 +1132,5 @@ if (interaction.customId === 'knock_house_select') {
     // Restituisci la funzione esecutore alla coda
     return executeHousingAction;
 };
+
 
