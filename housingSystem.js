@@ -1195,6 +1195,48 @@ async function executeHousingAction(queueItem) {
             const selectGroup = new StringSelectMenuBuilder().setCustomId('knock_page_select').addOptions(pageOptions);
             await interaction.update({ content: `🏘️ **Modalità scelta**. Seleziona zona:`, components: [new ActionRowBuilder().addComponents(selectGroup)] });
         }
+                // --- 🔴 PEZZO MANCANTE: GESTIONE SELEZIONE PAGINA ---
+        if (interaction.customId === 'knock_page_select') {
+            // I valori sono salvati come: "page_NUMERO_MODALITÀ" (es: page_0_mode_normal)
+            const parts = interaction.values[0].split('_');
+            const pageIndex = parseInt(parts[1]);
+            // Ricostruiamo la modalità (es: mode_normal, mode_forced, etc.)
+            const mode = parts.slice(2).join('_'); 
+            
+            // Recuperiamo di nuovo le case
+            const tutteLeCase = interaction.guild.channels.cache
+                .filter(c => c.parentId === ID_CATEGORIA_CASE && c.type === ChannelType.GuildText)
+                .sort((a, b) => a.rawPosition - b.rawPosition);
+
+            const PAGE_SIZE = 25;
+            // Calcoliamo quali case mostrare in base alla pagina scelta
+            const start = pageIndex * PAGE_SIZE;
+            const end = start + PAGE_SIZE;
+            const casePagina = [...tutteLeCase.values()].slice(start, end);
+
+            if (casePagina.length === 0) {
+                return interaction.reply({ content: "❌ Nessuna casa in questa pagina.", ephemeral: true });
+            }
+
+            const houseOptions = casePagina.map(channel => 
+                new StringSelectMenuOptionBuilder()
+                    .setLabel(formatName(channel.name)) // Usa la tua funzione helper formatName
+                    .setValue(`${channel.id}_${mode}`)  // Passiamo ID e MODALITÀ al prossimo step
+                    .setEmoji('🏠')
+            );
+
+            const selectHouse = new StringSelectMenuBuilder()
+                .setCustomId('knock_house_select') // Questo triggera il prossimo blocco già esistente
+                .setPlaceholder('Scegli la casa specifica...')
+                .addOptions(houseOptions);
+
+            await interaction.update({ 
+                content: `🏘️ **Pagina ${pageIndex + 1}: Scegli dove bussare:**`, 
+                components: [new ActionRowBuilder().addComponents(selectHouse)] 
+            });
+        }
+        // -----------------------------------------------------
+
 
        if (interaction.customId === 'knock_house_select') {
             const parts = interaction.values[0].split('_'); 
@@ -1450,6 +1492,7 @@ async function executeHousingAction(queueItem) {
     // Restituisci la funzione esecutore alla coda
     return executeHousingAction;
 };
+
 
 
 
