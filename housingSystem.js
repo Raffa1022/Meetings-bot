@@ -577,10 +577,26 @@ async function executeHousingAction(queueItem) {
             const keyMsg = pinnedMessages.find(m => m.content.includes("questa è la tua dimora privata"));
             if (keyMsg) await keyMsg.delete();
 
-            const membersInside = targetChannel.members.filter(m => !m.user.bot && m.id !== message.member.id);
+            // Trova solo i giocatori FISICAMENTE presenti (con permessi personalizzati)
+            const membersPhysicallyInside = [];
+            targetChannel.permissionOverwrites.cache.forEach((overwrite, id) => {
+                if (overwrite.type === 1) { // Type 1 = Member (non ruolo)
+                    const member = targetChannel.members.get(id);
+                    if (member && !member.user.bot && member.id !== message.member.id) {
+                        membersPhysicallyInside.push(member);
+                    }
+                }
+            });
+
             const ownerId = Object.keys(dbCache.playerHomes).find(key => dbCache.playerHomes[key] === targetChannel.id);
 
-            for (const [memberId, member] of membersInside) {
+            for (const member of membersPhysicallyInside) {
+                // Invia messaggio di uscita nella casa che viene distrutta
+                const prevMode = dbCache.playerModes ? dbCache.playerModes[member.id] : null;
+                if (prevMode !== 'HIDDEN') {
+                    await targetChannel.send(`🚪 ${member} è uscito.`);
+                }
+
                 const isOwner = (ownerId === member.id);
                 await targetChannel.permissionOverwrites.delete(member.id).catch(() => {});
 
@@ -1220,9 +1236,18 @@ async function executeHousingAction(queueItem) {
                     new StringSelectMenuOptionBuilder().setLabel('Visita Nascosta').setValue('mode_hidden').setEmoji('🕵️')
                 );
 
+            const closeButton = new ButtonBuilder()
+                .setCustomId('knock_close')
+                .setLabel('Chiudi')
+                .setStyle(ButtonStyle.Danger)
+                .setEmoji('❌');
+
             const menuMessage = await message.channel.send({ 
                 content: `🎭 **${message.author}, scegli la modalità di visita:**`, 
-                components: [new ActionRowBuilder().addComponents(selectMode)]
+                components: [
+                    new ActionRowBuilder().addComponents(selectMode),
+                    new ActionRowBuilder().addComponents(closeButton)
+                ]
             });
             setTimeout(async () => {
                 menuMessage.delete().catch(() => {});
@@ -1231,12 +1256,29 @@ async function executeHousingAction(queueItem) {
                     dbCache.pendingKnocks = dbCache.pendingKnocks.filter(id => id !== message.author.id);
                     await saveDB();
                 }
-            }, 300000);
+            }, 60000); // 1 minuto invece di 5 minuti
         }
 
     });
     client.on('interactionCreate', async interaction => {
         if (!interaction.isStringSelectMenu() && !interaction.isButton()) return;
+        
+        // Gestione bottone chiusura menu !bussa
+        if (interaction.customId === 'knock_close') {
+            if (!interaction.message.content.includes(interaction.user.id)) {
+                return interaction.reply({ content: "Non è tuo.", ephemeral: true });
+            }
+            
+            // Rimuovi da pendingKnocks
+            if (dbCache.pendingKnocks) {
+                dbCache.pendingKnocks = dbCache.pendingKnocks.filter(id => id !== interaction.user.id);
+                await saveDB();
+            }
+            
+            // Elimina il messaggio
+            await interaction.message.delete().catch(() => {});
+            return;
+        }
         
         if (interaction.customId === 'knock_mode_select') {
              if (!interaction.message.content.includes(interaction.user.id)) return interaction.reply({ content: "Non è tuo.", ephemeral: true });
