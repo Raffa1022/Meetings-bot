@@ -1282,7 +1282,8 @@ async function executeHousingAction(queueItem) {
         
         // Gestione bottone indietro: da selezione pagine a menu modalità
         if (interaction.customId === 'knock_back_to_mode') {
-            if (!interaction.message.content.includes(interaction.user.id)) {
+            // Verifica che l'utente sia il proprietario del menu (è in pendingKnocks)
+            if (!dbCache.pendingKnocks || !dbCache.pendingKnocks.includes(interaction.user.id)) {
                 return interaction.reply({ content: "Non è tuo.", ephemeral: true });
             }
             
@@ -1313,7 +1314,8 @@ async function executeHousingAction(queueItem) {
         
         // Gestione bottone indietro: da selezione case a selezione pagine
         if (interaction.customId.startsWith('knock_back_to_pages_')) {
-            if (!interaction.message.content.includes(interaction.user.id)) {
+            // Verifica che l'utente sia il proprietario del menu (è in pendingKnocks)
+            if (!dbCache.pendingKnocks || !dbCache.pendingKnocks.includes(interaction.user.id)) {
                 return interaction.reply({ content: "Non è tuo.", ephemeral: true });
             }
             
