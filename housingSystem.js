@@ -146,25 +146,32 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
     // Gestione uscita dal vecchio canale
     if (channelToLeave && channelToLeave.id !== newChannel.id) {
         if (channelToLeave.parentId === ID_CATEGORIA_CASE) {
-            const prevMode = dbCache.playerModes ? dbCache.playerModes[member.id] : null;
-            if (prevMode !== 'HIDDEN') {
-                await channelToLeave.send(`🚪 ${member} è uscito.`);
-            }
-
-            // MODIFICA 2: Gestione uscita Casa Pubblica
-            // Se la casa è pubblica (ha il ruolo pubblico), l'utente smette di scrivere ma continua a vedere
-            const isPublic = channelToLeave.permissionOverwrites.cache.has(RUOLI_PUBBLICI[0]);
+            // Verifica se l'utente è VERAMENTE dentro (ha permessi personalizzati) o è solo spettatore
+            const hasPersonalPermissions = channelToLeave.permissionOverwrites.cache.has(member.id);
             
-            if (isPublic) {
-                await channelToLeave.permissionOverwrites.edit(member.id, { 
-                    ViewChannel: true, 
-                    SendMessages: false, 
-                    ReadMessageHistory: true 
-                }).catch(() => {});
-            } else {
-                // Se è privata, rimuovi completamente l'accesso
-                await channelToLeave.permissionOverwrites.delete(member.id).catch(() => {});
+            // Invia messaggio di uscita SOLO se ha permessi personalizzati (è entrato fisicamente)
+            if (hasPersonalPermissions) {
+                const prevMode = dbCache.playerModes ? dbCache.playerModes[member.id] : null;
+                if (prevMode !== 'HIDDEN') {
+                    await channelToLeave.send(`🚪 ${member} è uscito.`);
+                }
+
+                // MODIFICA 2: Gestione uscita Casa Pubblica
+                // Se la casa è pubblica (ha il ruolo pubblico), l'utente smette di scrivere ma continua a vedere
+                const isPublic = channelToLeave.permissionOverwrites.cache.has(RUOLI_PUBBLICI[0]);
+                
+                if (isPublic) {
+                    await channelToLeave.permissionOverwrites.edit(member.id, { 
+                        ViewChannel: true, 
+                        SendMessages: false, 
+                        ReadMessageHistory: true 
+                    }).catch(() => {});
+                } else {
+                    // Se è privata, rimuovi completamente l'accesso
+                    await channelToLeave.permissionOverwrites.delete(member.id).catch(() => {});
+                }
             }
+            // Se non ha permessi personalizzati, è solo spettatore → non fare nulla
         }
     }
 
