@@ -32,6 +32,10 @@ const GIF_RICOSTRUZIONE = 'https://i.giphy.com/media/3ohjUS0WqYBpczfTlm/giphy.gi
 const RUOLI_PUBBLICI = ['1460741403331268661', '1460741404497019002', '1460741405722022151'];
 const RUOLI_PERMESSI = ['1460741403331268661', '1460741404497019002']; 
 const DEFAULT_MAX_VISITS = 0;
+// RUOLI SPECIFICI PER LOGICA SPONSOR
+const ID_RUOLO_ALIVE = '1460741403331268661'; // @IDruolo1 - giocatore alive
+const ID_RUOLO_SPONSOR = '1460741404497019002'; // @IDruolo2 - sponsor
+const ID_RUOLO_DEAD = '1460741405722022151'; // @IDruolo3 - giocatore dead
 
 let AbilityModel = null;
 let dbCache = {}; 
@@ -71,6 +75,46 @@ async function saveDB() {
         console.error("❌ [Housing] Errore salvataggio DB:", e);
     }
 }
+
+// ==========================================
+// 🤝 FUNZIONE SPONSOR: Trova sponsor da spostare
+// ==========================================
+/**
+ * Trova gli sponsor (@IDruolo2) nella stessa chat privata di un giocatore alive/dead (@IDruolo1 o @IDruolo3)
+ * @param {GuildMember} player - Il giocatore principale (deve avere @IDruolo1 o @IDruolo3)
+ * @param {Guild} guild - Il server Discord
+ * @returns {Array<GuildMember>} - Array di sponsor da spostare insieme al player
+ */
+function getSponsorsToMove(player, guild) {
+    // Verifica che il player sia un giocatore alive (@IDruolo1) o dead (@IDruolo3)
+    if (!player.roles.cache.has(ID_RUOLO_ALIVE) && !player.roles.cache.has(ID_RUOLO_DEAD)) {
+        return []; // Non è né alive né dead, nessuno sponsor da spostare
+    }
+    
+    // Trova il canale chat privata in cui si trova il player
+    const privateChannel = guild.channels.cache.find(c => 
+        c.parentId === ID_CATEGORIA_CHAT_PRIVATE && 
+        c.type === ChannelType.GuildText &&
+        c.permissionsFor(player).has(PermissionsBitField.Flags.ViewChannel)
+    );
+    
+    if (!privateChannel) {
+        return []; // Non è in una chat privata
+    }
+    
+    // Trova tutti i membri della chat privata che hanno il ruolo sponsor (@IDruolo2)
+    const sponsors = [];
+    privateChannel.members.forEach(member => {
+        if (member.id !== player.id && // Non il player stesso
+            !member.user.bot && // Non bot
+            member.roles.cache.has(ID_RUOLO_SPONSOR)) { // Ha ruolo sponsor
+            sponsors.push(member);
+        }
+    });
+    
+    return sponsors;
+}
+
 
 // ==========================================
 // FUNZIONI LOGICA
@@ -137,6 +181,9 @@ async function enterHouse(member, fromChannel, toChannel, entryMessage, isSilent
 async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent) {
     if (!member || !newChannel) return;
 
+    // 🤝 LOGICA SPONSOR: Se il member è un alive, trova i suoi sponsor da spostare
+    const sponsors = getSponsorsToMove(member, member.guild);
+
     let channelToLeave = oldChannel;
     
     // Se arriva da chat privata, cerca la casa attuale
@@ -170,18 +217,36 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
                 await channelToLeave.permissionOverwrites.delete(member.id).catch(() => {});
             }
             // Se non ha permessi personalizzati, è solo spettatore → non fare nulla
+            
+            // 🤝 Rimuovi anche i permessi degli sponsor dalla vecchia casa
+            for (const sponsor of sponsors) {
+                if (channelToLeave.permissionOverwrites.cache.has(sponsor.id)) {
+                    await channelToLeave.permissionOverwrites.delete(sponsor.id).catch(() => {});
+                }
+            }
         }
     }
 
-    // Ingresso nel nuovo canale
+    // Ingresso nel nuovo canale del PLAYER PRINCIPALE
    await newChannel.permissionOverwrites.create(member.id, { 
         ViewChannel: true, SendMessages: true, ReadMessageHistory: true 
     });
     
     if (!dbCache.playerModes) dbCache.playerModes = {};
     dbCache.playerModes[member.id] = isSilent ? 'HIDDEN' : 'NORMAL';
+    
+    // 🤝 Sposta anche gli SPONSOR nella nuova casa (SENZA narrazioni)
+    for (const sponsor of sponsors) {
+        await newChannel.permissionOverwrites.create(sponsor.id, { 
+            ViewChannel: true, SendMessages: true, ReadMessageHistory: true 
+        });
+        // Imposta anche la modalità degli sponsor
+        dbCache.playerModes[sponsor.id] = isSilent ? 'HIDDEN' : 'NORMAL';
+    }
+    
     await saveDB();
 
+    // Narrazione SOLO per il player principale
     if (!isSilent) await newChannel.send(entryMessage);
 }
 
