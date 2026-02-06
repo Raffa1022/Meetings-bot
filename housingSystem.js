@@ -1253,30 +1253,6 @@ async function executeHousingAction(queueItem) {
                 return message.channel.send(`⛔ Gli sponsor non possono usare il comando !torna.`);
             }
 
-            // 🛑 CONTROLLO: Se l'utente è un ex sponsor appena diventato main player,
-            // verifica che il suo ex main player non abbia comandi pendenti
-            if (message.member.roles.cache.has(ID_RUOLO_ALIVE)) {
-                // Cerca se c'è uno sponsor nella stessa chat privata
-                const sponsorInChat = message.channel.members.find(m => 
-                    !m.user.bot && 
-                    m.id !== message.author.id && 
-                    m.roles.cache.has(ID_RUOLO_SPONSOR)
-                );
-                
-                if (sponsorInChat && QueueModel) {
-                    // Verifica se lo sponsor ha comandi KNOCK o RETURN pendenti
-                    const sponsorPendingCommands = await QueueModel.findOne({
-                        userId: sponsorInChat.id,
-                        status: 'PENDING',
-                        type: { $in: ['KNOCK', 'RETURN'] }
-                    });
-                    
-                    if (sponsorPendingCommands) {
-                        return message.channel.send(`⛔ Non puoi usare questo comando finché ${sponsorInChat} non completa le sue azioni pendenti.`);
-                    }
-                }
-            }
-
             const homeId = dbCache.playerHomes[message.author.id];
             if (!homeId) return message.channel.send("❌ **Non hai una casa!**"); 
             if (dbCache.destroyedHouses.includes(homeId)) return message.channel.send("🏚️ **Casa distrutta!**");
@@ -1293,7 +1269,7 @@ async function executeHousingAction(queueItem) {
             );
             if (!isVisiting) return message.channel.send("🏠 Sei già a casa.");
 
-            // 🛑 CONTROLLO: Non può fare !torna se ha già un KNOCK o RETURN in corso
+            // 🛑 CONTROLLO 1: Non può fare !torna se HA GIÀ un KNOCK o RETURN in corso
             if (QueueModel) {
                 const alreadyInQueue = await QueueModel.findOne({
                     userId: message.author.id,
@@ -1304,6 +1280,24 @@ async function executeHousingAction(queueItem) {
                 if (alreadyInQueue) {
                     const actionType = alreadyInQueue.type === 'KNOCK' ? 'bussa' : 'torna';
                     return message.channel.send(`⚠️ Hai già un'azione "${actionType}" in corso! Completa prima quella o usa \`!rimuovi\` per annullarla.`);
+                }
+                
+                // 🛑 CONTROLLO 2: Verifica se ALTRI utenti nella stessa chat privata hanno azioni in corso
+                const privateChatChannel = message.channel;
+                const membersInChat = privateChatChannel.members.filter(m => 
+                    !m.user.bot && m.id !== message.author.id
+                );
+                
+                for (const [memberId, member] of membersInChat) {
+                    const otherUserPending = await QueueModel.findOne({
+                        userId: memberId,
+                        status: 'PENDING',
+                        type: { $in: ['RETURN', 'KNOCK'] }
+                    });
+                    
+                    if (otherUserPending) {
+                        return message.channel.send(`⚠️ C'è già un'azione in corso in questa chat. Attendi che ${member} completi la sua azione.`);
+                    }
                 }
             }
 
