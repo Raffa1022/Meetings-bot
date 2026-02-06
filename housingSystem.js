@@ -919,8 +919,71 @@ async function executeHousingAction(queueItem) {
                 return message.reply("⛔ Non sei coinvolto in questo scambio.");
             }
 
-            message.channel.send("🔄 **Inizio procedura di scambio identità...**");
+            // 🆕 LOGICA DI ACCETTAZIONE
+            // Se è @IDruolo2 (sponsor) a fare il cambio, @IDruolo1 deve accettare
+            // Se è @IDruolo1 o admin, lo scambio avviene immediatamente
+            
+            if (message.member.id === player2.id && !isAdmin) {
+                // Lo sponsor ha richiesto il cambio - serve accettazione di player1
+                const requestMsg = await message.channel.send(`🔄 **${player2}** ha richiesto lo scambio identità.\n${player1}, reagisci con ✅ per accettare o ❌ per rifiutare.`);
+                await requestMsg.react('✅');
+                await requestMsg.react('❌');
+                
+                const filter = (reaction, user) => {
+                    return ['✅', '❌'].includes(reaction.emoji.name) && user.id === player1.id;
+                };
+                
+                const collector = requestMsg.createReactionCollector({ filter, max: 1 });
+                
+                collector.on('collect', async (reaction) => {
+                    if (reaction.emoji.name === '❌') {
+                        await requestMsg.edit(`${requestMsg.content}\n\n❌ **Scambio rifiutato da ${player1}.**`);
+                        setTimeout(() => requestMsg.delete().catch(() => {}), 10000);
+                        return;
+                    }
+                    
+                    // Accettato - procedi con lo scambio
+                    await requestMsg.edit(`${requestMsg.content}\n\n✅ **Scambio accettato! Procedura in corso...**`);
+                    
+                    // 🛑 CONTROLLO: Se l'ex main player (@IDruolo1 che sta per diventare @IDruolo2) ha comandi pendenti, cancellarli
+                    if (QueueModel) {
+                        const pendingCommands = await QueueModel.find({
+                            userId: player1.id,
+                            status: 'PENDING',
+                            type: { $in: ['KNOCK', 'RETURN'] }
+                        });
+                        
+                        if (pendingCommands.length > 0) {
+                            await QueueModel.deleteMany({
+                                userId: player1.id,
+                                status: 'PENDING',
+                                type: { $in: ['KNOCK', 'RETURN'] }
+                            });
+                            
+                            // Rimuovi da pendingKnocks se presente
+                            if (dbCache.pendingKnocks && dbCache.pendingKnocks.includes(player1.id)) {
+                                dbCache.pendingKnocks = dbCache.pendingKnocks.filter(id => id !== player1.id);
+                                await saveDB();
+                            }
+                            
+                            await message.channel.send(`⚠️ I comandi pendenti di ${player1} sono stati cancellati prima dello scambio.`);
+                        }
+                    }
+                    
+                    await performSwap();
+                    setTimeout(() => requestMsg.delete().catch(() => {}), 15000);
+                });
 
+                
+                return; // Esci dalla funzione, lo scambio avverrà nella callback
+            }
+            
+            // È @IDruolo1 o admin - scambio immediato
+            message.channel.send("🔄 **Inizio procedura di scambio identità...**");
+            await performSwap();
+            
+            // Funzione helper per eseguire lo scambio
+            async function performSwap() {
             try {
                 // A. SCAMBIO DATI HOUSING (Database Locale dbCache)
                 // Scambiamo tutti i contatori pertinenti tra ID P1 e ID P2
@@ -993,8 +1056,9 @@ async function executeHousingAction(queueItem) {
 
             } catch (error) {
                 console.error(error);
-                message.reply("❌ Si è verificato un errore critico durante lo scambio.");
+                message.channel.send("❌ Si è verificato un errore critico durante lo scambio.");
             }
+            } // Fine funzione performSwap
         }
         // ---------------------------------------------------------
         // 👤 COMANDI GIOCATORE
@@ -1002,6 +1066,11 @@ async function executeHousingAction(queueItem) {
 
         if (command === 'trasferimento') {
             if (message.channel.parentId !== ID_CATEGORIA_CASE) return message.delete().catch(()=>{});
+
+            // 🛑 CONTROLLO: Gli sponsor non possono usare !trasferimento
+            if (message.member.roles.cache.has(ID_RUOLO_SPONSOR)) {
+                return message.channel.send(`⛔ Gli sponsor non possono usare il comando !trasferimento.`).then(m => setTimeout(() => m.delete(), 5000));
+            }
             if (!message.member.roles.cache.has(ID_RUOLO_NOTIFICA_1)) return message.channel.send("⛔ Non hai il ruolo.").then(m => setTimeout(() => m.delete(), 5000));
 
             const requester = message.author;
@@ -1132,9 +1201,57 @@ async function executeHousingAction(queueItem) {
             }
         }
 
+
+        if (command === 'ram' || command === 'memoria') {
+            // Solo per admin
+            if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
+                return message.reply("⛔ Solo gli admin possono usare questo comando.");
+            }
+            
+            try {
+                const used = process.memoryUsage();
+                const formatMemory = (bytes) => (bytes / 1024 / 1024).toFixed(2);
+                
+                // Ottieni informazioni su MongoDB
+                let mongoStatus = "⚠️ Non disponibile";
+                try {
+                    if (mongoose.connection.readyState === 1) {
+                        mongoStatus = "✅ Connesso";
+                    } else {
+                        mongoStatus = "❌ Disconnesso";
+                    }
+                } catch (e) {
+                    mongoStatus = "❌ Errore";
+                }
+                
+                const embed = new EmbedBuilder()
+                    .setTitle("📊 Monitoraggio Server")
+                    .setColor('#00ff00')
+                    .addFields(
+                        { name: '🧠 Heap Totale', value: `${formatMemory(used.heapTotal)} MB`, inline: true },
+                        { name: '💾 Heap Usato', value: `${formatMemory(used.heapUsed)} MB`, inline: true },
+                        { name: '📦 RSS', value: `${formatMemory(used.rss)} MB`, inline: true },
+                        { name: '⚡ External', value: `${formatMemory(used.external)} MB`, inline: true },
+                        { name: '🗄️ MongoDB', value: mongoStatus, inline: true },
+                        { name: '⏱️ Uptime', value: `${Math.floor(process.uptime() / 60)} minuti`, inline: true }
+                    )
+                    .setTimestamp();
+                
+                message.reply({ embeds: [embed] });
+            } catch (error) {
+                console.error("Errore comando !ram:", error);
+                message.reply("❌ Errore nel recupero delle informazioni sulla memoria.");
+            }
+        }
+
         if (command === 'torna') {
             message.delete().catch(()=>{}); 
             if (message.channel.parentId !== ID_CATEGORIA_CHAT_PRIVATE) return;
+
+            // 🛑 CONTROLLO: Gli sponsor non possono usare !torna
+            if (message.member.roles.cache.has(ID_RUOLO_SPONSOR)) {
+                return message.channel.send(`⛔ Gli sponsor non possono usare il comando !torna.`);
+            }
 
             const homeId = dbCache.playerHomes[message.author.id];
             if (!homeId) return message.channel.send("❌ **Non hai una casa!**"); 
