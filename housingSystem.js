@@ -1398,7 +1398,12 @@ async function executeHousingAction(queueItem) {
             message.delete().catch(()=>{}); 
             if (message.channel.parentId !== ID_CATEGORIA_CHAT_PRIVATE) return message.channel.send(`⛔ Solo chat private!`);
 
-            // 🛑 CONTROLLO: Non può bussare se ha già un'altra azione in corso
+            // 🛑 CONTROLLO: Gli sponsor non possono usare !bussa
+            if (message.member.roles.cache.has(ID_RUOLO_SPONSOR)) {
+                return message.channel.send(`⛔ Gli sponsor non possono usare il comando !bussa.`);
+            }
+
+            // 🛑 CONTROLLO 1: Non può bussare se HA GIÀ un'azione in corso
             if (QueueModel) {
                 const alreadyInQueue = await QueueModel.findOne({
                     userId: message.author.id,
@@ -1414,6 +1419,24 @@ async function executeHousingAction(queueItem) {
                     }
                     const actionType = alreadyInQueue.type === 'KNOCK' ? 'bussa' : 'torna';
                     return message.channel.send(`⚠️ Hai già un'azione "${actionType}" in corso! Completa prima quella o usa \`!rimuovi\` per annullarla.`);
+                }
+                
+                // 🛑 CONTROLLO 2: Verifica se ALTRI utenti nella stessa chat privata hanno azioni in corso
+                const privateChatChannel = message.channel;
+                const membersInChat = privateChatChannel.members.filter(m => 
+                    !m.user.bot && m.id !== message.author.id
+                );
+                
+                for (const [memberId, member] of membersInChat) {
+                    const otherUserPending = await QueueModel.findOne({
+                        userId: memberId,
+                        status: 'PENDING',
+                        type: { $in: ['RETURN', 'KNOCK'] }
+                    });
+                    
+                    if (otherUserPending) {
+                        return message.channel.send(`⚠️ C'è già un'azione in corso in questa chat. Attendi che ${member} completi la sua azione.`);
+                    }
                 }
             }
 
