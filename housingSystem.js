@@ -1280,6 +1280,81 @@ async function executeHousingAction(queueItem) {
             return;
         }
         
+        // Gestione bottone indietro: da selezione pagine a menu modalità
+        if (interaction.customId === 'knock_back_to_mode') {
+            if (!interaction.message.content.includes(interaction.user.id)) {
+                return interaction.reply({ content: "Non è tuo.", ephemeral: true });
+            }
+            
+            const selectMode = new StringSelectMenuBuilder()
+                .setCustomId('knock_mode_select')
+                .setPlaceholder('Come vuoi entrare?')
+                .addOptions(
+                    new StringSelectMenuOptionBuilder().setLabel('Visita Normale').setValue('mode_normal').setEmoji('👋'),
+                    new StringSelectMenuOptionBuilder().setLabel('Visita Forzata').setValue('mode_forced').setEmoji('🧨'),
+                    new StringSelectMenuOptionBuilder().setLabel('Visita Nascosta').setValue('mode_hidden').setEmoji('🕵️')
+                );
+
+            const closeButton = new ButtonBuilder()
+                .setCustomId('knock_close')
+                .setLabel('Chiudi')
+                .setStyle(ButtonStyle.Danger)
+                .setEmoji('❌');
+
+            await interaction.update({ 
+                content: `🎭 **${interaction.user}, scegli la modalità di visita:**`, 
+                components: [
+                    new ActionRowBuilder().addComponents(selectMode),
+                    new ActionRowBuilder().addComponents(closeButton)
+                ]
+            });
+            return;
+        }
+        
+        // Gestione bottone indietro: da selezione case a selezione pagine
+        if (interaction.customId.startsWith('knock_back_to_pages_')) {
+            if (!interaction.message.content.includes(interaction.user.id)) {
+                return interaction.reply({ content: "Non è tuo.", ephemeral: true });
+            }
+            
+            const mode = interaction.customId.replace('knock_back_to_pages_', '');
+            
+            const tutteLeCase = interaction.guild.channels.cache
+                .filter(c => c.parentId === ID_CATEGORIA_CASE && c.type === ChannelType.GuildText)
+                .sort((a, b) => a.rawPosition - b.rawPosition);
+
+            const PAGE_SIZE = 25;
+            const totalPages = Math.ceil(tutteLeCase.size / PAGE_SIZE);
+            const pageOptions = [];
+
+            for (let i = 0; i < totalPages; i++) {
+                const start = i * PAGE_SIZE + 1;
+                const end = Math.min((i + 1) * PAGE_SIZE, tutteLeCase.size);
+                pageOptions.push(new StringSelectMenuOptionBuilder()
+                    .setLabel(`Case ${start} - ${end}`)
+                    .setValue(`page_${i}_${mode}`)
+                    .setEmoji('🏘️')
+                );
+            }
+            
+            const selectGroup = new StringSelectMenuBuilder().setCustomId('knock_page_select').addOptions(pageOptions);
+            
+            const backButton = new ButtonBuilder()
+                .setCustomId('knock_back_to_mode')
+                .setLabel('Indietro')
+                .setStyle(ButtonStyle.Secondary)
+                .setEmoji('◀️');
+            
+            await interaction.update({ 
+                content: `🏘️ **Modalità scelta**. Seleziona zona:`, 
+                components: [
+                    new ActionRowBuilder().addComponents(selectGroup),
+                    new ActionRowBuilder().addComponents(backButton)
+                ]
+            });
+            return;
+        }
+        
         if (interaction.customId === 'knock_mode_select') {
              if (!interaction.message.content.includes(interaction.user.id)) return interaction.reply({ content: "Non è tuo.", ephemeral: true });
              const selectedMode = interaction.values[0]; 
@@ -1301,7 +1376,20 @@ async function executeHousingAction(queueItem) {
                 );
             }
             const selectGroup = new StringSelectMenuBuilder().setCustomId('knock_page_select').addOptions(pageOptions);
-            await interaction.update({ content: `🏘️ **Modalità scelta**. Seleziona zona:`, components: [new ActionRowBuilder().addComponents(selectGroup)] });
+            
+            const backButton = new ButtonBuilder()
+                .setCustomId('knock_back_to_mode')
+                .setLabel('Indietro')
+                .setStyle(ButtonStyle.Secondary)
+                .setEmoji('◀️');
+            
+            await interaction.update({ 
+                content: `🏘️ **Modalità scelta**. Seleziona zona:`, 
+                components: [
+                    new ActionRowBuilder().addComponents(selectGroup),
+                    new ActionRowBuilder().addComponents(backButton)
+                ]
+            });
         }
                 // --- 🔴 PEZZO MANCANTE: GESTIONE SELEZIONE PAGINA ---
        // --- 🔴 PEZZO MODIFICATO: GESTIONE SELEZIONE PAGINA (CON FILTRO CASA PROPRIA) ---
@@ -1363,9 +1451,18 @@ async function executeHousingAction(queueItem) {
                 .setPlaceholder('Scegli la casa specifica...')
                 .addOptions(houseOptions);
 
+            const backButton = new ButtonBuilder()
+                .setCustomId(`knock_back_to_pages_${mode}`)
+                .setLabel('Indietro')
+                .setStyle(ButtonStyle.Secondary)
+                .setEmoji('◀️');
+
             await interaction.update({ 
                 content: `🏘️ **Pagina ${pageIndex + 1}: Scegli dove bussare:**`, 
-                components: [new ActionRowBuilder().addComponents(selectHouse)] 
+                components: [
+                    new ActionRowBuilder().addComponents(selectHouse),
+                    new ActionRowBuilder().addComponents(backButton)
+                ]
             });
         }
         // -----------------------------------------------------
