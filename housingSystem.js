@@ -963,27 +963,6 @@ async function executeHousingAction(queueItem) {
             });
         }
 
-                if (command === 'chi') {
-            message.delete().catch(()=>{});
-            
-            const isAdmin = message.member.permissions.has(PermissionsBitField.Flags.Administrator);
-            let targetChannel = null;
-
-            // Logica di selezione canale
-            if (isAdmin && message.mentions.channels.size > 0) {
-                // Se è admin e ha menzionato un canale, usa quello
-                targetChannel = message.mentions.channels.first();
-            } else {
-                // Altrimenti usa il canale corrente se è una casa
-                if (message.channel.parentId === ID_CATEGORIA_CASE) {
-                    targetChannel = message.channel;
-                }
-            }
-
-            // Controllo validità
-            if (!targetChannel || targetChannel.parentId !== ID_CATEGORIA_CASE) {
-                return message.channel.send("⛔ Devi essere in una casa o (se admin) specificare una casa valida.").then(m => setTimeout(() => m.delete(), 5000));
-            }
                     if (command === 'chi') {
             message.delete().catch(()=>{});
             
@@ -1046,7 +1025,7 @@ async function executeHousingAction(queueItem) {
             }
         }
 
-      if (command === 'torna') {
+        if (command === 'torna') {
             message.delete().catch(()=>{}); 
             if (message.channel.parentId !== ID_CATEGORIA_CHAT_PRIVATE) return;
 
@@ -1088,9 +1067,9 @@ async function executeHousingAction(queueItem) {
             } else {
                 await movePlayer(message.member, message.channel, homeChannel, `🏠 ${message.member} è ritornato.`, false);
             }
-      }
+        }
 
-          if (command === 'rimuovi') {
+        if (command === 'rimuovi') {
             message.delete().catch(()=>{});
             if (message.channel.parentId !== ID_CATEGORIA_CHAT_PRIVATE) return;
 
@@ -1169,7 +1148,7 @@ async function executeHousingAction(queueItem) {
             
             // Auto-delete dopo 60 secondi
             setTimeout(() => menuMsg.delete().catch(() => {}), 60000);
-          }
+        }
 
 
         if (command === 'bussa') {
@@ -1367,8 +1346,9 @@ async function executeHousingAction(queueItem) {
                 if (hiddenAvailable <= 0) return interaction.reply({ content: "⛔ Finite nascoste.", ephemeral: true });
                 dbCache.hiddenVisits[knocker.id] = hiddenAvailable - 1;
             } else {
+                // MODIFICA: Non incrementare subito per visite normali - verrà incrementato solo se rifiutato
                 if (used >= userLimit) return interaction.reply({ content: `⛔ Visite finite!`, ephemeral: true });
-                dbCache.playerVisits[knocker.id] = used + 1;
+                // dbCache.playerVisits[knocker.id] = used + 1; // RIMOSSO - si conta solo se rifiutato
             }
 
             await saveDB();
