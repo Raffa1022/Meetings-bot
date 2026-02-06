@@ -995,10 +995,12 @@ async function executeHousingAction(queueItem) {
             const ownerIds = Object.keys(dbCache.playerHomes).filter(key => dbCache.playerHomes[key] === targetChannel.id);
             const ownerMention = ownerIds.length > 0 ? ownerIds.map(id => `<@${id}>`).join(', ') : "Nessuno";
             
-            // MODIFICA: Filtra SOLO chi ha il ruolo specifico (ID_RUOLO_NOTIFICA_1)
+            // MODIFICA: Mostra solo chi è FISICAMENTE presente (ha permessi personalizzati)
+            // Non conta gli spettatori delle case pubbliche
             const playersInHouse = targetChannel.members.filter(m => 
                 !m.user.bot && 
-                m.roles.cache.has(ID_RUOLO_NOTIFICA_1)
+                m.roles.cache.has(ID_RUOLO_NOTIFICA_1) &&
+                targetChannel.permissionOverwrites.cache.has(m.id) // Ha permessi personalizzati = è entrato fisicamente
             );
             
             let description = playersInHouse.size > 0 ? playersInHouse.map(p => `👤 ${p}`).join('\n') : "Nessuno.";
@@ -1353,9 +1355,9 @@ async function executeHousingAction(queueItem) {
                 if (hiddenAvailable <= 0) return interaction.reply({ content: "⛔ Finite nascoste.", ephemeral: true });
                 dbCache.hiddenVisits[knocker.id] = hiddenAvailable - 1;
             } else {
-                // MODIFICA: Non incrementare subito per visite normali - verrà incrementato solo se rifiutato
+                // Visita normale: conta +1 quando viene eseguita
                 if (used >= userLimit) return interaction.reply({ content: `⛔ Visite finite!`, ephemeral: true });
-                // dbCache.playerVisits[knocker.id] = used + 1; // RIMOSSO - si conta solo se rifiutato
+                dbCache.playerVisits[knocker.id] = used + 1;
             }
 
             await saveDB();
