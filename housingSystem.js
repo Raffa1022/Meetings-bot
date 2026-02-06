@@ -157,19 +157,11 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
                 }
 
                 // MODIFICA 2: Gestione uscita Casa Pubblica
-                // Se la casa è pubblica (ha il ruolo pubblico), l'utente smette di scrivere ma continua a vedere
-                const isPublic = channelToLeave.permissionOverwrites.cache.has(RUOLI_PUBBLICI[0]);
-                
-                if (isPublic) {
-                    await channelToLeave.permissionOverwrites.edit(member.id, { 
-                        ViewChannel: true, 
-                        SendMessages: false, 
-                        ReadMessageHistory: true 
-                    }).catch(() => {});
-                } else {
-                    // Se è privata, rimuovi completamente l'accesso
-                    await channelToLeave.permissionOverwrites.delete(member.id).catch(() => {});
-                }
+                // Rimuovi sempre i permessi personalizzati quando esci
+                // Se è pubblica, l'utente continuerà a vedere tramite ruolo pubblico (senza permessi personalizzati)
+                // Se è privata, l'utente perde completamente l'accesso
+                // Questo permette alle case pubbliche di rimanere visibili nel menu di selezione
+                await channelToLeave.permissionOverwrites.delete(member.id).catch(() => {});
             }
             // Se non ha permessi personalizzati, è solo spettatore → non fare nulla
         }
