@@ -1263,13 +1263,23 @@ async function executeHousingAction(queueItem) {
             const myHomeId = dbCache.playerHomes[interaction.user.id];
 
             // CREAZIONE OPZIONI (CON FILTRI)
-            // 1. Non mostrare dove sei già (members.has)
-            // 2. Non mostrare la TUA casa di proprietà (channel.id !== myHomeId)
+            // ESCLUDI SOLO:
+            // 1. La TUA casa di proprietà (channel.id !== myHomeId)
+            // 2. Case dove sei FISICAMENTE presente (hai permessi personalizzati)
+            // INCLUDI: Case pubbliche dove sei solo spettatore
             const houseOptions = casePagina
-                .filter(channel => 
-                    !channel.members.has(interaction.user.id) && 
-                    channel.id !== myHomeId
-                ) 
+                .filter(channel => {
+                    // Escludi casa propria
+                    if (channel.id === myHomeId) return false;
+                    
+                    // Escludi solo se sei FISICAMENTE presente (hai permessi personalizzati)
+                    // NON escludere se sei solo spettatore (vedi tramite ruolo pubblico)
+                    const hasPersonalPermissions = channel.permissionOverwrites.cache.has(interaction.user.id);
+                    if (hasPersonalPermissions) return false;
+                    
+                    // In tutti gli altri casi, mostra la casa
+                    return true;
+                }) 
                 .map(channel => 
                     new StringSelectMenuOptionBuilder()
                         .setLabel(formatName(channel.name)) 
