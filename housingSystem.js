@@ -110,7 +110,13 @@ async function cleanOldHome(userId, guild) {
         if (oldChannel) {
             try {
                 const pinnedMessages = await oldChannel.messages.fetchPinned();
-                const keyMsg = pinnedMessages.find(m => m.content.includes("questa è la tua dimora privata"));
+                // Cerca il messaggio che menziona questo utente specifico
+                // Può essere: "🔑 **@User**, questa è la tua dimora privata." (proprietario)
+                // Oppure: "🔑 @User, dimora assegnata (Comproprietario)." (comproprietario)
+                const keyMsg = pinnedMessages.find(m => 
+                    (m.content.includes("questa è la tua dimora privata") || m.content.includes("dimora assegnata")) &&
+                    m.content.includes(`<@${userId}>`)
+                );
                 if (keyMsg) await keyMsg.delete();
             } catch (err) {
                 console.log("Errore rimozione pin vecchia casa:", err);
@@ -303,14 +309,19 @@ async function executeHousingAction(queueItem) {
                 // RIFIUTATO - la visita è già stata contata quando aggiunta alla coda
                 await msg.reply(`❌ Qualcuno ha rifiutato.`);
 
-                // Lista presenti per il messaggio di rifiuto
-                const presentPlayers = targetChannel.members
-                    .filter(m => !m.user.bot && m.id !== member.id && !m.permissions.has(PermissionsBitField.Flags.Administrator))
-                    .map(m => m.displayName)
-                    .join(', ');
+                // Lista presenti FISICAMENTE (con permessi personalizzati, non solo spettatori)
+                const presentPlayers = [];
+                targetChannel.permissionOverwrites.cache.forEach((overwrite, id) => {
+                    if (overwrite.type === 1) { // Type 1 = Member (non ruolo)
+                        const m = targetChannel.members.get(id);
+                        if (m && !m.user.bot && m.id !== member.id && !m.permissions.has(PermissionsBitField.Flags.Administrator)) {
+                            presentPlayers.push(m.displayName);
+                        }
+                    }
+                });
 
                 if (fromChannel) {
-                    await fromChannel.send(`⛔ ${member}, entrata rifiutata. I giocatori presenti in quella casa sono: ${presentPlayers || 'Nessuno'}`);
+                    await fromChannel.send(`⛔ ${member}, entrata rifiutata. I giocatori presenti in quella casa sono: ${presentPlayers.join(', ') || 'Nessuno'}`);
                 }
                 console.log(`❌ [Housing] ${member.user.tag} è stato rifiutato.`);
             }
@@ -1051,11 +1062,12 @@ async function executeHousingAction(queueItem) {
             const homeChannel = message.guild.channels.cache.get(homeId);
             if (!homeChannel) return message.channel.send("❌ Errore casa.");
 
+            // Controlla se sei fisicamente presente in un'altra casa (hai permessi personalizzati)
             const isVisiting = message.guild.channels.cache.some(c => 
                 c.parentId === ID_CATEGORIA_CASE && 
                 c.type === ChannelType.GuildText && 
                 c.id !== homeId && 
-                c.permissionsFor(message.member).has(PermissionsBitField.Flags.ViewChannel)
+                c.permissionOverwrites.cache.has(message.author.id) // Ha permessi personalizzati = è fisicamente dentro
             );
             if (!isVisiting) return message.channel.send("🏠 Sei già a casa.");
 
@@ -1466,13 +1478,19 @@ async function executeHousingAction(queueItem) {
                 // RIFIUTATO - la visita è già stata contata alla selezione (riga 1358)
                 await msg.reply(`❌ Qualcuno ha rifiutato.`);
                 
-                const presentPlayers = targetChannel.members
-                    .filter(m => !m.user.bot && m.id !== knocker.id && !m.permissions.has(PermissionsBitField.Flags.Administrator))
-                    .map(m => m.displayName)
-                    .join(', ');
+                // Lista presenti FISICAMENTE (con permessi personalizzati, non solo spettatori)
+                const presentPlayers = [];
+                targetChannel.permissionOverwrites.cache.forEach((overwrite, id) => {
+                    if (overwrite.type === 1) { // Type 1 = Member (non ruolo)
+                        const m = targetChannel.members.get(id);
+                        if (m && !m.user.bot && m.id !== knocker.id && !m.permissions.has(PermissionsBitField.Flags.Administrator)) {
+                            presentPlayers.push(m.displayName);
+                        }
+                    }
+                });
 
                 if (fromChannel) {
-                    await fromChannel.send(`⛔ ${knocker}, entrata rifiutata. I giocatori presenti in quella casa sono: ${presentPlayers || 'Nessuno'}`);
+                    await fromChannel.send(`⛔ ${knocker}, entrata rifiutata. I giocatori presenti in quella casa sono: ${presentPlayers.join(', ') || 'Nessuno'}`);
                 }
             }
         });
