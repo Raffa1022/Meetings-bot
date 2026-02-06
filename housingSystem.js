@@ -244,10 +244,22 @@ async function executeHousingAction(queueItem) {
         }
 
         // B. Visita Normale -> TOC TOC
-        // Funzione helper per contare chi c'è dentro ORA
-        const getOccupants = () => targetChannel.members.filter(m => 
-            !m.user.bot && m.id !== member.id && m.roles.cache.hasAny(...RUOLI_PERMESSI)
-        );
+        // Funzione helper per contare chi c'è dentro FISICAMENTE (ha permessi personalizzati)
+        const getOccupants = () => {
+            // In una casa pubblica, tutti vedono il canale tramite ruolo
+            // Ma solo chi è FISICAMENTE dentro ha permessi personalizzati
+            const physicallyInside = [];
+            targetChannel.permissionOverwrites.cache.forEach((overwrite, id) => {
+                // Salta ruoli, considera solo utenti
+                if (overwrite.type === 1) { // Type 1 = Member
+                    const m = targetChannel.members.get(id);
+                    if (m && !m.user.bot && m.id !== member.id && m.roles.cache.hasAny(...RUOLI_PERMESSI)) {
+                        physicallyInside.push(m);
+                    }
+                }
+            });
+            return new Map(physicallyInside.map(m => [m.id, m]));
+        };
 
         const membersWithAccess = getOccupants();
 
@@ -621,7 +633,13 @@ async function executeHousingAction(queueItem) {
                 message.reply("🔒 La casa è tornata **PRIVATA**.");
             } else {
                 for (const roleId of RUOLI_PUBBLICI) {
-                    if (roleId) await channel.permissionOverwrites.create(roleId, { ViewChannel: true, SendMessages: false });
+                    if (roleId) await channel.permissionOverwrites.create(roleId, { 
+                        ViewChannel: true, 
+                        SendMessages: false,
+                        CreatePublicThreads: false,
+                        CreatePrivateThreads: false,
+                        AddReactions: false
+                    });
                 }
                 const tag1 = `<@&${ID_RUOLO_NOTIFICA_1}>`;
                 const tag2 = `<@&${ID_RUOLO_NOTIFICA_2}>`;
@@ -1394,9 +1412,21 @@ async function executeHousingAction(queueItem) {
                 }
 
               // B. Visita Normale -> TOC TOC
-        const getOccupants = () => targetChannel.members.filter(m => 
-            !m.user.bot && m.id !== knocker.id && m.roles.cache.hasAny(...RUOLI_PERMESSI)
-        );
+        const getOccupants = () => {
+            // In una casa pubblica, tutti vedono il canale tramite ruolo
+            // Ma solo chi è FISICAMENTE dentro ha permessi personalizzati
+            const physicallyInside = [];
+            targetChannel.permissionOverwrites.cache.forEach((overwrite, id) => {
+                // Salta ruoli, considera solo utenti
+                if (overwrite.type === 1) { // Type 1 = Member
+                    const m = targetChannel.members.get(id);
+                    if (m && !m.user.bot && m.id !== knocker.id && m.roles.cache.hasAny(...RUOLI_PERMESSI)) {
+                        physicallyInside.push(m);
+                    }
+                }
+            });
+            return new Map(physicallyInside.map(m => [m.id, m]));
+        };
 
         const membersWithAccess = getOccupants();
 
