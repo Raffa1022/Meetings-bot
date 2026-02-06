@@ -1253,6 +1253,30 @@ async function executeHousingAction(queueItem) {
                 return message.channel.send(`⛔ Gli sponsor non possono usare il comando !torna.`);
             }
 
+            // 🛑 CONTROLLO: Se l'utente è un ex sponsor appena diventato main player,
+            // verifica che il suo ex main player non abbia comandi pendenti
+            if (message.member.roles.cache.has(ID_RUOLO_ALIVE)) {
+                // Cerca se c'è uno sponsor nella stessa chat privata
+                const sponsorInChat = message.channel.members.find(m => 
+                    !m.user.bot && 
+                    m.id !== message.author.id && 
+                    m.roles.cache.has(ID_RUOLO_SPONSOR)
+                );
+                
+                if (sponsorInChat && QueueModel) {
+                    // Verifica se lo sponsor ha comandi KNOCK o RETURN pendenti
+                    const sponsorPendingCommands = await QueueModel.findOne({
+                        userId: sponsorInChat.id,
+                        status: 'PENDING',
+                        type: { $in: ['KNOCK', 'RETURN'] }
+                    });
+                    
+                    if (sponsorPendingCommands) {
+                        return message.channel.send(`⛔ Non puoi usare questo comando finché ${sponsorInChat} non completa le sue azioni pendenti.`);
+                    }
+                }
+            }
+
             const homeId = dbCache.playerHomes[message.author.id];
             if (!homeId) return message.channel.send("❌ **Non hai una casa!**"); 
             if (dbCache.destroyedHouses.includes(homeId)) return message.channel.send("🏚️ **Casa distrutta!**");
@@ -1688,10 +1712,11 @@ async function executeHousingAction(queueItem) {
             let base, extra;
             if (dbCache.currentMode === 'DAY') {
                 const limits = dbCache.dayLimits[knocker.id] || { base: 0 };
-                base = limits.base;
+                base = limits.base || 0;
                 extra = dbCache.extraVisitsDay ? (dbCache.extraVisitsDay[knocker.id] || 0) : 0;
             } else {
-                base = dbCache.baseVisits[knocker.id] || DEFAULT_MAX_VISITS;
+                // Se non ha visite assegnate, considera 0 visite (non DEFAULT_MAX_VISITS)
+                base = dbCache.baseVisits[knocker.id] !== undefined ? dbCache.baseVisits[knocker.id] : 0;
                 extra = dbCache.extraVisits[knocker.id] || 0;
             }
             const userLimit = base + extra;
