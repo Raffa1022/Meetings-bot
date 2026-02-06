@@ -296,11 +296,7 @@ async function executeHousingAction(queueItem) {
                 await enterHouse(member, fromChannel, targetChannel, `👋 ${member} è entrato.`, false);
                 console.log(`✅ [Housing] ${member.user.tag} è stato fatto entrare.`);
             } else {
-                // RIFIUTATO
-                const currentRefused = dbCache.playerVisits[member.id] || 0;
-                dbCache.playerVisits[member.id] = currentRefused + 1;
-                await saveDB();
-
+                // RIFIUTATO - la visita è già stata contata quando aggiunta alla coda
                 await msg.reply(`❌ Qualcuno ha rifiutato.`);
 
                 // Lista presenti per il messaggio di rifiuto
@@ -1435,11 +1431,7 @@ async function executeHousingAction(queueItem) {
                 await msg.reply(`✅ Qualcuno ha aperto.`);
                 await enterHouse(knocker, fromChannel, targetChannel, `👋 ${knocker} è entrato.`, false);
             } else {
-                // RIFIUTATO
-                const currentRefused = dbCache.playerVisits[knocker.id] || 0;
-                dbCache.playerVisits[knocker.id] = currentRefused + 1;
-                await saveDB();
-
+                // RIFIUTATO - la visita è già stata contata alla selezione (riga 1358)
                 await msg.reply(`❌ Qualcuno ha rifiutato.`);
                 
                 const presentPlayers = targetChannel.members
