@@ -46,6 +46,31 @@ let clientRef = null;
 // pendingKnocks ora è dentro dbCache.pendingKnocks (array su MongoDB)
 
 // ==========================================
+// 🔧 HELPER: Fetch fresco case dal server
+// ==========================================
+async function getAllHouses(guild) {
+    try {
+        // Forza fetch di TUTTI i canali dal server Discord
+        await guild.channels.fetch();
+        
+        // Filtra solo le case
+        const houses = guild.channels.cache
+            .filter(c => c.parentId === ID_CATEGORIA_CASE && c.type === ChannelType.GuildText)
+            .sort((a, b) => a.rawPosition - b.rawPosition);
+        
+        console.log(`🏘️ [Housing] Fetched ${houses.size} case dal server`);
+        return houses;
+        
+    } catch (error) {
+        console.error("❌ [Housing] Errore fetch case:", error);
+        // Fallback sulla cache se fetch fallisce
+        return guild.channels.cache
+            .filter(c => c.parentId === ID_CATEGORIA_CASE && c.type === ChannelType.GuildText)
+            .sort((a, b) => a.rawPosition - b.rawPosition);
+    }
+}
+
+// ==========================================
 // FUNZIONI DATABASE MONGO
 // ==========================================
 
@@ -1544,9 +1569,8 @@ async function executeHousingAction(queueItem) {
             
             const mode = interaction.customId.replace('knock_back_to_pages_', '');
             
-            const tutteLeCase = interaction.guild.channels.cache
-                .filter(c => c.parentId === ID_CATEGORIA_CASE && c.type === ChannelType.GuildText)
-                .sort((a, b) => a.rawPosition - b.rawPosition);
+            // ✅ FIX: Fetch fresco dal server
+            const tutteLeCase = await getAllHouses(interaction.guild);
 
             const PAGE_SIZE = 25;
             const totalPages = Math.ceil(tutteLeCase.size / PAGE_SIZE);
@@ -1583,9 +1607,8 @@ async function executeHousingAction(queueItem) {
         if (interaction.customId === 'knock_mode_select') {
              if (!interaction.message.content.includes(interaction.user.id)) return interaction.reply({ content: "Non è tuo.", ephemeral: true });
              const selectedMode = interaction.values[0]; 
-             const tutteLeCase = interaction.guild.channels.cache
-                .filter(c => c.parentId === ID_CATEGORIA_CASE && c.type === ChannelType.GuildText)
-                .sort((a, b) => a.rawPosition - b.rawPosition);
+             // ✅ FIX: Fetch fresco dal server invece di usare cache
+             const tutteLeCase = await getAllHouses(interaction.guild);
 
              const PAGE_SIZE = 25;
              const totalPages = Math.ceil(tutteLeCase.size / PAGE_SIZE);
@@ -1623,9 +1646,8 @@ async function executeHousingAction(queueItem) {
             const pageIndex = parseInt(parts[1]);
             const mode = parts.slice(2).join('_'); 
             
-            const tutteLeCase = interaction.guild.channels.cache
-                .filter(c => c.parentId === ID_CATEGORIA_CASE && c.type === ChannelType.GuildText)
-                .sort((a, b) => a.rawPosition - b.rawPosition);
+            // ✅ FIX: Fetch fresco dal server
+            const tutteLeCase = await getAllHouses(interaction.guild);
 
             const PAGE_SIZE = 25;
             const start = pageIndex * PAGE_SIZE;
