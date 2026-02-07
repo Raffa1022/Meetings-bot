@@ -21,7 +21,7 @@ async function enterHouse(member, fromChannel, toChannel, entryMessage, isSilent
 async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent) {
     if (!member || !newChannel) return;
 
-    const sponsors = getSponsorsToMove(member, member.guild);
+    const sponsors = await getSponsorsToMove(member, member.guild);
     let channelToLeave = oldChannel;
 
     // Se arriva da chat privata, cerca la casa attuale
