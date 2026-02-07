@@ -10,7 +10,7 @@ const { HOUSING, RUOLI, RUOLI_PERMESSI, RUOLI_PUBBLICI, PREFIX } = require('./co
 const db = require('./db');
 const eventBus = require('./eventBus');
 const { movePlayer, cleanOldHome } = require('./playerMovement');
-const { isAdmin, formatName, isVisitingOtherHouse, sendTemp } = require('./helpers');
+const { isAdmin, formatName, isVisitingOtherHouse, sendTemp, getSponsorsToMove } = require('./helpers');
 
 module.exports = function registerPlayerCommands(client) {
 
@@ -39,7 +39,13 @@ module.exports = function registerPlayerCommands(client) {
             if (!homeChannel) return message.channel.send("❌ Errore casa.");
 
             if (!isVisitingOtherHouse(message.guild, message.author.id, homeId))
-                return message.channel.send("🏠 Sei già a casa.");
+                return message.channel.send("🏠 Sei già nella tua casa! Non puoi usare !torna.");
+
+            // Controllo bussata attiva in attesa di risposta
+            const activeKnock = await db.housing.getActiveKnock(message.author.id);
+            if (activeKnock) {
+                return message.channel.send("⚠️ Hai una bussata in attesa di risposta! Non puoi usare !torna finché non viene risolta.");
+            }
 
             // Controllo coda: utente ha già azione pendente?
             const myPending = await db.queue.getUserPending(message.author.id);
@@ -74,6 +80,12 @@ module.exports = function registerPlayerCommands(client) {
 
             if (message.member.roles.cache.has(RUOLI.SPONSOR))
                 return message.channel.send("⛔ Gli sponsor non possono usare il comando !bussa.");
+
+            // Controllo bussata attiva in attesa di risposta
+            const activeKnock = await db.housing.getActiveKnock(message.author.id);
+            if (activeKnock) {
+                return message.channel.send("⚠️ Hai già una bussata in attesa di risposta! Non puoi bussare di nuovo finché non viene risolta.");
+            }
 
             // Controllo coda
             const myPending = await db.queue.getUserPending(message.author.id);
@@ -140,9 +152,16 @@ module.exports = function registerPlayerCommands(client) {
                 return message.reply("❌ Sei già a casa tua, non puoi trasferirti qui!");
 
             if (!ownerId) {
-                // Casa senza proprietario
+                // Casa senza proprietario - trasferisci giocatore + sponsor
+                const sponsors = getSponsorsToMove(message.member, message.guild);
                 await cleanOldHome(message.author.id, message.guild);
+                for (const s of sponsors) {
+                    await cleanOldHome(s.id, message.guild);
+                }
                 await db.housing.setHome(message.author.id, newHomeChannel.id);
+                for (const s of sponsors) {
+                    await db.housing.setHome(s.id, newHomeChannel.id);
+                }
                 await newHomeChannel.permissionOverwrites.edit(message.author.id, { ViewChannel: true, SendMessages: true });
                 const pinnedMsg = await newHomeChannel.send(`🔑 **${message.author}**, questa è la tua dimora privata.`);
                 await pinnedMsg.pin();
@@ -183,8 +202,15 @@ module.exports = function registerPlayerCommands(client) {
             collector.on('collect', async i => {
                 if (i.customId === `transfer_yes_${message.author.id}`) {
                     await i.update({ content: "✅ Accettato!", embeds: [], components: [] });
+                    const sponsors = getSponsorsToMove(message.member, message.guild);
                     await cleanOldHome(message.author.id, message.guild);
+                    for (const s of sponsors) {
+                        await cleanOldHome(s.id, message.guild);
+                    }
                     await db.housing.setHome(message.author.id, newHomeChannel.id);
+                    for (const s of sponsors) {
+                        await db.housing.setHome(s.id, newHomeChannel.id);
+                    }
                     await newHomeChannel.permissionOverwrites.edit(message.author.id, { ViewChannel: true, SendMessages: true });
                     const newKeyMsg = await newHomeChannel.send(`🔑 ${message.author}, dimora assegnata (Comproprietario).`);
                     await newKeyMsg.pin();
