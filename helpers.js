@@ -29,25 +29,35 @@ function getOccupants(channel, excludeId = null) {
 }
 
 /**
- * Trova gli sponsor da spostare insieme a un giocatore
+ * Trova il partner abbinato da spostare insieme (bidirezionale).
+ * Player → trova sponsor, Sponsor → trova player.
+ * Usa il collegamento dalla tabella (activeGameSlots).
  */
-function getSponsorsToMove(player, guild) {
-    if (!player.roles.cache.has(RUOLI.ALIVE) && !player.roles.cache.has(RUOLI.DEAD)) return [];
+async function getSponsorsToMove(member, guild) {
+    const db = require('./db'); // lazy require per evitare dipendenze circolari
 
-    const privateChannel = guild.channels.cache.find(c =>
-        c.parentId === HOUSING.CATEGORIA_CHAT_PRIVATE &&
-        c.type === ChannelType.GuildText &&
-        c.permissionsFor(player).has(PermissionsBitField.Flags.ViewChannel)
-    );
-    if (!privateChannel) return [];
-
-    const sponsors = [];
-    privateChannel.members.forEach(member => {
-        if (member.id !== player.id && !member.user.bot && member.roles.cache.has(RUOLI.SPONSOR)) {
-            sponsors.push(member);
-        }
-    });
-    return sponsors;
+    if (member.roles.cache.has(RUOLI.ALIVE) || member.roles.cache.has(RUOLI.DEAD)) {
+        // Player → trova sponsor
+        const sponsorId = await db.meeting.findSponsor(member.id);
+        if (!sponsorId) return [];
+        try {
+            const sponsor = await guild.members.fetch(sponsorId);
+            if (sponsor && !sponsor.user.bot && sponsor.roles.cache.has(RUOLI.SPONSOR)) {
+                return [sponsor];
+            }
+        } catch {}
+    } else if (member.roles.cache.has(RUOLI.SPONSOR)) {
+        // Sponsor → trova player abbinato
+        const playerId = await db.meeting.findPlayer(member.id);
+        if (!playerId) return [];
+        try {
+            const player = await guild.members.fetch(playerId);
+            if (player && !player.user.bot && (player.roles.cache.has(RUOLI.ALIVE) || player.roles.cache.has(RUOLI.DEAD))) {
+                return [player];
+            }
+        } catch {}
+    }
+    return [];
 }
 
 /**
