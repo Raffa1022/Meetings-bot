@@ -6,7 +6,7 @@ const {
     PermissionsBitField, ChannelType, EmbedBuilder,
     ActionRowBuilder, StringSelectMenuBuilder, ButtonBuilder, ButtonStyle
 } = require('discord.js');
-const { MEETING } = require('./config');
+const { MEETING, HOUSING, RUOLI } = require('./config');
 const db = require('./db');
 
 function generateTableText(tableData) {
@@ -58,8 +58,11 @@ module.exports = function initMeetingSystem(client) {
                     { name: '👁️ !lettura', value: 'Supervisione. Sponsor inclusi.' },
                     { name: '🚪 !entrata', value: `Auto-ruolo (${isActive ? 'ON' : 'OFF'})` },
                     { name: '📋 !tabella [num]', value: 'Crea tabella iscrizioni.' },
-                    { name: '🚀 !assegna', value: 'Assegna ruoli/stanze.' },
+                    { name: '🚀 !assegna', value: 'Assegna ruoli/stanze/case random.' },
+                    { name: '🔄 !riprendi tabella', value: 'Riapri tabella per nuovi sponsor.' },
+                    { name: '🔒 !chiudi tabella', value: 'Chiudi tabella e assegna nuovi sponsor.' },
                     { name: '⚠️ !azzeramento', value: 'Reset conteggi meeting/lettura' },
+                    { name: '🏚️ !case', value: 'Mostra case distrutte (tutti).' },
                 );
             return message.channel.send({ embeds: [embed] });
         }
@@ -163,9 +166,170 @@ module.exports = function initMeetingSystem(client) {
                 assegnati++;
             }
 
+            // --- HOUSING: Assegna case random a ogni coppia ---
+            const destroyed = await db.housing.getDestroyedHouses();
+            const assignedHouseIds = new Set(
+                table.slots.filter(s => s.houseId).map(s => s.houseId)
+            );
+            const availableHouses = [...message.guild.channels.cache
+                .filter(c =>
+                    c.parentId === HOUSING.CATEGORIA_CASE &&
+                    c.type === ChannelType.GuildText &&
+                    !destroyed.includes(c.id) &&
+                    !assignedHouseIds.has(c.id)
+                ).values()
+            ].sort(() => Math.random() - 0.5);
+
+            let houseIndex = 0;
+            let caseAssegnate = 0;
+            const slotsWithHouses = table.slots.map(s => ({ ...s }));
+
+            for (let i = 0; i < table.limit; i++) {
+                const slot = slotsWithHouses[i];
+                if (!slot.player) continue;
+
+                // Se ha già una casa (da !riprendi), aggiungi solo il nuovo sponsor
+                if (slot.houseId) {
+                    if (slot.sponsor) {
+                        const houseChannel = message.guild.channels.cache.get(slot.houseId);
+                        if (houseChannel) {
+                            await houseChannel.permissionOverwrites.create(slot.sponsor, { ViewChannel: true, SendMessages: true });
+                            await db.housing.setHome(slot.sponsor, slot.houseId);
+                        }
+                    }
+                    continue;
+                }
+
+                // Assegna nuova casa random
+                if (houseIndex >= availableHouses.length) {
+                    await message.channel.send(`⚠️ Case disponibili esaurite! Slot #${i + 1} senza casa.`);
+                    continue;
+                }
+
+                const house = availableHouses[houseIndex++];
+                slot.houseId = house.id;
+
+                // Player: proprietario + permessi
+                await db.housing.setHome(slot.player, house.id);
+                await house.permissionOverwrites.create(slot.player, { ViewChannel: true, SendMessages: true });
+
+                const playerMember = await message.guild.members.fetch(slot.player).catch(() => null);
+                if (playerMember) {
+                    const pinnedMsg = await house.send(`🔑 **${playerMember}**, questa è la tua dimora privata.`);
+                    await pinnedMsg.pin();
+                }
+
+                // Sponsor: proprietario + permessi
+                if (slot.sponsor) {
+                    await db.housing.setHome(slot.sponsor, house.id);
+                    await house.permissionOverwrites.create(slot.sponsor, { ViewChannel: true, SendMessages: true });
+                }
+
+                caseAssegnate++;
+            }
+
             // Salva gioco e pulisci tabella (atomico)
+            await db.meeting.saveGameAndClearTable(slotsWithHouses);
+            await message.channel.send(`✅ Stanze configurate: ${assegnati} | 🏠 Case assegnate: ${caseAssegnate}`);
+        }
+
+        // !riprendi tabella
+        if (content === '!riprendi tabella' && guildId === MEETING.COMMAND_GUILD && isAdm) {
+            const currentTable = await db.meeting.getTable();
+            if (currentTable.limit > 0) return message.reply("⚠️ C'è già una tabella attiva. Chiudila prima.");
+
+            const oldSlots = await db.meeting.getActiveGameSlots();
+            if (oldSlots.length === 0) return message.reply("❌ Nessun dato di gioco salvato da ripristinare.");
+
+            const table = await db.meeting.reopenTableFromGame(null);
+            if (!table) return message.reply("❌ Errore nel ripristino della tabella.");
+
+            const embed = new EmbedBuilder()
+                .setTitle('📋 Tabella Ripristinata - Iscrizione Sponsor')
+                .setDescription(generateTableText(table))
+                .setColor('Orange');
+
+            const opts = Array.from({ length: table.limit }, (_, i) => ({ label: `Numero ${i + 1}`, value: `${i}` }));
+            const components = [];
+
+            // Solo menu sponsor (non giocatori)
+            components.push(new ActionRowBuilder().addComponents(
+                new StringSelectMenuBuilder().setCustomId('select_sponsor').setPlaceholder('💰 Sponsor 1-25').addOptions(opts.slice(0, 25))
+            ));
+            if (table.limit > 25) {
+                components.push(new ActionRowBuilder().addComponents(
+                    new StringSelectMenuBuilder().setCustomId('select_sponsor_2').setPlaceholder(`💰 Sponsor 26-${table.limit}`).addOptions(opts.slice(25, 50))
+                ));
+            }
+            components.push(new ActionRowBuilder().addComponents(
+                new ButtonBuilder().setCustomId('leave_game').setLabel('🏃 Abbandona').setStyle(ButtonStyle.Danger)
+            ));
+
+            const sentMsg = await message.channel.send({ embeds: [embed], components });
+            await db.meeting.updateTableMessageId(sentMsg.id);
+            message.reply("✅ Tabella ripristinata! I nuovi sponsor possono iscriversi.");
+        }
+
+        // !chiudi tabella
+        if (content === '!chiudi tabella' && guildId === MEETING.COMMAND_GUILD && isAdm) {
+            const table = await db.meeting.getTable();
+            if (table.limit === 0) return message.reply("⚠️ Nessuna tabella attiva da chiudere.");
+
+            const oldSlots = await db.meeting.getActiveGameSlots();
+
+            // Processa nuovi sponsor aggiunti
+            let nuoviSponsor = 0;
+            for (let i = 0; i < table.slots.length; i++) {
+                const slot = table.slots[i];
+                const oldSlot = oldSlots[i];
+
+                // Nuovo sponsor aggiunto (non c'era prima o è diverso)
+                if (slot.sponsor && (!oldSlot?.sponsor || oldSlot.sponsor !== slot.sponsor)) {
+                    const sponsorMember = await message.guild.members.fetch(slot.sponsor).catch(() => null);
+                    if (!sponsorMember) continue;
+
+                    // Aggiungi ruolo sponsor
+                    try { await sponsorMember.roles.add(MEETING.ROLE_SPONSOR_AUTO); } catch {}
+
+                    // Aggiungi alla casa del giocatore
+                    const houseId = slot.houseId || oldSlot?.houseId;
+                    if (houseId) {
+                        const houseChannel = message.guild.channels.cache.get(houseId);
+                        if (houseChannel) {
+                            await houseChannel.permissionOverwrites.create(slot.sponsor, { ViewChannel: true, SendMessages: true });
+                            await db.housing.setHome(slot.sponsor, houseId);
+                        }
+                    }
+
+                    // Aggiungi alla stanza meeting
+                    const chName = `${i + 1}`;
+                    const meetingChannel = message.guild.channels.cache.find(c =>
+                        c.parentId === MEETING.ROLE_CHAT_CAT && c.name === chName
+                    );
+                    if (meetingChannel) {
+                        await meetingChannel.permissionOverwrites.edit(slot.sponsor, {
+                            ViewChannel: true, SendMessages: true, ManageMessages: true,
+                            CreatePrivateThreads: false, SendMessagesInThreads: false, CreatePublicThreads: false
+                        });
+                        await meetingChannel.send(`💰 Benvenuto <@${slot.sponsor}>!`);
+                    }
+
+                    nuoviSponsor++;
+                }
+            }
+
+            // Salva e chiudi
             await db.meeting.saveGameAndClearTable([...table.slots]);
-            await message.channel.send(`✅ Stanze configurate: ${assegnati}`);
+
+            // Cancella messaggio tabella
+            if (table.messageId) {
+                try {
+                    const tableMsg = await message.channel.messages.fetch(table.messageId);
+                    if (tableMsg) await tableMsg.delete();
+                } catch {}
+            }
+
+            message.reply(`✅ Tabella chiusa. ${nuoviSponsor > 0 ? `Nuovi sponsor assegnati: ${nuoviSponsor}` : 'Nessun nuovo sponsor.'}`);
         }
 
         // !meeting
