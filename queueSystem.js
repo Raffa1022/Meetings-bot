@@ -191,7 +191,13 @@ async function executeHousingAction(queueItem) {
 
         collector.on('collect', async (reaction) => {
             clearInterval(monitor);
+            // Pulisci activeKnock per il bussante E il partner (gestisce !cambio)
             await db.housing.clearActiveKnock(member.id);
+            const partnerSponsor = await db.meeting.findSponsor(member.id);
+            const partnerPlayer = await db.meeting.findPlayer(member.id);
+            if (partnerSponsor) await db.housing.clearActiveKnock(partnerSponsor);
+            if (partnerPlayer) await db.housing.clearActiveKnock(partnerPlayer);
+
             if (reaction.emoji.name === '✅') {
                 await msg.reply("✅ Qualcuno ha aperto.");
                 await enterHouse(member, fromChannel, targetChannel, `👋 ${member} è entrato.`, false);
@@ -214,7 +220,13 @@ async function executeHousingAction(queueItem) {
 
         collector.on('end', async (collected, reason) => {
             clearInterval(monitor);
+            // Pulisci activeKnock per il bussante E il partner (gestisce !cambio)
             await db.housing.clearActiveKnock(member.id);
+            const partnerSponsor = await db.meeting.findSponsor(member.id);
+            const partnerPlayer = await db.meeting.findPlayer(member.id);
+            if (partnerSponsor) await db.housing.clearActiveKnock(partnerSponsor);
+            if (partnerPlayer) await db.housing.clearActiveKnock(partnerPlayer);
+
             if (reason === 'everyone_left') {
                 await msg.reply("🚪 La casa si è svuotata.");
                 await enterHouse(member, fromChannel, targetChannel, `👋 ${member} è entrato (casa libera).`, false);
