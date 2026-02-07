@@ -44,6 +44,8 @@ let QueueSystem = null;
 let QueueModel = null; // ← AGGIUNTO per accedere al DB della coda
 let clientRef = null;
 // pendingKnocks ora è dentro dbCache.pendingKnocks (array su MongoDB)
+// privateChatLocks: traccia le chat private con azioni in corso
+// Struttura: { channelId: { locked: true, userId: 'xxx', actionType: 'KNOCK|RETURN' } }
 
 // ==========================================
 // 🔧 HELPER: Fetch fresco case dal server
@@ -87,6 +89,11 @@ async function loadDB() {
         if (!dbCache.pendingKnocks) {
             dbCache.pendingKnocks = [];
         }
+        
+        // Inizializza privateChatLocks se non esiste
+        if (!dbCache.privateChatLocks) {
+            dbCache.privateChatLocks = {};
+        }
         console.log("💾 [Housing] Database caricato da MongoDB!");
     } catch (e) {
         console.error("❌ [Housing] Errore caricamento DB:", e);
@@ -99,6 +106,51 @@ async function saveDB() {
     } catch (e) {
         console.error("❌ [Housing] Errore salvataggio DB:", e);
     }
+}
+
+// ==========================================
+// 🔒 FUNZIONI LOCK CHAT PRIVATA
+// ==========================================
+
+/**
+ * Imposta il lock su una chat privata
+ * @param {string} channelId - ID del canale chat privata
+ * @param {string} userId - ID dell'utente che sta eseguendo l'azione
+ * @param {string} actionType - Tipo di azione (KNOCK o RETURN)
+ */
+async function lockPrivateChat(channelId, userId, actionType) {
+    if (!dbCache.privateChatLocks) dbCache.privateChatLocks = {};
+    dbCache.privateChatLocks[channelId] = {
+        locked: true,
+        userId: userId,
+        actionType: actionType,
+        timestamp: Date.now()
+    };
+    await saveDB();
+    console.log(`🔒 [Housing] Chat ${channelId} bloccata per ${actionType} di ${userId}`);
+}
+
+/**
+ * Rimuove il lock da una chat privata
+ * @param {string} channelId - ID del canale chat privata
+ */
+async function unlockPrivateChat(channelId) {
+    if (!dbCache.privateChatLocks) dbCache.privateChatLocks = {};
+    if (dbCache.privateChatLocks[channelId]) {
+        delete dbCache.privateChatLocks[channelId];
+        await saveDB();
+        console.log(`🔓 [Housing] Chat ${channelId} sbloccata`);
+    }
+}
+
+/**
+ * Verifica se una chat privata è bloccata
+ * @param {string} channelId - ID del canale chat privata
+ * @returns {Object|null} Oggetto con info del lock se bloccato, null altrimenti
+ */
+function isPrivateChatLocked(channelId) {
+    if (!dbCache.privateChatLocks) return null;
+    return dbCache.privateChatLocks[channelId] || null;
 }
 
 // ==========================================
@@ -308,10 +360,13 @@ async function executeHousingAction(queueItem) {
             const homeChannel = guild.channels.cache.get(homeId);
             const currentChannel = guild.channels.cache.get(queueItem.details.fromChannelId);
             if (homeChannel) {
-                await movePlayer(member, currentChannel, homeChannel, `🏠 ${member} è ritornato.`, false);
+                await movePlayer(member, currentChannel, homeChannel, `🏠 ${member.user.tag} è ritornato.`, false);
                 console.log(`✅ [Housing] ${member.user.tag} è tornato a casa.`);
             }
         }
+        
+        // 🔓 SBLOCCA la chat privata
+        await unlockPrivateChat(queueItem.details.fromChannelId);
         return; 
     }
 
@@ -331,11 +386,17 @@ async function executeHousingAction(queueItem) {
             const roleMentions = RUOLI_PERMESSI.map(id => `<@&${id}>`).join(', ');
             await enterHouse(member, fromChannel, targetChannel, `${roleMentions}, ${member} ha sfondato la porta ed è entrato`, false);
             console.log(`✅ [Housing] ${member.user.tag} ha sfondato la porta.`);
+            
+            // 🔓 SBLOCCA la chat privata
+            await unlockPrivateChat(fromChannelId);
             return;
         } 
         if (mode === 'mode_hidden') {
             await enterHouse(member, fromChannel, targetChannel, "", true);
             console.log(`✅ [Housing] ${member.user.tag} è entrato nascosto.`);
+            
+            // 🔓 SBLOCCA la chat privata
+            await unlockPrivateChat(fromChannelId);
             return;
         }
 
@@ -363,6 +424,9 @@ async function executeHousingAction(queueItem) {
         if (membersWithAccess.size === 0) {
             await enterHouse(member, fromChannel, targetChannel, `👋 ${member} è entrato.`, false);
             console.log(`✅ [Housing] ${member.user.tag} è entrato (casa vuota).`);
+            
+            // 🔓 SBLOCCA la chat privata
+            await unlockPrivateChat(fromChannelId);
             return;
         }
 
@@ -395,6 +459,9 @@ async function executeHousingAction(queueItem) {
                 await msg.reply(`✅ Qualcuno ha aperto.`);
                 await enterHouse(member, fromChannel, targetChannel, `👋 ${member} è entrato.`, false);
                 console.log(`✅ [Housing] ${member.user.tag} è stato fatto entrare.`);
+                
+                // 🔓 SBLOCCA la chat privata
+                await unlockPrivateChat(fromChannelId);
             } else {
                 // RIFIUTATO - la visita è già stata contata quando aggiunta alla coda
                 await msg.reply(`❌ Qualcuno ha rifiutato.`);
@@ -414,6 +481,9 @@ async function executeHousingAction(queueItem) {
                     await fromChannel.send(`⛔ ${member}, entrata rifiutata. I giocatori presenti in quella casa sono: ${presentPlayers.join(', ') || 'Nessuno'}`);
                 }
                 console.log(`❌ [Housing] ${member.user.tag} è stato rifiutato.`);
+                
+                // 🔓 SBLOCCA la chat privata
+                await unlockPrivateChat(fromChannelId);
             }
         });
 
@@ -425,12 +495,18 @@ async function executeHousingAction(queueItem) {
                 await msg.reply(`🚪 La casa si è svuotata.`);
                 await enterHouse(member, fromChannel, targetChannel, `👋 ${member} è entrato (casa libera).`, false);
                 console.log(`✅ [Housing] ${member.user.tag} è entrato (tutti usciti).`);
+                
+                // 🔓 SBLOCCA la chat privata
+                await unlockPrivateChat(fromChannelId);
             }
             // CASO: Timeout classico
             else if (collected.size === 0 && reason !== 'limit') {
                 await msg.reply('⏳ Nessuno ha risposto. La porta viene forzata.');
                 await enterHouse(member, fromChannel, targetChannel, `👋 ${member} è entrato.`, false);
                 console.log(`✅ [Housing] ${member.user.tag} è entrato (timeout).`);
+                
+                // 🔓 SBLOCCA la chat privata
+                await unlockPrivateChat(fromChannelId);
             }
         });
     }
@@ -1277,6 +1353,14 @@ async function executeHousingAction(queueItem) {
             if (message.member.roles.cache.has(ID_RUOLO_SPONSOR)) {
                 return message.channel.send(`⛔ Gli sponsor non possono usare il comando !torna.`);
             }
+            
+            // 🔒 CONTROLLO: Verifica se la chat privata è bloccata da un'azione in corso
+            const chatLock = isPrivateChatLocked(message.channel.id);
+            if (chatLock) {
+                const lockUser = message.guild.members.cache.get(chatLock.userId);
+                const actionName = chatLock.actionType === 'KNOCK' ? 'bussa' : 'torna';
+                return message.channel.send(`⚠️ C'è già un'azione "${actionName}" in corso in questa chat. Attendi che ${lockUser || 'l\'utente'} completi la sua azione.`);
+            }
 
             const homeId = dbCache.playerHomes[message.author.id];
             if (!homeId) return message.channel.send("❌ **Non hai una casa!**"); 
@@ -1328,6 +1412,9 @@ async function executeHousingAction(queueItem) {
 
             // --- MODIFICA CODA ---
             if (QueueSystem) {
+                // 🔒 IMPOSTA LOCK sulla chat privata
+                await lockPrivateChat(message.channel.id, message.author.id, 'RETURN');
+                
                 await QueueSystem.add('RETURN', message.author.id, {
                     fromChannelId: message.channel.id
                 });
@@ -1426,6 +1513,14 @@ async function executeHousingAction(queueItem) {
             // 🛑 CONTROLLO: Gli sponsor non possono usare !bussa
             if (message.member.roles.cache.has(ID_RUOLO_SPONSOR)) {
                 return message.channel.send(`⛔ Gli sponsor non possono usare il comando !bussa.`);
+            }
+            
+            // 🔒 CONTROLLO: Verifica se la chat privata è bloccata da un'azione in corso
+            const chatLock = isPrivateChatLocked(message.channel.id);
+            if (chatLock) {
+                const lockUser = message.guild.members.cache.get(chatLock.userId);
+                const actionName = chatLock.actionType === 'KNOCK' ? 'bussa' : 'torna';
+                return message.channel.send(`⚠️ C'è già un'azione "${actionName}" in corso in questa chat. Attendi che ${lockUser || 'l\'utente'} completi la sua azione.`);
             }
 
             // 🛑 CONTROLLO 1: Non può bussare se HA GIÀ un'azione in corso
@@ -1786,6 +1881,10 @@ async function executeHousingAction(queueItem) {
             // --- MODIFICA CODA ---
             if (QueueSystem) {
                 console.log(`➕ [Housing] Aggiungendo ${mode} alla coda per ${knocker.user.tag}`);
+                
+                // 🔒 IMPOSTA LOCK sulla chat privata
+                await lockPrivateChat(interaction.channel.id, knocker.id, 'KNOCK');
+                
                 await QueueSystem.add('KNOCK', knocker.id, {
                     targetChannelId: targetChannelId,
                     mode: mode,
@@ -1927,6 +2026,11 @@ async function executeHousingAction(queueItem) {
                     });
                     
                     if (removed) {
+                        // 🔓 SBLOCCA la chat privata se c'era un lock
+                        if (removed.details && removed.details.fromChannelId) {
+                            await unlockPrivateChat(removed.details.fromChannelId);
+                        }
+                        
                         if (QueueSystem) QueueSystem.process();
                         await interaction.update({ 
                             content: '✅ Bussa rimosso dalla coda!', 
@@ -1952,6 +2056,11 @@ async function executeHousingAction(queueItem) {
                     });
                     
                     if (removed) {
+                        // 🔓 SBLOCCA la chat privata se c'era un lock
+                        if (removed.details && removed.details.fromChannelId) {
+                            await unlockPrivateChat(removed.details.fromChannelId);
+                        }
+                        
                         if (QueueSystem) QueueSystem.process();
                         await interaction.update({ 
                             content: '✅ Torna rimosso dalla coda!', 
