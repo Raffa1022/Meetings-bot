@@ -405,6 +405,20 @@ const meeting = {
         return slot?.sponsor || null;
     },
 
+    async findPlayer(sponsorId) {
+        const data = await MeetingModel.findOne(M_ID, { 'table.slots': 1, activeGameSlots: 1 }).lean();
+        if (!data) return null;
+        let slot = data.table?.slots?.find(s => s.sponsor === sponsorId);
+        if (slot?.player) return slot.player;
+        slot = data.activeGameSlots?.find(s => s.sponsor === sponsorId);
+        return slot?.player || null;
+    },
+
+    async getActiveGameSlots() {
+        const doc = await MeetingModel.findOne(M_ID, { activeGameSlots: 1 }).lean();
+        return doc?.activeGameSlots || [];
+    },
+
     // --- SCRITTURE ATOMICHE ---
     async toggleAutoRole() {
         // Leggi stato attuale (lean), poi scrivi l'opposto atomicamente
@@ -500,10 +514,20 @@ const meeting = {
         });
     },
 
+    // Riapri tabella da activeGameSlots (per nuovi sponsor)
+    async reopenTableFromGame(messageId) {
+        const doc = await MeetingModel.findOne(M_ID, { activeGameSlots: 1 }).lean();
+        const slots = doc?.activeGameSlots || [];
+        if (slots.length === 0) return null;
+        const table = { limit: slots.length, slots: slots.map(s => ({ ...s })), messageId };
+        await MeetingModel.updateOne(M_ID, { $set: { table } });
+        return table;
+    },
+
     // Swap dati meeting tra 2 player (ATOMICO)
     async swapMeetingData(p1Id, p2Id) {
         const doc = await MeetingModel.findOne(M_ID, {
-            meetingCounts: 1, letturaCounts: 1
+            meetingCounts: 1, letturaCounts: 1, activeGameSlots: 1
         }).lean();
         if (!doc) return;
 
@@ -519,6 +543,26 @@ const meeting = {
             if (v1 !== undefined) setOps[`${key}.${p2Id}`] = v1;
             else unsetOps[`${key}.${p2Id}`] = '';
         });
+
+        // Swap player/sponsor in activeGameSlots
+        if (doc.activeGameSlots) {
+            doc.activeGameSlots.forEach((slot, i) => {
+                let newPlayer = slot.player;
+                let newSponsor = slot.sponsor;
+                let modified = false;
+
+                if (slot.player === p1Id) { newPlayer = p2Id; modified = true; }
+                else if (slot.player === p2Id) { newPlayer = p1Id; modified = true; }
+
+                if (slot.sponsor === p1Id) { newSponsor = p2Id; modified = true; }
+                else if (slot.sponsor === p2Id) { newSponsor = p1Id; modified = true; }
+
+                if (modified) {
+                    setOps[`activeGameSlots.${i}.player`] = newPlayer;
+                    setOps[`activeGameSlots.${i}.sponsor`] = newSponsor;
+                }
+            });
+        }
 
         const update = {};
         if (Object.keys(setOps).length) update.$set = setOps;
