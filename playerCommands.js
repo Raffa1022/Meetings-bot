@@ -153,7 +153,7 @@ module.exports = function registerPlayerCommands(client) {
 
             if (!ownerId) {
                 // Casa senza proprietario - trasferisci giocatore + sponsor
-                const sponsors = getSponsorsToMove(message.member, message.guild);
+                const sponsors = await getSponsorsToMove(message.member, message.guild);
                 await cleanOldHome(message.author.id, message.guild);
                 for (const s of sponsors) {
                     await cleanOldHome(s.id, message.guild);
@@ -202,7 +202,7 @@ module.exports = function registerPlayerCommands(client) {
             collector.on('collect', async i => {
                 if (i.customId === `transfer_yes_${message.author.id}`) {
                     await i.update({ content: "✅ Accettato!", embeds: [], components: [] });
-                    const sponsors = getSponsorsToMove(message.member, message.guild);
+                    const sponsors = await getSponsorsToMove(message.member, message.guild);
                     await cleanOldHome(message.author.id, message.guild);
                     for (const s of sponsors) {
                         await cleanOldHome(s.id, message.guild);
@@ -393,6 +393,30 @@ module.exports = function registerPlayerCommands(client) {
             // Player1 o admin → scambio immediato
             message.channel.send("🔄 **Inizio procedura di scambio identità...**");
             await performSwap();
+        }
+
+        // ===================== CASE =====================
+        else if (command === 'case') {
+            if (!message.member.roles.cache.hasAny(RUOLI.ALIVE, RUOLI.SPONSOR, RUOLI.DEAD))
+                return message.reply("⛔ Non hai i permessi.");
+
+            const destroyed = await db.housing.getDestroyedHouses();
+            if (destroyed.length === 0) {
+                return message.reply("✅ Nessuna casa è stata distrutta al momento.");
+            }
+
+            const list = destroyed.map(id => {
+                const ch = message.guild.channels.cache.get(id);
+                return ch ? `🏚️ ${ch} (${formatName(ch.name)})` : `🏚️ ID: ${id} (canale non trovato)`;
+            }).join('\n');
+
+            const embed = new EmbedBuilder()
+                .setTitle('🏚️ Case Distrutte')
+                .setDescription(list)
+                .setColor('Red')
+                .setTimestamp();
+
+            message.reply({ embeds: [embed] });
         }
     });
 };
