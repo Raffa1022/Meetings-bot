@@ -184,6 +184,19 @@ const housing = {
         return HousingModel.updateOne(H_ID, { $set: { pendingKnocks: [] } });
     },
 
+    async setActiveKnock(userId, targetChannelId) {
+        return HousingModel.updateOne(H_ID, { $set: { [`activeKnocks.${userId}`]: targetChannelId } });
+    },
+
+    async clearActiveKnock(userId) {
+        return HousingModel.updateOne(H_ID, { $unset: { [`activeKnocks.${userId}`]: '' } });
+    },
+
+    async getActiveKnock(userId) {
+        const doc = await HousingModel.findOne(H_ID, { [`activeKnocks.${userId}`]: 1 }).lean();
+        return doc?.activeKnocks?.[userId] || null;
+    },
+
     async addDestroyedHouse(channelId) {
         return HousingModel.updateOne(H_ID, { $addToSet: { destroyedHouses: channelId } });
     },
@@ -253,7 +266,8 @@ const housing = {
 
         const swapKeys = [
             'playerVisits', 'baseVisits', 'forcedLimits', 'hiddenLimits',
-            'dayLimits', 'forcedVisits', 'hiddenVisits', 'extraVisits', 'extraVisitsDay'
+            'dayLimits', 'forcedVisits', 'hiddenVisits', 'extraVisits', 'extraVisitsDay',
+            'activeKnocks'
         ];
 
         const setOps = {};
