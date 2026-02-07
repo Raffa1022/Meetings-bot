@@ -21,7 +21,8 @@ const housingSchema = new mongoose.Schema({
     destroyedHouses: { type: Array, default: [] },
     multiplaHistory: { type: Object, default: {} },
     lastReset: { type: String, default: '' },
-    pendingKnocks: { type: Array, default: [] }
+    pendingKnocks: { type: Array, default: [] },
+    activeKnocks: { type: Object, default: {} }
 }, { minimize: false, versionKey: false });
 
 // ==========================================
