@@ -173,6 +173,9 @@ async function executeHousingAction(queueItem) {
         const msg = await targetChannel.send(`🔔 **TOC TOC!** ${mentions}\nQualcuno sta bussando\n✅ = Apri | ❌ = Rifiuta`);
         await Promise.all([msg.react('✅'), msg.react('❌')]);
 
+        // Segna bussata attiva: blocca !bussa e !torna finché non risolta
+        await db.housing.setActiveKnock(member.id, targetChannelId);
+
         const filter = (reaction, user) =>
             ['✅', '❌'].includes(reaction.emoji.name) &&
             getOccupants(targetChannel, member.id).has(user.id);
@@ -188,6 +191,7 @@ async function executeHousingAction(queueItem) {
 
         collector.on('collect', async (reaction) => {
             clearInterval(monitor);
+            await db.housing.clearActiveKnock(member.id);
             if (reaction.emoji.name === '✅') {
                 await msg.reply("✅ Qualcuno ha aperto.");
                 await enterHouse(member, fromChannel, targetChannel, `👋 ${member} è entrato.`, false);
@@ -197,7 +201,8 @@ async function executeHousingAction(queueItem) {
                 targetChannel.permissionOverwrites.cache.forEach((ow, id) => {
                     if (ow.type === 1) {
                         const m = targetChannel.members.get(id);
-                        if (m && !m.user.bot && m.id !== member.id && !m.permissions.has(PermissionsBitField.Flags.Administrator))
+                        if (m && !m.user.bot && m.id !== member.id && !m.permissions.has(PermissionsBitField.Flags.Administrator)
+                            && m.roles.cache.has(RUOLI.ALIVE))
                             present.push(m.displayName);
                     }
                 });
@@ -209,6 +214,7 @@ async function executeHousingAction(queueItem) {
 
         collector.on('end', async (collected, reason) => {
             clearInterval(monitor);
+            await db.housing.clearActiveKnock(member.id);
             if (reason === 'everyone_left') {
                 await msg.reply("🚪 La casa si è svuotata.");
                 await enterHouse(member, fromChannel, targetChannel, `👋 ${member} è entrato (casa libera).`, false);
