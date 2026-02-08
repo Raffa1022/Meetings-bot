@@ -67,12 +67,23 @@ queueSchema.index({ status: 1, timestamp: 1 });
 queueSchema.index({ userId: 1, status: 1, type: 1 });
 
 // ==========================================
+// 📊 SCHEMA MODERAZIONE (Documento Singolo)
+// ==========================================
+const moderationSchema = new mongoose.Schema({
+    id: { type: String, default: 'main_moderation', index: true },
+    blockedVB: { type: Array, default: [] },   // [{ userId, userTag, timestamp }]
+    blockedRB: { type: Array, default: [] },   // [{ userId, userTag, timestamp }]
+    protected: { type: Array, default: [] }    // [{ userId, userTag, timestamp }]
+}, { minimize: false, versionKey: false });
+
+// ==========================================
 // 📦 MODELLI
 // ==========================================
 const HousingModel = mongoose.model('HousingData', housingSchema);
 const MeetingModel = mongoose.model('MeetingData', meetingSchema);
 const AbilityModel = mongoose.model('AbilityData', abilitySchema);
 const QueueModel = mongoose.model('QueueData', queueSchema);
+const ModerationModel = mongoose.model('ModerationData', moderationSchema);
 
 // ==========================================
 // 🔌 CONNESSIONE
@@ -96,6 +107,10 @@ async function connectDB() {
             { id: 'main_meeting' }, { $setOnInsert: { id: 'main_meeting' } },
             { upsert: true, new: true }
         ),
+        ModerationModel.findOneAndUpdate(
+            { id: 'main_moderation' }, { $setOnInsert: { id: 'main_moderation' } },
+            { upsert: true, new: true }
+        ),
     ]);
     console.log('✅ Documenti singleton verificati');
 }
@@ -106,5 +121,6 @@ module.exports = {
     MeetingModel,
     AbilityModel,
     QueueModel,
+    ModerationModel,
 };
 
