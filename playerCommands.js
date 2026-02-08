@@ -25,7 +25,7 @@ module.exports = function registerPlayerCommands(client) {
             if (message.channel.parentId !== HOUSING.CATEGORIA_CHAT_PRIVATE) return;
 
             // Sponsor non possono
-            if (message.member.roles.cache.has(RUOLI.SPONSOR)) {
+            if (message.member.roles.cache.has(RUOLI.SPONSOR) || message.member.roles.cache.has(RUOLI.SPONSOR_DEAD)) {
                 return message.channel.send("⛔ Gli sponsor non possono usare il comando !torna.");
             }
 
@@ -38,7 +38,14 @@ module.exports = function registerPlayerCommands(client) {
             const homeChannel = message.guild.channels.cache.get(homeId);
             if (!homeChannel) return message.channel.send("❌ Errore casa.");
 
-            if (!isVisitingOtherHouse(message.guild, message.author.id, homeId))
+            // Trova dove è fisicamente (casa con permissionOverwrites personalizzati)
+            const currentHouse = message.guild.channels.cache.find(c =>
+                c.parentId === HOUSING.CATEGORIA_CASE &&
+                c.permissionOverwrites.cache.has(message.author.id)
+            );
+
+            // Se non è in nessuna casa o è già nella propria
+            if (!currentHouse || currentHouse.id === homeId)
                 return message.channel.send("🏠 Sei già nella tua casa! Non puoi usare !torna.");
 
             // Controllo bussata attiva in attesa di risposta
@@ -78,7 +85,7 @@ module.exports = function registerPlayerCommands(client) {
             if (message.channel.parentId !== HOUSING.CATEGORIA_CHAT_PRIVATE)
                 return message.channel.send("⛔ Solo chat private!");
 
-            if (message.member.roles.cache.has(RUOLI.SPONSOR))
+            if (message.member.roles.cache.has(RUOLI.SPONSOR) || message.member.roles.cache.has(RUOLI.SPONSOR_DEAD))
                 return message.channel.send("⛔ Gli sponsor non possono usare il comando !bussa.");
 
             // Controllo bussata attiva in attesa di risposta
@@ -140,7 +147,7 @@ module.exports = function registerPlayerCommands(client) {
         // ===================== TRASFERIMENTO =====================
         else if (command === 'trasferimento') {
             if (message.channel.parentId !== HOUSING.CATEGORIA_CASE) return message.delete().catch(() => {});
-            if (message.member.roles.cache.has(RUOLI.SPONSOR))
+            if (message.member.roles.cache.has(RUOLI.SPONSOR) || message.member.roles.cache.has(RUOLI.SPONSOR_DEAD))
                 return sendTemp(message.channel, "⛔ Gli sponsor non possono usare il comando !trasferimento.");
             if (!message.member.roles.cache.has(RUOLI.ALIVE))
                 return sendTemp(message.channel, "⛔ Non hai il ruolo.");
