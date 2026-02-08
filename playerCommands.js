@@ -45,12 +45,18 @@ module.exports = function registerPlayerCommands(client) {
             // Trova dove è fisicamente (casa con permissionOverwrites personalizzati)
             const currentHouse = message.guild.channels.cache.find(c =>
                 c.parentId === HOUSING.CATEGORIA_CASE &&
+                c.type === ChannelType.GuildText &&
                 c.permissionOverwrites.cache.has(message.author.id)
             );
 
-            // Se non è in nessuna casa o è già nella propria
-            if (!currentHouse || currentHouse.id === homeId)
+            // FIX: Controllo più rigoroso - se non è in nessuna casa O è già nella propria casa
+            if (!currentHouse) {
+                return message.channel.send("🏠 Non sei in nessuna casa! Non puoi usare !torna.");
+            }
+            
+            if (currentHouse.id === homeId) {
                 return message.channel.send("🏠 Sei già nella tua casa! Non puoi usare !torna.");
+            }
 
             // Controllo bussata attiva in attesa di risposta
             const activeKnock = await db.housing.getActiveKnock(message.author.id);
@@ -251,7 +257,19 @@ module.exports = function registerPlayerCommands(client) {
                 return sendTemp(message.channel, "⛔ Devi essere in una casa o (se admin) specificare una casa valida.");
 
             const allHomes = await db.housing.getAllHomes();
-            const ownerIds = Object.keys(allHomes).filter(k => allHomes[k] === targetChannel.id);
+            
+            // FIX: Filtra solo i giocatori ALIVE, escludendo gli sponsor
+            const ownerIds = Object.keys(allHomes).filter(async userId => {
+                if (allHomes[userId] !== targetChannel.id) return false;
+                try {
+                    const member = await message.guild.members.fetch(userId);
+                    // Solo ALIVE, non SPONSOR
+                    return member.roles.cache.has(RUOLI.ALIVE) && !member.roles.cache.has(RUOLI.SPONSOR);
+                } catch {
+                    return false;
+                }
+            });
+            
             const ownerMention = ownerIds.length > 0 ? ownerIds.map(id => `<@${id}>`).join(', ') : "Nessuno";
 
             const players = targetChannel.members.filter(m =>
@@ -337,16 +355,30 @@ module.exports = function registerPlayerCommands(client) {
         else if (command === 'cambio') {
             if (message.channel.parentId !== HOUSING.CATEGORIA_CHAT_PRIVATE) return;
 
-            const R1 = RUOLI.ALIVE, R2 = RUOLI.SPONSOR;
+            // FIX: Supporta anche DEAD (R3) e DEAD_SPONSOR (R4)
+            const R1 = RUOLI.ALIVE, R2 = RUOLI.SPONSOR, R3 = RUOLI.DEAD, R4 = RUOLI.SPONSOR_DEAD;
             const admin = isAdmin(message.member);
             const hasR1 = message.member.roles.cache.has(R1);
             const hasR2 = message.member.roles.cache.has(R2);
+            const hasR3 = message.member.roles.cache.has(R3);
+            const hasR4 = message.member.roles.cache.has(R4);
 
-            if (!admin && !hasR1 && !hasR2) return message.reply("⛔ Non hai i permessi.");
+            if (!admin && !hasR1 && !hasR2 && !hasR3 && !hasR4) return message.reply("⛔ Non hai i permessi.");
 
             const members = message.channel.members.filter(m => !m.user.bot);
-            const player1 = members.find(m => m.roles.cache.has(R1));
-            const player2 = members.find(m => m.roles.cache.has(R2));
+            
+            // Cerca coppia ALIVE/SPONSOR
+            let player1 = members.find(m => m.roles.cache.has(R1));
+            let player2 = members.find(m => m.roles.cache.has(R2));
+            let usingDeadRoles = false;
+            
+            // Se non trova coppia ALIVE/SPONSOR, cerca coppia DEAD/DEAD_SPONSOR
+            if (!player1 || !player2) {
+                player1 = members.find(m => m.roles.cache.has(R3));
+                player2 = members.find(m => m.roles.cache.has(R4));
+                usingDeadRoles = true;
+            }
+            
             if (!player1 || !player2)
                 return message.reply("❌ Non trovo entrambi i giocatori con i ruoli necessari.");
 
@@ -364,14 +396,17 @@ module.exports = function registerPlayerCommands(client) {
                     }
 
                     // Swap housing + meeting + ruoli in parallelo
+                    const role1 = usingDeadRoles ? R3 : R1;
+                    const role2 = usingDeadRoles ? R4 : R2;
+                    
                     await Promise.all([
                         db.housing.swapPlayerData(player1.id, player2.id),
                         db.meeting.swapMeetingData(player1.id, player2.id),
-                        player1.roles.remove(R1), player1.roles.add(R2),
-                        player2.roles.remove(R2), player2.roles.add(R1),
+                        player1.roles.remove(role1), player1.roles.add(role2),
+                        player2.roles.remove(role2), player2.roles.add(role1),
                     ]);
 
-                    message.channel.send(`✅ **Scambio Completato!**\n👤 ${player1} ora ha il ruolo <@&${R2}>.\n👤 ${player2} ora ha il ruolo <@&${R1}>.`);
+                    message.channel.send(`✅ **Scambio Completato!**\n👤 ${player1} ora ha il ruolo <@&${role2}>.\n👤 ${player2} ora ha il ruolo <@&${role1}>.`);
                 } catch (error) {
                     console.error("❌ Errore cambio:", error);
                     message.channel.send("❌ Si è verificato un errore critico durante lo scambio.");
@@ -379,7 +414,7 @@ module.exports = function registerPlayerCommands(client) {
             };
 
             // Se è lo sponsor a richiedere → serve accettazione
-            if (message.member.id === player2.id && !admin) {
+            if ((message.member.id === player2.id) && !admin) {
                 const reqMsg = await message.channel.send(
                     `🔄 **${player2}** ha richiesto lo scambio identità.\n${player1}, reagisci con ✅ per accettare o ❌ per rifiutare.`
                 );
@@ -412,8 +447,9 @@ module.exports = function registerPlayerCommands(client) {
 
         // ===================== CASE =====================
         else if (command === 'case') {
-            if (!message.member.roles.cache.hasAny(RUOLI.ALIVE, RUOLI.SPONSOR, RUOLI.DEAD))
-                return message.reply("⛔ Non hai i permessi.");
+            // FIX: Permetti anche ad admin (ovunque) e SPONSOR_DEAD
+            const canUse = message.member.roles.cache.hasAny(RUOLI.ALIVE, RUOLI.SPONSOR, RUOLI.DEAD, RUOLI.SPONSOR_DEAD) || isAdmin(message.member);
+            if (!canUse) return message.reply("⛔ Non hai i permessi.");
 
             const destroyed = await db.housing.getDestroyedHouses();
             if (destroyed.length === 0) {
