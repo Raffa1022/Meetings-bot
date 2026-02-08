@@ -13,6 +13,7 @@ const registerKnockInteractions = require('./knockInteractions');
 const initQueueSystem = require('./queueSystem');
 const initMeetingSystem = require('./meetingSystem');
 const initAbilitySystem = require('./abilitySystem');
+const initModerationSystem = require('./moderationSystem'); // FIX: Aggiunto import mancante
 const { isAdmin } = require('./helpers');
 
 // --- WEB SERVER (UptimeRobot) ---
@@ -77,6 +78,7 @@ client.on('messageCreate', async message => {
         registerKnockInteractions(client);
         initMeetingSystem(client);
         initAbilitySystem(client);
+        initModerationSystem(client);  // FIX: Aggiunta inizializzazione mancante
 
         // 3. Login
         await client.login(TOKEN);
@@ -87,6 +89,7 @@ client.on('messageCreate', async message => {
         console.log('🚦 Queue: Event-driven, zero dipendenze circolari');
         console.log('👥 Meeting: Attivo');
         console.log('✨ Abilità: Coda cronologica');
+        console.log('🛡️ Moderazione: Attivo');
         console.log('💾 Database: MongoDB-First, zero dbCache');
         console.log('='.repeat(50));
 
@@ -99,4 +102,3 @@ client.on('messageCreate', async message => {
 // Gestione errori globali
 process.on('unhandledRejection', (error) => console.error('❌ Unhandled:', error));
 process.on('uncaughtException', (error) => console.error('❌ Uncaught:', error));
-
