@@ -3,7 +3,7 @@
 // Unica funzione centralizzata per muovere giocatori
 // ==========================================
 const { PermissionsBitField } = require('discord.js');
-const { HOUSING } = require('./config');
+const { HOUSING, RUOLI } = require('./config');
 const db = require('./db');
 const { getSponsorsToMove } = require('./helpers');
 
@@ -17,6 +17,7 @@ async function enterHouse(member, fromChannel, toChannel, entryMessage, isSilent
 /**
  * Sposta un giocatore da un canale a un altro.
  * Gestisce: uscita, ingresso, sponsor, permessi, narrazione.
+ * FIX: Narrazione solo per giocatore principale (ALIVE/DEAD), mai per sponsor
  */
 async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent) {
     if (!member || !newChannel) return;
@@ -34,17 +35,22 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
         if (currentHouse) channelToLeave = currentHouse;
     }
 
+    // FIX: Determina chi è il giocatore principale per la narrazione
+    // Solo ALIVE o DEAD devono narrare, mai SPONSOR o SPONSOR_DEAD
+    const isMainPlayer = member.roles.cache.has(RUOLI.ALIVE) || member.roles.cache.has(RUOLI.DEAD);
+
     // --- USCITA dal vecchio canale ---
     if (channelToLeave && channelToLeave.id !== newChannel.id && channelToLeave.parentId === HOUSING.CATEGORIA_CASE) {
         const hasPersonalPerms = channelToLeave.permissionOverwrites.cache.has(member.id);
         if (hasPersonalPerms) {
             const prevMode = await db.housing.getPlayerMode(member.id);
-            if (prevMode !== 'HIDDEN') {
+            // FIX: Narrazione uscita solo per giocatore principale
+            if (prevMode !== 'HIDDEN' && isMainPlayer) {
                 await channelToLeave.send(`🚪 ${member} è uscito.`);
             }
             await channelToLeave.permissionOverwrites.delete(member.id).catch(() => {});
         }
-        // Rimuovi sponsor dalla vecchia casa
+        // Rimuovi sponsor dalla vecchia casa (senza narrazione)
         const sponsorDeletes = sponsors.map(s =>
             channelToLeave.permissionOverwrites.cache.has(s.id)
                 ? channelToLeave.permissionOverwrites.delete(s.id).catch(() => {})
@@ -65,8 +71,8 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
     ];
     await Promise.all(enterOps);
 
-    // Narrazione
-    if (!isSilent && entryMessage) {
+    // FIX: Narrazione ingresso solo per giocatore principale
+    if (!isSilent && entryMessage && isMainPlayer) {
         await newChannel.send(entryMessage);
     }
 }
