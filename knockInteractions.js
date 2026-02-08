@@ -4,7 +4,7 @@
 // ==========================================
 const {
     ActionRowBuilder, StringSelectMenuBuilder, StringSelectMenuOptionBuilder,
-    ButtonBuilder, ButtonStyle, ChannelType
+    ButtonBuilder, ButtonStyle, ChannelType, PermissionsBitField
 } = require('discord.js');
 const { HOUSING, RUOLI_PERMESSI } = require('./config');
 const db = require('./db');
@@ -70,11 +70,16 @@ module.exports = function registerKnockInteractions(client) {
                 return interaction.reply({ content: "❌ Nessuna casa in questa pagina.", ephemeral: true });
 
             const myHomeId = await db.housing.getHome(interaction.user.id);
+            const destroyed = await db.housing.getDestroyedHouses();
 
             const houseOptions = casePagina
                 .filter(ch => {
                     if (ch.id === myHomeId) return false;
-                    return !ch.permissionOverwrites.cache.has(interaction.user.id);
+                    if (destroyed.includes(ch.id)) return false;
+                    // Controlla se ha REALMENTE accesso ViewChannel (previene ghost overwrites)
+                    const ow = ch.permissionOverwrites.cache.get(interaction.user.id);
+                    if (!ow) return true;
+                    return !ow.allow.has(PermissionsBitField.Flags.ViewChannel);
                 })
                 .map(ch => new StringSelectMenuOptionBuilder()
                     .setLabel(formatName(ch.name))
