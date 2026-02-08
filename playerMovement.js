@@ -10,16 +10,17 @@ const { getSponsorsToMove } = require('./helpers');
 /**
  * Wrapper: entra in casa (delegata a movePlayer)
  */
-async function enterHouse(member, fromChannel, toChannel, entryMessage, isSilent) {
-    return movePlayer(member, fromChannel, toChannel, entryMessage, isSilent);
+async function enterHouse(member, fromChannel, toChannel, entryMessage, isSilent, forceNarration = false) {
+    return movePlayer(member, fromChannel, toChannel, entryMessage, isSilent, forceNarration);
 }
 
 /**
  * Sposta un giocatore da un canale a un altro.
  * Gestisce: uscita, ingresso, sponsor, permessi, narrazione.
  * FIX: Narrazione solo per giocatore principale (ALIVE/DEAD), mai per sponsor
+ * @param {boolean} forceNarration - Se true, forza la narrazione anche per sponsor (usato dopo !cambio)
  */
-async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent) {
+async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent, forceNarration = false) {
     if (!member || !newChannel) return;
 
     const sponsors = await getSponsorsToMove(member, member.guild);
@@ -36,8 +37,8 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
     }
 
     // FIX: Determina chi è il giocatore principale per la narrazione
-    // Solo ALIVE o DEAD devono narrare, mai SPONSOR o SPONSOR_DEAD
-    const isMainPlayer = member.roles.cache.has(RUOLI.ALIVE) || member.roles.cache.has(RUOLI.DEAD);
+    // Solo ALIVE o DEAD devono narrare, mai SPONSOR o SPONSOR_DEAD (a meno che forceNarration = true)
+    const isMainPlayer = forceNarration || member.roles.cache.has(RUOLI.ALIVE) || member.roles.cache.has(RUOLI.DEAD);
 
     // --- USCITA dal vecchio canale ---
     if (channelToLeave && channelToLeave.id !== newChannel.id && channelToLeave.parentId === HOUSING.CATEGORIA_CASE) {
