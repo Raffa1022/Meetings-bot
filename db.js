@@ -675,6 +675,35 @@ const moderation = {
         const doc = await ModerationModel.findOne(MOD_ID, { protected: 1 }).lean();
         return doc?.protected || [];
     },
+
+    // --- Marked for Death (Lista Morti) ---
+    async isMarkedForDeath(userId) {
+        const doc = await ModerationModel.findOne(
+            { ...MOD_ID, 'markedForDeath.userId': userId }, { _id: 1 }
+        ).lean();
+        return !!doc;
+    },
+
+    async addMarkedForDeath(userId, userTag) {
+        return ModerationModel.updateOne(MOD_ID, {
+            $push: { markedForDeath: { userId, userTag, timestamp: new Date() } }
+        });
+    },
+
+    async removeMarkedForDeath(userId) {
+        return ModerationModel.updateOne(MOD_ID, {
+            $pull: { markedForDeath: { userId } }
+        });
+    },
+
+    async getMarkedForDeath() {
+        const doc = await ModerationModel.findOne(MOD_ID, { markedForDeath: 1 }).lean();
+        return doc?.markedForDeath || [];
+    },
+
+    async clearMarkedForDeath() {
+        return ModerationModel.updateOne(MOD_ID, { $set: { markedForDeath: [] } });
+    },
 };
 
 module.exports = { housing, queue, meeting, ability, moderation };
