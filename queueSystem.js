@@ -200,7 +200,8 @@ async function executeHousingAction(queueItem) {
 
             if (reaction.emoji.name === '✅') {
                 await msg.reply("✅ Qualcuno ha aperto.");
-                await enterHouse(member, fromChannel, targetChannel, `👋 ${member} è entrato.`, false);
+                // FIX: Forza narrazione anche se il ruolo è cambiato (dopo !cambio)
+                await enterHouse(member, fromChannel, targetChannel, `👋 ${member} è entrato.`, false, true);
             } else {
                 await msg.reply("❌ Qualcuno ha rifiutato.");
                 const present = [];
@@ -229,10 +230,12 @@ async function executeHousingAction(queueItem) {
 
             if (reason === 'everyone_left') {
                 await msg.reply("🚪 La casa si è svuotata.");
-                await enterHouse(member, fromChannel, targetChannel, `👋 ${member} è entrato (casa libera).`, false);
+                // FIX: Forza narrazione anche se il ruolo è cambiato (dopo !cambio)
+                await enterHouse(member, fromChannel, targetChannel, `👋 ${member} è entrato (casa libera).`, false, true);
             } else if (collected.size === 0 && reason !== 'limit') {
                 await msg.reply("⏳ Nessuno ha risposto. La porta viene forzata.");
-                await enterHouse(member, fromChannel, targetChannel, `👋 ${member} è entrato.`, false);
+                // FIX: Forza narrazione anche se il ruolo è cambiato (dopo !cambio)
+                await enterHouse(member, fromChannel, targetChannel, `👋 ${member} è entrato.`, false, true);
             }
         });
     }
