@@ -71,9 +71,10 @@ queueSchema.index({ userId: 1, status: 1, type: 1 });
 // ==========================================
 const moderationSchema = new mongoose.Schema({
     id: { type: String, default: 'main_moderation', index: true },
-    blockedVB: { type: Array, default: [] },   // [{ userId, userTag, timestamp }]
-    blockedRB: { type: Array, default: [] },   // [{ userId, userTag, timestamp }]
-    protected: { type: Array, default: [] }    // [{ userId, userTag, timestamp }]
+    blockedVB: { type: Array, default: [] },       // [{ userId, userTag, timestamp }]
+    blockedRB: { type: Array, default: [] },       // [{ userId, userTag, timestamp }]
+    protected: { type: Array, default: [] },       // [{ userId, userTag, timestamp }]
+    markedForDeath: { type: Array, default: [] }   // [{ userId, userTag, timestamp }] - Lista morti
 }, { minimize: false, versionKey: false });
 
 // ==========================================
@@ -123,4 +124,3 @@ module.exports = {
     QueueModel,
     ModerationModel,
 };
-
