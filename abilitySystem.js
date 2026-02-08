@@ -20,6 +20,10 @@ module.exports = function initAbilitySystem(client) {
         if (!message.member.roles.cache.has(RUOLI.ABILITA))
             return message.reply("⛔ Non possiedi l'abilità necessaria.");
 
+        // Check Roleblock
+        const isRB = await db.moderation.isBlockedRB(message.author.id);
+        if (isRB) return message.reply("🚫 Sei in **Roleblock**! Non puoi usare !abilità.");
+
         const row = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
                 .setCustomId('btn_open_ability')
@@ -36,6 +40,9 @@ module.exports = function initAbilitySystem(client) {
         if (interaction.isButton() && interaction.customId === 'btn_open_ability') {
             if (!interaction.member.roles.cache.has(RUOLI.ABILITA))
                 return interaction.reply({ content: "⛔ Non hai il ruolo.", ephemeral: true });
+
+            const isRBBtn = await db.moderation.isBlockedRB(interaction.user.id);
+            if (isRBBtn) return interaction.reply({ content: "🚫 Sei in **Roleblock**!", ephemeral: true });
 
             const modal = new ModalBuilder()
                 .setCustomId('modal_ability_submit')
