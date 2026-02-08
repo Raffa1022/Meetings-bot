@@ -130,13 +130,51 @@ module.exports = function initModerationSystem(client) {
             let partnerProt = false;
             if (partner) partnerProt = await db.moderation.isProtected(partner.id);
 
+            // Se protetto: mostra messaggio con bottoni
             if (isProt || partnerProt) {
-                let msg = `🛡️ ⚠️ **ATTENZIONE**:`;
-                if (isProt) msg += ` ${mention} È PROTETTO!`;
-                if (partnerProt) msg += ` ${partner} (partner) È PROTETTO!`;
-                message.reply(msg);
+                const protectedUsers = [];
+                if (isProt) protectedUsers.push(mention);
+                if (partnerProt && partner) protectedUsers.push(partner);
+
+                const embed = new EmbedBuilder()
+                    .setTitle('🛡️ ⚠️ ATTENZIONE: GIOCATORE PROTETTO')
+                    .setColor('Orange')
+                    .setDescription(
+                        protectedUsers.map(u => `${u} È PROTETTO!`).join('\n') +
+                        '\n\n**Cosa vuoi fare?**\n✅ = Rimuovi protezione\n❌ = Aggiungi alla lista morti'
+                    );
+
+                const row = new ActionRowBuilder().addComponents(
+                    new ButtonBuilder()
+                        .setCustomId(`attack_remove_${mention.id}`)
+                        .setLabel('✅ Rimuovi Protezione')
+                        .setStyle(ButtonStyle.Success),
+                    new ButtonBuilder()
+                        .setCustomId(`attack_kill_${mention.id}`)
+                        .setLabel('❌ Aggiungi a Lista Morti')
+                        .setStyle(ButtonStyle.Danger)
+                );
+
+                await message.reply({ embeds: [embed], components: [row] });
             } else {
-                message.reply(`⚔️ **VIA LIBERA**: ${mention} NON è protetto.${partner ? ` Nemmeno ${partner} (partner).` : ''}`);
+                // Non protetto: aggiungi subito a lista morti
+                const alreadyMarked = await db.moderation.isMarkedForDeath(mention.id);
+                if (!alreadyMarked) {
+                    await db.moderation.addMarkedForDeath(mention.id, mention.user.tag);
+                }
+
+                let response = `⚔️ **VIA LIBERA**: ${mention} NON è protetto. Aggiunto alla lista morti.`;
+
+                // Aggiungi anche il partner
+                if (partner) {
+                    const partnerMarked = await db.moderation.isMarkedForDeath(partner.id);
+                    if (!partnerMarked) {
+                        await db.moderation.addMarkedForDeath(partner.id, partner.user.tag);
+                        response += `\n⚔️ Anche ${partner} (partner) aggiunto alla lista morti.`;
+                    }
+                }
+
+                message.reply(response);
             }
         }
 
@@ -205,75 +243,109 @@ module.exports = function initModerationSystem(client) {
         // ===================== MORTE =====================
         else if (command === 'morte') {
             if (!isAdmin(message.member)) return message.reply("⛔ Solo admin.");
-            const targetMember = message.mentions.members.first();
-            if (!targetMember) return message.reply("❌ Uso: `!morte @Utente`");
+            
+            // Leggi lista morti
+            const markedList = await db.moderation.getMarkedForDeath();
+            
+            if (markedList.length === 0) {
+                return message.reply("✅ Nessun giocatore nella lista morti.");
+            }
+
+            await message.reply(`⏳ **Inizio processamento lista morti (${markedList.length} giocatori)...**`);
 
             const guild = message.guild;
-            const partner = await findPartner(targetMember, guild);
+            let processedCount = 0;
+            const results = [];
+            const processedUsers = new Set(); // Deduplicazione: evita doppio processamento
 
-            // 1. Trova TUTTE le case dove il giocatore ha overwrites
-            const housesWithPlayer = guild.channels.cache.filter(c =>
-                c.parentId === HOUSING.CATEGORIA_CASE &&
-                c.type === ChannelType.GuildText &&
-                c.permissionOverwrites.cache.has(targetMember.id)
-            );
+            for (const entry of markedList) {
+                // Se già processato come partner di un'altra entry, salta
+                if (processedUsers.has(entry.userId)) continue;
 
-            // 2. Rimuovi da tutte le case + cancella primo pin del bot
-            for (const [, house] of housesWithPlayer) {
-                // Rimuovi permessi giocatore
-                await house.permissionOverwrites.delete(targetMember.id).catch(() => {});
-
-                // Rimuovi permessi partner (sponsor)
-                if (partner && house.permissionOverwrites.cache.has(partner.id)) {
-                    await house.permissionOverwrites.delete(partner.id).catch(() => {});
+                const targetMember = await guild.members.fetch(entry.userId).catch(() => null);
+                if (!targetMember) {
+                    results.push(`⚠️ ${entry.userTag} (ID: ${entry.userId}) non trovato - saltato.`);
+                    continue;
                 }
 
-                // Elimina il PRIMO messaggio pinnato del bot (ordine cronologico)
-                try {
-                    const pinnedMessages = await house.messages.fetchPinned();
-                    const botPins = pinnedMessages
-                        .filter(msg => msg.author.id === client.user.id)
-                        .sort((a, b) => a.createdTimestamp - b.createdTimestamp);
-                    if (botPins.size > 0) await botPins.first().delete();
-                } catch {}
+                processedUsers.add(targetMember.id);
+                const partner = await findPartner(targetMember, guild);
+                if (partner) processedUsers.add(partner.id);
 
-                await house.send(`☠️ **${targetMember.displayName}** è morto.`);
+                // 1. Trova TUTTE le case dove il giocatore ha overwrites
+                const housesWithPlayer = guild.channels.cache.filter(c =>
+                    c.parentId === HOUSING.CATEGORIA_CASE &&
+                    c.type === ChannelType.GuildText &&
+                    c.permissionOverwrites.cache.has(targetMember.id)
+                );
+
+                // 2. Rimuovi da tutte le case + cancella primo pin del bot
+                for (const [, house] of housesWithPlayer) {
+                    // Rimuovi permessi giocatore
+                    await house.permissionOverwrites.delete(targetMember.id).catch(() => {});
+
+                    // Rimuovi permessi partner (sponsor)
+                    if (partner && house.permissionOverwrites.cache.has(partner.id)) {
+                        await house.permissionOverwrites.delete(partner.id).catch(() => {});
+                    }
+
+                    // Elimina il PRIMO messaggio pinnato del bot (ordine cronologico)
+                    try {
+                        const pinnedMessages = await house.messages.fetchPinned();
+                        const botPins = pinnedMessages
+                            .filter(msg => msg.author.id === client.user.id)
+                            .sort((a, b) => a.createdTimestamp - b.createdTimestamp);
+                        if (botPins.size > 0) await botPins.first().delete();
+                    } catch {}
+
+                    await house.send(`☠️ **${targetMember.displayName}** è morto.`);
+                }
+
+                // 3. Rimuovi proprietà casa
+                await db.housing.removeHome(targetMember.id);
+                if (partner) await db.housing.removeHome(partner.id);
+
+                // 4. Cancella azioni pendenti
+                await Promise.all([
+                    db.queue.deleteUserPendingActions(targetMember.id, ['KNOCK', 'RETURN', 'ABILITY']),
+                    db.housing.removePendingKnock(targetMember.id),
+                    db.housing.clearActiveKnock(targetMember.id),
+                ]);
+
+                // 5. Cambio ruoli: ALIVE → DEAD, SPONSOR → SPONSOR_DEAD
+                const roleOps = [];
+                if (targetMember.roles.cache.has(RUOLI.ALIVE)) {
+                    roleOps.push(targetMember.roles.remove(RUOLI.ALIVE).catch(() => {}));
+                    roleOps.push(targetMember.roles.add(RUOLI.DEAD).catch(() => {}));
+                    results.push(`☠️ ${targetMember.displayName} → <@&${RUOLI.DEAD}>`);
+                } else if (targetMember.roles.cache.has(RUOLI.SPONSOR)) {
+                    roleOps.push(targetMember.roles.remove(RUOLI.SPONSOR).catch(() => {}));
+                    roleOps.push(targetMember.roles.add(RUOLI.SPONSOR_DEAD).catch(() => {}));
+                    results.push(`💀 ${targetMember.displayName} (sponsor) → <@&${RUOLI.SPONSOR_DEAD}>`);
+                }
+
+                // 6. Cambio ruoli partner
+                if (partner) {
+                    if (partner.roles.cache.has(RUOLI.SPONSOR)) {
+                        roleOps.push(partner.roles.remove(RUOLI.SPONSOR).catch(() => {}));
+                        roleOps.push(partner.roles.add(RUOLI.SPONSOR_DEAD).catch(() => {}));
+                        results.push(`💀 ${partner.displayName} (partner) → <@&${RUOLI.SPONSOR_DEAD}>`);
+                    } else if (partner.roles.cache.has(RUOLI.ALIVE)) {
+                        roleOps.push(partner.roles.remove(RUOLI.ALIVE).catch(() => {}));
+                        roleOps.push(partner.roles.add(RUOLI.DEAD).catch(() => {}));
+                        results.push(`☠️ ${partner.displayName} (partner) → <@&${RUOLI.DEAD}>`);
+                    }
+                }
+
+                await Promise.all(roleOps);
+                processedCount++;
             }
 
-            // 3. Rimuovi proprietà casa
-            await db.housing.removeHome(targetMember.id);
-            if (partner) await db.housing.removeHome(partner.id);
+            // Pulisci lista morti
+            await db.moderation.clearMarkedForDeath();
 
-            // 4. Cancella azioni pendenti
-            await Promise.all([
-                db.queue.deleteUserPendingActions(targetMember.id, ['KNOCK', 'RETURN', 'ABILITY']),
-                db.housing.removePendingKnock(targetMember.id),
-                db.housing.clearActiveKnock(targetMember.id),
-            ]);
-
-            // 5. Cambio ruoli: Giocatore ALIVE → DEAD
-            const roleOps = [];
-            if (targetMember.roles.cache.has(RUOLI.ALIVE)) {
-                roleOps.push(targetMember.roles.remove(RUOLI.ALIVE).catch(() => {}));
-            }
-            roleOps.push(targetMember.roles.add(RUOLI.DEAD).catch(() => {}));
-
-            // 6. Cambio ruoli: Sponsor SPONSOR → SPONSOR_DEAD
-            if (partner && partner.roles.cache.has(RUOLI.SPONSOR)) {
-                roleOps.push(partner.roles.remove(RUOLI.SPONSOR).catch(() => {}));
-                roleOps.push(partner.roles.add(RUOLI.SPONSOR_DEAD).catch(() => {}));
-            }
-
-            await Promise.all(roleOps);
-
-            let response = `☠️ **${targetMember.displayName}** è morto. Ruolo cambiato a <@&${RUOLI.DEAD}>.`;
-            if (partner) {
-                response += `\n💀 **${partner.displayName}** (sponsor) → <@&${RUOLI.SPONSOR_DEAD}>.`;
-            }
-            if (housesWithPlayer.size === 0) {
-                response += `\n⚠️ Il giocatore non era in nessuna casa.`;
-            }
-            message.reply(response);
+            const summary = `✅ **Processo completato!** ${processedCount}/${markedList.length} giocatori processati.\n\n${results.join('\n')}`;
+            message.reply(summary);
         }
 
         // ===================== OSAB =====================
@@ -303,6 +375,72 @@ module.exports = function initModerationSystem(client) {
 
     // --- INTERAZIONI OSAB ---
     client.on('interactionCreate', async interaction => {
+        // ===================== BOTTONI ATTACCO =====================
+        if (interaction.isButton() && interaction.customId.startsWith('attack_')) {
+            if (!isAdmin(interaction.member))
+                return interaction.reply({ content: "❌ Solo admin.", ephemeral: true });
+
+            const parts = interaction.customId.split('_');
+            const action = parts[1]; // 'remove' o 'kill'
+            const userId = parts[2];
+
+            const guild = interaction.guild;
+            const member = await guild.members.fetch(userId).catch(() => null);
+            if (!member) return interaction.reply({ content: "❌ Utente non trovato.", ephemeral: true });
+
+            const partner = await findPartner(member, guild);
+
+            if (action === 'remove') {
+                // Rimuovi protezione
+                const wasProt = await db.moderation.isProtected(userId);
+                if (wasProt) await db.moderation.removeProtected(userId);
+
+                let response = `✅ Protezione rimossa per ${member}.`;
+
+                if (partner) {
+                    const partnerProt = await db.moderation.isProtected(partner.id);
+                    if (partnerProt) {
+                        await db.moderation.removeProtected(partner.id);
+                        response += `\n✅ Protezione rimossa anche per ${partner} (partner).`;
+                    }
+                }
+
+                await interaction.update({ 
+                    content: response, 
+                    embeds: [], 
+                    components: [] 
+                });
+            } else if (action === 'kill') {
+                // Aggiungi a lista morti
+                const alreadyMarked = await db.moderation.isMarkedForDeath(userId);
+                if (!alreadyMarked) {
+                    await db.moderation.addMarkedForDeath(userId, member.user.tag);
+                }
+
+                let response = `☠️ ${member} aggiunto alla lista morti.`;
+
+                if (partner) {
+                    const partnerMarked = await db.moderation.isMarkedForDeath(partner.id);
+                    if (!partnerMarked) {
+                        await db.moderation.addMarkedForDeath(partner.id, partner.user.tag);
+                        response += `\n☠️ Anche ${partner} (partner) aggiunto alla lista morti.`;
+                    }
+                }
+
+                // Rimuovi protezione se presente
+                await Promise.all([
+                    db.moderation.removeProtected(userId),
+                    partner ? db.moderation.removeProtected(partner.id) : Promise.resolve()
+                ]);
+
+                await interaction.update({ 
+                    content: response, 
+                    embeds: [], 
+                    components: [] 
+                });
+            }
+        }
+
         // ===================== MENU OSAB =====================
         if (interaction.isStringSelectMenu() && interaction.customId === 'osab_select') {
             if (!isAdmin(interaction.member))
