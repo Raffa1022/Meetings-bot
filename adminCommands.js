@@ -218,29 +218,90 @@ module.exports = async function handleAdminCommand(message, command, args, clien
         const ownerId = Object.keys(allHomes).find(k => allHomes[k] === targetChannel.id);
         const destroyed = await db.housing.getDestroyedHouses();
 
+        // FIX: Traccia coppie già spostate per evitare doppio spostamento
+        const movedPlayers = new Set();
+
         for (const member of membersInside) {
+            // Se già spostato come parte di una coppia, salta
+            if (movedPlayers.has(member.id)) continue;
+
             const prevMode = await db.housing.getPlayerMode(member.id);
             if (prevMode !== 'HIDDEN') await targetChannel.send(`🚪 ${member} è uscito.`);
 
-            const isOwner = ownerId === member.id;
             await targetChannel.permissionOverwrites.delete(member.id).catch(() => {});
+
+            const isOwner = ownerId === member.id;
+
+            // FIX: Trova il partner (sponsor) per muoverlo insieme
+            let partner = null;
+            if (member.roles.cache.has(RUOLI.ALIVE)) {
+                const sponsorId = await db.meeting.findSponsor(member.id);
+                if (sponsorId) {
+                    partner = membersInside.find(m => m.id === sponsorId);
+                }
+            } else if (member.roles.cache.has(RUOLI.DEAD)) {
+                const sponsorId = await db.meeting.findSponsor(member.id);
+                if (sponsorId) {
+                    partner = membersInside.find(m => m.id === sponsorId);
+                }
+            } else if (member.roles.cache.has(RUOLI.SPONSOR)) {
+                const playerId = await db.meeting.findPlayer(member.id);
+                if (playerId) {
+                    partner = membersInside.find(m => m.id === playerId);
+                }
+            } else if (member.roles.cache.has(RUOLI.SPONSOR_DEAD)) {
+                const playerId = await db.meeting.findPlayer(member.id);
+                if (playerId) {
+                    partner = membersInside.find(m => m.id === playerId);
+                }
+            }
 
             if (isOwner) {
                 const randomHouse = message.guild.channels.cache
                     .filter(c => c.parentId === HOUSING.CATEGORIA_CASE && c.id !== targetChannel.id && !destroyed.includes(c.id))
                     .random();
-                if (randomHouse) await movePlayer(member, targetChannel, randomHouse, `👋 **${member}** è entrato.`, false);
+                if (randomHouse) {
+                    await movePlayer(member, targetChannel, randomHouse, `👋 **${member}** è entrato.`, false);
+                    movedPlayers.add(member.id);
+                    
+                    // FIX: Sposta anche il partner nella stessa casa
+                    if (partner) {
+                        await targetChannel.permissionOverwrites.delete(partner.id).catch(() => {});
+                        await movePlayer(partner, targetChannel, randomHouse, null, false);
+                        movedPlayers.add(partner.id);
+                    }
+                }
             } else {
                 const homeId = allHomes[member.id];
                 const hasSafe = homeId && homeId !== targetChannel.id && !destroyed.includes(homeId);
                 if (hasSafe) {
                     const homeCh = message.guild.channels.cache.get(homeId);
-                    if (homeCh) await movePlayer(member, targetChannel, homeCh, `🏠 ${member} è ritornato.`, false);
+                    if (homeCh) {
+                        await movePlayer(member, targetChannel, homeCh, `🏠 ${member} è ritornato.`, false);
+                        movedPlayers.add(member.id);
+                        
+                        // FIX: Sposta anche il partner nella stessa casa
+                        if (partner) {
+                            await targetChannel.permissionOverwrites.delete(partner.id).catch(() => {});
+                            await movePlayer(partner, targetChannel, homeCh, null, false);
+                            movedPlayers.add(partner.id);
+                        }
+                    }
                 } else if (member.roles.cache.hasAny(...RUOLI_PERMESSI)) {
                     const randomHouse = message.guild.channels.cache
                         .filter(c => c.parentId === HOUSING.CATEGORIA_CASE && c.id !== targetChannel.id && !destroyed.includes(c.id))
                         .random();
-                    if (randomHouse) await movePlayer(member, targetChannel, randomHouse, `👋 **${member}** è entrato.`, false);
+                    if (randomHouse) {
+                        await movePlayer(member, targetChannel, randomHouse, `👋 **${member}** è entrato.`, false);
+                        movedPlayers.add(member.id);
+                        
+                        // FIX: Sposta anche il partner nella stessa casa
+                        if (partner) {
+                            await targetChannel.permissionOverwrites.delete(partner.id).catch(() => {});
+                            await movePlayer(partner, targetChannel, randomHouse, null, false);
+                            movedPlayers.add(partner.id);
+                        }
+                    }
                 }
             }
         }
