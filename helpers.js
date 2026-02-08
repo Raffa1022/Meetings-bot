@@ -30,14 +30,17 @@ function getOccupants(channel, excludeId = null) {
 
 /**
  * Trova il partner abbinato da spostare insieme (bidirezionale).
- * Player → trova sponsor, Sponsor → trova player.
+ * ALIVE → trova SPONSOR
+ * SPONSOR → trova ALIVE
+ * DEAD → trova SPONSOR_DEAD
+ * SPONSOR_DEAD → trova DEAD
  * Usa il collegamento dalla tabella (activeGameSlots).
  */
 async function getSponsorsToMove(member, guild) {
     const db = require('./db'); // lazy require per evitare dipendenze circolari
 
-    if (member.roles.cache.has(RUOLI.ALIVE) || member.roles.cache.has(RUOLI.DEAD)) {
-        // Player → trova sponsor
+    // Player ALIVE → trova sponsor SPONSOR
+    if (member.roles.cache.has(RUOLI.ALIVE)) {
         const sponsorId = await db.meeting.findSponsor(member.id);
         if (!sponsorId) return [];
         try {
@@ -46,13 +49,36 @@ async function getSponsorsToMove(member, guild) {
                 return [sponsor];
             }
         } catch {}
-    } else if (member.roles.cache.has(RUOLI.SPONSOR)) {
-        // Sponsor → trova player abbinato
+    }
+    // Player DEAD → trova sponsor SPONSOR_DEAD
+    else if (member.roles.cache.has(RUOLI.DEAD)) {
+        const sponsorId = await db.meeting.findSponsor(member.id);
+        if (!sponsorId) return [];
+        try {
+            const sponsor = await guild.members.fetch(sponsorId);
+            if (sponsor && !sponsor.user.bot && sponsor.roles.cache.has(RUOLI.SPONSOR_DEAD)) {
+                return [sponsor];
+            }
+        } catch {}
+    }
+    // Sponsor SPONSOR → trova player ALIVE
+    else if (member.roles.cache.has(RUOLI.SPONSOR)) {
         const playerId = await db.meeting.findPlayer(member.id);
         if (!playerId) return [];
         try {
             const player = await guild.members.fetch(playerId);
-            if (player && !player.user.bot && (player.roles.cache.has(RUOLI.ALIVE) || player.roles.cache.has(RUOLI.DEAD))) {
+            if (player && !player.user.bot && player.roles.cache.has(RUOLI.ALIVE)) {
+                return [player];
+            }
+        } catch {}
+    }
+    // Sponsor SPONSOR_DEAD → trova player DEAD
+    else if (member.roles.cache.has(RUOLI.SPONSOR_DEAD)) {
+        const playerId = await db.meeting.findPlayer(member.id);
+        if (!playerId) return [];
+        try {
+            const player = await guild.members.fetch(playerId);
+            if (player && !player.user.bot && player.roles.cache.has(RUOLI.DEAD)) {
                 return [player];
             }
         } catch {}
