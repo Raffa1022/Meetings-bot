@@ -29,6 +29,10 @@ module.exports = function registerPlayerCommands(client) {
                 return message.channel.send("⛔ Gli sponsor non possono usare il comando !torna.");
             }
 
+            // Check Visitblock
+            const isVB = await db.moderation.isBlockedVB(message.author.id);
+            if (isVB) return message.channel.send("🚫 Sei in **Visitblock**! Non puoi usare !torna.");
+
             const homeId = await db.housing.getHome(message.author.id);
             if (!homeId) return message.channel.send("❌ **Non hai una casa!**");
 
@@ -87,6 +91,10 @@ module.exports = function registerPlayerCommands(client) {
 
             if (message.member.roles.cache.has(RUOLI.SPONSOR) || message.member.roles.cache.has(RUOLI.SPONSOR_DEAD))
                 return message.channel.send("⛔ Gli sponsor non possono usare il comando !bussa.");
+
+            // Check Visitblock
+            const isVBBussa = await db.moderation.isBlockedVB(message.author.id);
+            if (isVBBussa) return message.channel.send("🚫 Sei in **Visitblock**! Non puoi usare !bussa.");
 
             // Controllo bussata attiva in attesa di risposta
             const activeKnock = await db.housing.getActiveKnock(message.author.id);
