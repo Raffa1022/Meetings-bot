@@ -44,7 +44,7 @@ module.exports = function initModerationSystem(client) {
 
         // ===================== VB =====================
         if (command === 'vb') {
-            if (!isAdmin(message.member)) return;
+            if (!isAdmin(message.member)) return message.reply("⛔ Solo admin.");
             const mention = message.mentions.members.first();
             if (!mention) return message.reply("❌ Uso: `!vb @Utente`");
 
@@ -70,7 +70,7 @@ module.exports = function initModerationSystem(client) {
 
         // ===================== RB =====================
         else if (command === 'rb') {
-            if (!isAdmin(message.member)) return;
+            if (!isAdmin(message.member)) return message.reply("⛔ Solo admin.");
             const mention = message.mentions.members.first();
             if (!mention) return message.reply("❌ Uso: `!rb @Utente`");
 
@@ -94,7 +94,7 @@ module.exports = function initModerationSystem(client) {
 
         // ===================== PROTEZIONE =====================
         else if (command === 'protezione') {
-            if (!isAdmin(message.member)) return;
+            if (!isAdmin(message.member)) return message.reply("⛔ Solo admin.");
             const mention = message.mentions.members.first();
             if (!mention) return message.reply("❌ Uso: `!protezione @Utente`");
 
@@ -118,7 +118,7 @@ module.exports = function initModerationSystem(client) {
 
         // ===================== ATTACCO =====================
         else if (command === 'attacco') {
-            if (!isAdmin(message.member)) return;
+            if (!isAdmin(message.member)) return message.reply("⛔ Solo admin.");
             const mention = message.mentions.members.first();
             if (!mention) return message.reply("❌ Uso: `!attacco @Utente`");
 
@@ -142,7 +142,7 @@ module.exports = function initModerationSystem(client) {
 
         // ===================== CURA =====================
         else if (command === 'cura') {
-            if (!isAdmin(message.member)) return;
+            if (!isAdmin(message.member)) return message.reply("⛔ Solo admin.");
             const type = args[0]?.toLowerCase();
             const mention = message.mentions.members.first();
 
@@ -204,7 +204,7 @@ module.exports = function initModerationSystem(client) {
 
         // ===================== MORTE =====================
         else if (command === 'morte') {
-            if (!isAdmin(message.member)) return;
+            if (!isAdmin(message.member)) return message.reply("⛔ Solo admin.");
             const targetMember = message.mentions.members.first();
             if (!targetMember) return message.reply("❌ Uso: `!morte @Utente`");
 
@@ -278,7 +278,7 @@ module.exports = function initModerationSystem(client) {
 
         // ===================== OSAB =====================
         else if (command === 'osab') {
-            if (!isAdmin(message.member)) return;
+            if (!isAdmin(message.member)) return message.reply("⛔ Solo admin.");
 
             const selectMenu = new StringSelectMenuBuilder()
                 .setCustomId('osab_select')
@@ -312,19 +312,23 @@ module.exports = function initModerationSystem(client) {
             let listData = [];
             let title = '';
             let type = '';
+            let statusLabel = '';
 
             if (selection === 'list_vb') {
                 listData = await db.moderation.getBlockedVB();
                 title = '🚫 Lista Visitblock';
                 type = 'vb';
+                statusLabel = 'visitbloccato';
             } else if (selection === 'list_rb') {
                 listData = await db.moderation.getBlockedRB();
                 title = '❌ Lista Roleblock';
                 type = 'rb';
+                statusLabel = 'rolebloccato';
             } else if (selection === 'list_protected') {
                 listData = await db.moderation.getProtected();
                 title = '🛡️ Lista Protezioni';
                 type = 'protected';
+                statusLabel = 'protetto';
             }
 
             if (listData.length === 0) {
@@ -335,7 +339,7 @@ module.exports = function initModerationSystem(client) {
                 });
             }
 
-            const statusLabel = type === 'vb' ? 'visitbloccato' : type === 'rb' ? 'rolebloccato' : 'protetto';
+            // Costruisci descrizione lista
             const description = listData.map((entry, i) =>
                 `**${i + 1}.** <@${entry.userId}> ${statusLabel}`
             ).join('\n');
@@ -345,13 +349,11 @@ module.exports = function initModerationSystem(client) {
                 .setTitle(title)
                 .setDescription(description);
 
-            // Bottoni rimozione (max 5 per riga, max 25)
+            // Bottoni rimozione (max 5 per riga, max 20 elementi per non superare 5 righe totali)
             const buttonRows = [];
             let currentRow = new ActionRowBuilder();
 
-            listData.forEach((entry, index) => {
-                if (index >= 20) return; // Limite sicuro (menu + 4 righe bottoni = 5 righe)
-
+            listData.slice(0, 20).forEach((entry, index) => {
                 currentRow.addComponents(
                     new ButtonBuilder()
                         .setCustomId(`osab_remove_${type}_${entry.userId}`)
@@ -390,17 +392,21 @@ module.exports = function initModerationSystem(client) {
             // Aggiorna la vista ricaricando i dati freschi
             let listData = [];
             let title = '';
+            let statusLabel = '';
             const listType = type;
 
             if (listType === 'vb') {
                 listData = await db.moderation.getBlockedVB();
                 title = '🚫 Lista Visitblock';
+                statusLabel = 'visitbloccato';
             } else if (listType === 'rb') {
                 listData = await db.moderation.getBlockedRB();
                 title = '❌ Lista Roleblock';
+                statusLabel = 'rolebloccato';
             } else if (listType === 'protected') {
                 listData = await db.moderation.getProtected();
                 title = '🛡️ Lista Protezioni';
+                statusLabel = 'protetto';
             }
 
             if (listData.length === 0) {
@@ -411,7 +417,6 @@ module.exports = function initModerationSystem(client) {
                 });
             }
 
-            const statusLabel = listType === 'vb' ? 'visitbloccato' : listType === 'rb' ? 'rolebloccato' : 'protetto';
             const description = listData.map((entry, i) =>
                 `**${i + 1}.** <@${entry.userId}> ${statusLabel}`
             ).join('\n');
@@ -424,8 +429,7 @@ module.exports = function initModerationSystem(client) {
             const buttonRows = [];
             let currentRow = new ActionRowBuilder();
 
-            listData.forEach((entry, index) => {
-                if (index >= 20) return;
+            listData.slice(0, 20).forEach((entry, index) => {
                 currentRow.addComponents(
                     new ButtonBuilder()
                         .setCustomId(`osab_remove_${listType}_${entry.userId}`)
