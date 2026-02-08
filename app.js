@@ -43,7 +43,7 @@ const client = new Client({
 const ADMIN_COMMANDS = new Set([
     'assegnacasa', 'visite', 'aggiunta', 'resetvisite', 'sblocca',
     'notte', 'giorno', 'distruzione', 'ricostruzione', 'pubblico',
-    'sposta', 'dove', 'multipla', 'ritirata', 'ram', 'memoria'
+    'sposta', 'dove', 'multipla', 'ritirata', 'ram', 'memoria', 'cancella'
 ]);
 
 client.on('messageCreate', async message => {
