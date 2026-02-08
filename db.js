@@ -192,6 +192,10 @@ const housing = {
         return HousingModel.updateOne(H_ID, { $unset: { [`activeKnocks.${userId}`]: '' } });
     },
 
+    async clearAllActiveKnocks() {
+        return HousingModel.updateOne(H_ID, { $set: { activeKnocks: {} } });
+    },
+
     async getActiveKnock(userId) {
         const doc = await HousingModel.findOne(H_ID, { [`activeKnocks.${userId}`]: 1 }).lean();
         return doc?.activeKnocks?.[userId] || null;
@@ -313,6 +317,11 @@ const housing = {
         const doc = await HousingModel.findOne(H_ID, { playerHomes: 1 }).lean();
         if (!doc?.playerHomes) return null;
         return Object.keys(doc.playerHomes).find(uid => doc.playerHomes[uid] === channelId) || null;
+    },
+
+    // Rimuovi tutte le proprietà delle case
+    async clearAllHomes() {
+        return HousingModel.updateOne(H_ID, { $set: { playerHomes: {} } });
     },
 };
 
