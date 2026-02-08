@@ -3,10 +3,11 @@
 // NESSUN dbCache. NESSUN salvataggio completo.
 // Ogni funzione fa UNA query chirurgica.
 // ==========================================
-const { HousingModel, MeetingModel, AbilityModel, QueueModel } = require('./database');
+const { HousingModel, MeetingModel, AbilityModel, QueueModel, ModerationModel } = require('./database');
 
 const H_ID = { id: 'main_housing' };
 const M_ID = { id: 'main_meeting' };
+const MOD_ID = { id: 'main_moderation' };
 
 // ==========================================
 // 🏠 HOUSING - LETTURE
@@ -595,4 +596,84 @@ const ability = {
     },
 };
 
-module.exports = { housing, queue, meeting, ability };
+// ==========================================
+// 🛡️ MODERAZIONE - 100% ATOMICO
+// ==========================================
+const moderation = {
+    // --- VB (Visitblock) ---
+    async isBlockedVB(userId) {
+        const doc = await ModerationModel.findOne(
+            { ...MOD_ID, 'blockedVB.userId': userId }, { _id: 1 }
+        ).lean();
+        return !!doc;
+    },
+
+    async addBlockedVB(userId, userTag) {
+        return ModerationModel.updateOne(MOD_ID, {
+            $push: { blockedVB: { userId, userTag, timestamp: new Date() } }
+        });
+    },
+
+    async removeBlockedVB(userId) {
+        return ModerationModel.updateOne(MOD_ID, {
+            $pull: { blockedVB: { userId } }
+        });
+    },
+
+    async getBlockedVB() {
+        const doc = await ModerationModel.findOne(MOD_ID, { blockedVB: 1 }).lean();
+        return doc?.blockedVB || [];
+    },
+
+    // --- RB (Roleblock) ---
+    async isBlockedRB(userId) {
+        const doc = await ModerationModel.findOne(
+            { ...MOD_ID, 'blockedRB.userId': userId }, { _id: 1 }
+        ).lean();
+        return !!doc;
+    },
+
+    async addBlockedRB(userId, userTag) {
+        return ModerationModel.updateOne(MOD_ID, {
+            $push: { blockedRB: { userId, userTag, timestamp: new Date() } }
+        });
+    },
+
+    async removeBlockedRB(userId) {
+        return ModerationModel.updateOne(MOD_ID, {
+            $pull: { blockedRB: { userId } }
+        });
+    },
+
+    async getBlockedRB() {
+        const doc = await ModerationModel.findOne(MOD_ID, { blockedRB: 1 }).lean();
+        return doc?.blockedRB || [];
+    },
+
+    // --- Protezione ---
+    async isProtected(userId) {
+        const doc = await ModerationModel.findOne(
+            { ...MOD_ID, 'protected.userId': userId }, { _id: 1 }
+        ).lean();
+        return !!doc;
+    },
+
+    async addProtected(userId, userTag) {
+        return ModerationModel.updateOne(MOD_ID, {
+            $push: { protected: { userId, userTag, timestamp: new Date() } }
+        });
+    },
+
+    async removeProtected(userId) {
+        return ModerationModel.updateOne(MOD_ID, {
+            $pull: { protected: { userId } }
+        });
+    },
+
+    async getProtected() {
+        const doc = await ModerationModel.findOne(MOD_ID, { protected: 1 }).lean();
+        return doc?.protected || [];
+    },
+};
+
+module.exports = { housing, queue, meeting, ability, moderation };
