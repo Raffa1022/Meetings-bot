@@ -2,11 +2,11 @@
 // 👮 COMANDI ADMIN HOUSING
 // assegnacasa, visite, aggiunta, resetvisite, sblocca,
 // notte, giorno, distruzione, ricostruzione, pubblico,
-// sposta, dove, multipla, ritirata, ram
+// sposta, dove, multipla, ritirata, ram, ritorno
 // ==========================================
 const { PermissionsBitField, ChannelType, EmbedBuilder } = require('discord.js');
 const mongoose = require('mongoose');
-const { HOUSING, RUOLI, RUOLI_PUBBLICI, RUOLI_PERMESSI, GIF } = require('./config');
+const { HOUSING, RUOLI, RUOLI_PUBBLICI, RUOLI_PERMESSI, GIF, QUEUE } = require('./config');
 const db = require('./db');
 const { movePlayer } = require('./playerMovement');
 const { isAdmin, formatName } = require('./helpers');
@@ -287,7 +287,8 @@ module.exports = async function handleAdminCommand(message, command, args, clien
                             movedPlayers.add(partner.id);
                         }
                     }
-                } else if (member.roles.cache.hasAny(...RUOLI_PERMESSI)) {
+                } else if (member.roles.cache.hasAny(...RUOLI_PERMESSI, RUOLI.DEAD, RUOLI.SPONSOR_DEAD)) {
+                    // FIX: Includi anche DEAD e SPONSOR_DEAD
                     const randomHouse = message.guild.channels.cache
                         .filter(c => c.parentId === HOUSING.CATEGORIA_CASE && c.id !== targetChannel.id && !destroyed.includes(c.id))
                         .random();
@@ -545,5 +546,106 @@ module.exports = async function handleAdminCommand(message, command, args, clien
             )
             .setTimestamp();
         message.reply({ embeds: [embed] });
+    }
+
+    // ===================== RITORNO =====================
+    else if (command === 'ritorno') {
+        await message.reply("⏳ **Inizio ritorno a casa di tutti i giocatori...**");
+
+        const allHomes = await db.housing.getAllHomes();
+        const destroyed = await db.housing.getDestroyedHouses();
+        
+        const allMembers = await message.guild.members.fetch();
+        const playersToProcess = allMembers.filter(m => 
+            !m.user.bot && 
+            (m.roles.cache.has(RUOLI.ALIVE) || m.roles.cache.has(RUOLI.SPONSOR))
+        );
+
+        let returnedCount = 0;
+        let alreadyHome = 0;
+        let noHomeCount = 0;
+        const noHomeList = [];
+        const processedNoHome = new Set(); // Evita doppio processamento partner
+
+        for (const [, member] of playersToProcess) {
+            const homeId = allHomes[member.id];
+            
+            // Nessuna casa o casa distrutta: aggiungi a lista morti (+ partner)
+            if (!homeId || destroyed.includes(homeId)) {
+                if (processedNoHome.has(member.id)) continue;
+
+                const alreadyMarked = await db.moderation.isMarkedForDeath(member.id);
+                if (!alreadyMarked) {
+                    await db.moderation.addMarkedForDeath(member.id, member.user.tag);
+                }
+                noHomeList.push(member);
+                noHomeCount++;
+                processedNoHome.add(member.id);
+
+                // Marca anche il partner
+                let partnerId = null;
+                if (member.roles.cache.has(RUOLI.ALIVE)) {
+                    partnerId = await db.meeting.findSponsor(member.id);
+                } else if (member.roles.cache.has(RUOLI.SPONSOR)) {
+                    partnerId = await db.meeting.findPlayer(member.id);
+                }
+                if (partnerId && !processedNoHome.has(partnerId)) {
+                    const partnerMarked = await db.moderation.isMarkedForDeath(partnerId);
+                    if (!partnerMarked) {
+                        const partnerMember = allMembers.get(partnerId);
+                        if (partnerMember) {
+                            await db.moderation.addMarkedForDeath(partnerId, partnerMember.user.tag);
+                            noHomeList.push(partnerMember);
+                            noHomeCount++;
+                        }
+                    }
+                    processedNoHome.add(partnerId);
+                }
+                continue;
+            }
+
+            const homeChannel = message.guild.channels.cache.get(homeId);
+            if (!homeChannel) continue;
+
+            // Trova dove si trova fisicamente
+            const currentHouse = message.guild.channels.cache.find(c =>
+                c.parentId === HOUSING.CATEGORIA_CASE &&
+                c.type === ChannelType.GuildText &&
+                c.permissionOverwrites.cache.has(member.id)
+            );
+
+            // Già a casa: salta
+            if (currentHouse && currentHouse.id === homeId) {
+                alreadyHome++;
+                continue;
+            }
+
+            // Sposta a casa
+            if (currentHouse) {
+                await movePlayer(member, currentHouse, homeChannel, `🏠 ${member} è ritornato.`, false);
+            } else {
+                // Non era in nessuna casa, aggiungi direttamente
+                await movePlayer(member, null, homeChannel, `🏠 ${member} è ritornato.`, false);
+            }
+            returnedCount++;
+        }
+
+        let response = `✅ **Ritorno completato!**\n` +
+                      `🏠 Ritornati a casa: **${returnedCount}**\n` +
+                      `✔️ Già a casa: **${alreadyHome}**`;
+
+        if (noHomeCount > 0) {
+            response += `\n☠️ Senza casa (aggiunti a lista morti): **${noHomeCount}**\n` +
+                       noHomeList.map(m => `- ${m.displayName}`).join('\n');
+
+            // Notifica nel canale log admin
+            const logChannel = message.guild.channels.cache.get(QUEUE.CANALE_LOG);
+            if (logChannel) {
+                const logMsg = noHomeList.map(m => `⚠️ <@${m.id}> è rimasto senza casa.`).join('\n');
+                await logChannel.send(`🏠❌ **Giocatori senza casa dopo !ritorno:**\n${logMsg}`);
+            }
+        }
+
+        message.reply(response);
     }
 };
