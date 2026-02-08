@@ -58,6 +58,7 @@ const housing = {
     },
 
     // Lettura composita per check visite (una sola query)
+    // FIX: Default a 0 se non impostato
     async getVisitInfo(userId) {
         const doc = await HousingModel.findOne(H_ID, {
             currentMode: 1,
@@ -75,10 +76,10 @@ const housing = {
         let base, extra;
         if (mode === 'DAY') {
             const limits = doc.dayLimits?.[userId] || { base: 0 };
-            base = limits.base || 0;
+            base = limits.base !== undefined ? limits.base : 0; // FIX: Default 0
             extra = doc.extraVisitsDay?.[userId] || 0;
         } else {
-            base = doc.baseVisits?.[userId] !== undefined ? doc.baseVisits[userId] : 0;
+            base = doc.baseVisits?.[userId] !== undefined ? doc.baseVisits[userId] : 0; // FIX: Default 0
             extra = doc.extraVisits?.[userId] || 0;
         }
 
