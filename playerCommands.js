@@ -258,17 +258,20 @@ module.exports = function registerPlayerCommands(client) {
 
             const allHomes = await db.housing.getAllHomes();
             
-            // FIX: Filtra solo i giocatori ALIVE, escludendo gli sponsor
-            const ownerIds = Object.keys(allHomes).filter(async userId => {
-                if (allHomes[userId] !== targetChannel.id) return false;
+            // FIX: Filtra solo i giocatori ALIVE fisicamente presenti nella casa (escludendo sponsor)
+            const ownerIds = [];
+            for (const userId of Object.keys(allHomes)) {
+                if (allHomes[userId] !== targetChannel.id) continue;
                 try {
                     const member = await message.guild.members.fetch(userId);
-                    // Solo ALIVE, non SPONSOR
-                    return member.roles.cache.has(RUOLI.ALIVE) && !member.roles.cache.has(RUOLI.SPONSOR);
-                } catch {
-                    return false;
-                }
-            });
+                    // Solo ALIVE con permessi fisici nella casa (esclude sponsor)
+                    if (member.roles.cache.has(RUOLI.ALIVE) && 
+                        !member.roles.cache.has(RUOLI.SPONSOR) &&
+                        targetChannel.permissionOverwrites.cache.has(userId)) {
+                        ownerIds.push(userId);
+                    }
+                } catch {}
+            }
             
             const ownerMention = ownerIds.length > 0 ? ownerIds.map(id => `<@${id}>`).join(', ') : "Nessuno";
 
@@ -293,7 +296,8 @@ module.exports = function registerPlayerCommands(client) {
             if (message.channel.parentId !== HOUSING.CATEGORIA_CHAT_PRIVATE)
                 return sendTemp(message.channel, "⛔ Solo chat private!");
 
-            if (!message.member.roles.cache.hasAny(...RUOLI_PERMESSI)) return;
+            // FIX: Permetti uso anche a DEAD e DEAD_SPONSOR
+            if (!message.member.roles.cache.hasAny(...RUOLI_PERMESSI, RUOLI.DEAD, RUOLI.SPONSOR_DEAD)) return;
 
             const info = await db.housing.getVisitInfo(message.author.id);
             if (!info) return;
