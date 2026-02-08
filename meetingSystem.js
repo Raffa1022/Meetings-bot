@@ -163,6 +163,37 @@ module.exports = function initMeetingSystem(client) {
                 if (saluti.length > 0) {
                     await channel.send(`${saluti.length === 1 ? 'Benvenuto' : 'Benvenuti'} ${saluti.join(' e ')}!`);
                 }
+
+                // Rename automatico: Nome (Partner)
+                if (slot.player && slot.sponsor) {
+                    try {
+                        const playerMember = await message.guild.members.fetch(slot.player);
+                        const sponsorMember = await message.guild.members.fetch(slot.sponsor);
+                        
+                        // Usa il nome attuale (nickname se presente, altrimenti username)
+                        const playerCurrentName = playerMember.nickname || playerMember.user.username;
+                        const sponsorCurrentName = sponsorMember.nickname || sponsorMember.user.username;
+                        
+                        // Rimuovi eventuale vecchio pattern (xxx) se esiste
+                        const cleanPlayerName = playerCurrentName.replace(/\s*\([^)]*\)\s*$/g, '').trim();
+                        const cleanSponsorName = sponsorCurrentName.replace(/\s*\([^)]*\)\s*$/g, '').trim();
+                        
+                        // Crea nuovi nickname
+                        const newPlayerNick = `${cleanPlayerName} (${cleanSponsorName})`;
+                        const newSponsorNick = `${cleanSponsorName} (${cleanPlayerName})`;
+                        
+                        // Applica solo se rientrano nel limite Discord (32 caratteri)
+                        if (newPlayerNick.length <= 32) {
+                            await playerMember.setNickname(newPlayerNick).catch(() => {});
+                        }
+                        if (newSponsorNick.length <= 32) {
+                            await sponsorMember.setNickname(newSponsorNick).catch(() => {});
+                        }
+                    } catch (e) {
+                        console.error("⚠️ Errore rename:", e.message);
+                    }
+                }
+
                 assegnati++;
             }
 
