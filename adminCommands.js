@@ -433,6 +433,38 @@ module.exports = async function handleAdminCommand(message, command, args, clien
         }
     }
 
+    // ===================== CANCELLA =====================
+    else if (command === 'cancella') {
+        const subCommand = args[0]?.toLowerCase();
+
+        // !cancella knock @Utente
+        if (subCommand === 'knock' && message.mentions.members.size > 0) {
+            const targetUser = message.mentions.members.first();
+            await Promise.all([
+                db.housing.removePendingKnock(targetUser.id),
+                db.housing.clearActiveKnock(targetUser.id),
+            ]);
+            message.reply(`✅ Knock pendenti e attivi rimossi per ${targetUser}.`);
+        }
+        // !cancella knock tutti
+        else if (subCommand === 'knock' && args[1]?.toLowerCase() === 'tutti') {
+            await Promise.all([
+                db.housing.clearPendingKnocks(),
+                db.housing.clearAllActiveKnocks(),
+            ]);
+            message.reply("✅ **Tutti i knock pendenti e attivi sono stati rimossi!**");
+        }
+        // !cancella casa
+        else if (subCommand === 'casa') {
+            await db.housing.clearAllHomes();
+            message.reply("✅ **Tutte le proprietà delle case sono state rimosse!**");
+        }
+        // Errore sintassi
+        else {
+            message.reply("❌ Uso:\n`!cancella knock @Utente` - Rimuove knock per utente specifico\n`!cancella knock tutti` - Rimuove tutti i knock\n`!cancella casa` - Rimuove tutte le proprietà");
+        }
+    }
+
     // ===================== RAM / MEMORIA =====================
     else if (command === 'ram' || command === 'memoria') {
         const used = process.memoryUsage();
