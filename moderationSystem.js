@@ -429,7 +429,10 @@ module.exports = function initModerationSystem(client) {
             const canUse = message.member.roles.cache.hasAny(RUOLI.ALIVE, RUOLI.SPONSOR, RUOLI.DEAD, RUOLI.SPONSOR_DEAD) || isAdmin(message.member);
             if (!canUse) return message.reply("⛔ Non hai i permessi.");
 
-            // Fetch tutti i membri con ruolo DEAD
+            // FIX: Fetch TUTTI i membri del server per avere dati completi
+            await message.guild.members.fetch();
+            
+            // Solo DEAD (ex-ALIVE), NON SPONSOR_DEAD
             const deadMembers = message.guild.members.cache.filter(m =>
                 !m.user.bot && m.roles.cache.has(RUOLI.DEAD)
             );
@@ -438,7 +441,8 @@ module.exports = function initModerationSystem(client) {
                 return message.reply("✅ Nessun giocatore morto al momento.");
             }
 
-            const list = [...deadMembers.values()].map((m, i) => `**${i + 1}.** ${m.user.tag}`).join('\n');
+            // FIX: Usa mention <@id> invece di user.tag
+            const list = [...deadMembers.values()].map((m, i) => `**${i + 1}.** <@${m.id}>`).join('\n');
 
             const embed = new EmbedBuilder()
                 .setTitle('⚰️ Cimitero')
