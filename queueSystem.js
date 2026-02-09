@@ -28,10 +28,12 @@ async function updateDashboard() {
 
     queue.forEach((item, index) => {
         const time = `<t:${Math.floor(new Date(item.timestamp).getTime() / 1000)}:T>`;
-        const icons = { ABILITY: "✨", RETURN: "🏠", KNOCK: "✊" };
-        const names = { ABILITY: "ABILITÀ", RETURN: "TORNA", KNOCK: "BUSSA" };
+        const icons = { ABILITY: "✨", RETURN: "🏠", KNOCK: "✊", SHOP: "🛒" };
+        const names = { ABILITY: "ABILITÀ", RETURN: "TORNA", KNOCK: "BUSSA", SHOP: "SHOP" };
         const pointer = index === 0 ? "👉 **IN CORSO:**" : `**#${index + 1}**`;
-        description += `${pointer} ${icons[item.type] || ""} \`${names[item.type] || item.type}\` - <@${item.userId}> (${time})\n`;
+        let label = `${icons[item.type] || ""} \`${names[item.type] || item.type}\``;
+        if (item.type === 'SHOP' && item.details?.subType) label += ` (${item.details.subType})`;
+        description += `${pointer} ${label} - <@${item.userId}> (${time})\n`;
     });
 
     const embed = new EmbedBuilder()
@@ -52,6 +54,9 @@ async function updateDashboard() {
                 new ButtonBuilder().setCustomId(`q_reject_${queue[0]._id}`).setLabel('❌ Rifiuta & Rimuovi').setStyle(ButtonStyle.Danger),
             ));
             embed.addFields({ name: '📜 Dettaglio Abilità', value: queue[0].details?.text || "Nessun testo" });
+        }
+        if (queue[0].type === 'SHOP') {
+            embed.addFields({ name: '🛒 Dettaglio Shop', value: queue[0].details?.text || "Nessun dettaglio" });
         }
     }
 
@@ -97,6 +102,13 @@ async function processQueue() {
             }
             await db.queue.remove(currentItem._id);
             await new Promise(r => setTimeout(r, 300)); // Anti-race
+        }
+
+        // SHOP → Auto-processo (azione già eseguita, solo log in tabella)
+        if (currentItem.type === 'SHOP') {
+            console.log(`🛒 [Queue] Shop action di ${currentItem.userId}: ${currentItem.details?.subType || 'N/A'}`);
+            await db.queue.remove(currentItem._id);
+            await new Promise(r => setTimeout(r, 300));
         }
     } finally {
         processing = false;
