@@ -431,7 +431,7 @@ module.exports = function registerPlayerCommands(client) {
                     }
 
                     // Importa econDb per lo swap economia
-                    const { econDb } = require('./economySystem-2');
+                    const { econDb } = require('./economySystem');
 
                     // Swap housing + meeting + economia + ruoli in parallelo
                     const role1 = usingDeadRoles ? R3 : R1;
