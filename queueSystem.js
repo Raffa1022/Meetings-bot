@@ -90,24 +90,46 @@ async function processQueue() {
 
         console.log(`📌 [Queue] Primo: ${currentItem.type} di ${currentItem.userId}`);
 
-        // ABILITÀ → STOP, attendi admin
+        // ======= ABILITÀ → Check RB, poi STOP per admin =======
         if (currentItem.type === 'ABILITY') {
-            await updateDashboard();
-            return;
-        }
-
-        // HOUSING → Esegui automaticamente
-        if (currentItem.type === 'RETURN' || currentItem.type === 'KNOCK') {
-            try {
-                await executeHousingAction(currentItem);
-            } catch (err) {
-                console.error(`❌ [Queue] Errore ${currentItem.type}:`, err);
+            const isRB = await db.moderation.isBlockedRB(currentItem.userId);
+            if (isRB) {
+                console.log(`🚫 [Queue] ABILITY di ${currentItem.userId} annullata: Roleblock.`);
+                await notifyUser(currentItem.userId, '🚫 La tua **abilità** è stata annullata perché sei in **Roleblock**.');
+                await db.queue.remove(currentItem._id);
+                await new Promise(r => setTimeout(r, 300));
+                // Continua al prossimo (non fare return, vai in ricorsione sotto)
+            } else {
+                await updateDashboard();
+                return;
             }
-            await db.queue.remove(currentItem._id);
-            await new Promise(r => setTimeout(r, 300)); // Anti-race
         }
 
-        // SHOP → Esegui effetto automaticamente (come KNOCK/RETURN)
+        // ======= HOUSING → Check VB prima di eseguire =======
+        if (currentItem.type === 'RETURN' || currentItem.type === 'KNOCK') {
+            const isVB = await db.moderation.isBlockedVB(currentItem.userId);
+            if (isVB) {
+                console.log(`🚫 [Queue] ${currentItem.type} di ${currentItem.userId} annullato: Visitblock.`);
+                const actionName = currentItem.type === 'KNOCK' ? 'bussata' : 'ritorno a casa';
+                await notifyUser(currentItem.userId, `🚫 La tua **${actionName}** è stata annullata perché sei in **Visitblock**.`);
+                // Pulisci anche pendingKnock se era un KNOCK
+                if (currentItem.type === 'KNOCK') {
+                    await db.housing.removePendingKnock(currentItem.userId);
+                }
+                await db.queue.remove(currentItem._id);
+                await new Promise(r => setTimeout(r, 300));
+            } else {
+                try {
+                    await executeHousingAction(currentItem);
+                } catch (err) {
+                    console.error(`❌ [Queue] Errore ${currentItem.type}:`, err);
+                }
+                await db.queue.remove(currentItem._id);
+                await new Promise(r => setTimeout(r, 300)); // Anti-race
+            }
+        }
+
+        // ======= SHOP → Esegui effetto automaticamente =======
         if (currentItem.type === 'SHOP') {
             const subType = currentItem.details?.subType;
             console.log(`🛒 [Queue] Eseguo SHOP (${subType}) di ${currentItem.userId}`);
@@ -133,6 +155,26 @@ async function processQueue() {
 
     // Ricorsione: processa il prossimo
     return processQueue();
+}
+
+// ==========================================
+// 📢 NOTIFICA UTENTE (chat privata)
+// ==========================================
+async function notifyUser(userId, message) {
+    try {
+        const guild = clientRef.guilds.cache.first();
+        if (!guild) return;
+        const { HOUSING: H_CFG } = require('./config');
+        const { ChannelType, PermissionsBitField: PBF } = require('discord.js');
+        const catPriv = guild.channels.cache.get(H_CFG.CATEGORIA_CHAT_PRIVATE);
+        const privChannel = catPriv?.children.cache.find(ch =>
+            ch.type === ChannelType.GuildText &&
+            ch.permissionOverwrites.cache.some(p => p.id === userId && p.allow.has(PBF.Flags.ViewChannel))
+        );
+        if (privChannel) await privChannel.send(`<@${userId}> ${message}`);
+    } catch (err) {
+        console.error(`⚠️ [Queue] Errore notifica utente ${userId}:`, err);
+    }
 }
 
 // ==========================================
@@ -296,6 +338,21 @@ module.exports = function initQueueSystem(client) {
 
         const item = await db.queue.findById(itemId);
         if (!item) return interaction.reply({ content: "❌ Già gestita.", ephemeral: true });
+
+        // Check RB al momento dell'approvazione
+        if (action === 'APPROVE' && item.type === 'ABILITY') {
+            const isRB = await db.moderation.isBlockedRB(item.userId);
+            if (isRB) {
+                await db.queue.remove(itemId);
+                await interaction.reply({
+                    content: `🚫 Abilità di <@${item.userId}> **annullata automaticamente**: utente in Roleblock.`,
+                    ephemeral: false
+                });
+                await notifyUser(item.userId, '🚫 La tua **abilità** è stata annullata perché sei in **Roleblock**.');
+                processQueue();
+                return;
+            }
+        }
 
         await db.queue.remove(itemId);
         await interaction.reply({
