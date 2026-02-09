@@ -14,6 +14,7 @@ const initQueueSystem = require('./queueSystem');
 const initMeetingSystem = require('./meetingSystem');
 const initAbilitySystem = require('./abilitySystem');
 const initModerationSystem = require('./moderationSystem'); // FIX: Aggiunto import mancante
+const initEconomySystem = require('./economySystem');       // 💰 Economy System
 const { isAdmin } = require('./helpers');
 
 // --- WEB SERVER (UptimeRobot) ---
@@ -79,6 +80,7 @@ client.on('messageCreate', async message => {
         initMeetingSystem(client);
         initAbilitySystem(client);
         initModerationSystem(client);  // FIX: Aggiunta inizializzazione mancante
+        initEconomySystem(client);     // 💰 Economy System
 
         // 3. Login
         await client.login(TOKEN);
@@ -90,6 +92,7 @@ client.on('messageCreate', async message => {
         console.log('👥 Meeting: Attivo');
         console.log('✨ Abilità: Coda cronologica');
         console.log('🛡️ Moderazione: Attivo');
+        console.log('💰 Economia: Mercato, Inventario, Shop');
         console.log('💾 Database: MongoDB-First, zero dbCache');
         console.log('='.repeat(50));
 
