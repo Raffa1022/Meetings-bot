@@ -12,6 +12,11 @@ const eventBus = require('./eventBus');
 const { movePlayer, cleanOldHome } = require('./playerMovement');
 const { isAdmin, formatName, isVisitingOtherHouse, sendTemp, getSponsorsToMove } = require('./helpers');
 
+// ==========================================
+// 🔧 STATO TRASFERIMENTI (globale)
+// ==========================================
+let trasferimentiEnabled = true; // Di default abilitati
+
 module.exports = function registerPlayerCommands(client) {
 
     client.on('messageCreate', async message => {
@@ -160,6 +165,23 @@ module.exports = function registerPlayerCommands(client) {
 
         // ===================== TRASFERIMENTO =====================
         else if (command === 'trasferimento') {
+            // Se è un admin e specifica si/no, cambia lo stato
+            if (isAdmin(message.member)) {
+                const action = args[0]?.toLowerCase();
+                if (action === 'si' || action === 'sì' || action === 'yes') {
+                    trasferimentiEnabled = true;
+                    return message.reply("✅ **Trasferimenti ABILITATI**. I giocatori possono ora usare !trasferimento nelle case.");
+                } else if (action === 'no') {
+                    trasferimentiEnabled = false;
+                    return message.reply("🚫 **Trasferimenti DISABILITATI**. I giocatori possono trasferirsi solo con la tenda.");
+                }
+            }
+
+            // Controllo se i trasferimenti sono disabilitati
+            if (!trasferimentiEnabled && !isAdmin(message.member)) {
+                return message.reply("🚫 **I trasferimenti sono disabilitati.** Puoi trasferirti solo utilizzando una **Tenda** (acquistabile nel mercato).");
+            }
+
             if (message.channel.parentId !== HOUSING.CATEGORIA_CASE) return message.delete().catch(() => {});
             if (message.member.roles.cache.has(RUOLI.SPONSOR) || message.member.roles.cache.has(RUOLI.SPONSOR_DEAD))
                 return sendTemp(message.channel, "⛔ Gli sponsor non possono usare il comando !trasferimento.");
@@ -279,44 +301,53 @@ module.exports = function registerPlayerCommands(client) {
                 !m.user.bot && m.roles.cache.has(RUOLI.ALIVE) &&
                 targetChannel.permissionOverwrites.cache.has(m.id)
             );
-            const desc = players.size > 0 ? players.map(p => `👤 ${p}`).join('\n') : "Nessuno.";
+            const sponsors = targetChannel.members.filter(m => !m.user.bot && m.roles.cache.has(RUOLI.SPONSOR));
+
+            const playerList = players.size > 0 ? players.map(m => m.toString()).join(', ') : "Nessuno";
+            const sponsorList = sponsors.size > 0 ? sponsors.map(m => m.toString()).join(', ') : "Nessuno";
 
             const embed = new EmbedBuilder()
-                .setTitle("👥 Persone in casa")
-                .setDescription(desc)
-                .addFields({ name: '🔑 Proprietario', value: ownerMention });
+                .setTitle(`🏠 ${formatName(targetChannel.name)}`)
+                .addFields(
+                    { name: '🔑 Proprietari', value: ownerMention },
+                    { name: '👥 Giocatori presenti', value: playerList },
+                    { name: '🤝 Sponsor presenti', value: sponsorList }
+                )
+                .setColor('Blue')
+                .setTimestamp();
 
-            const sentMsg = await message.channel.send({ embeds: [embed] });
-            setTimeout(() => sentMsg.delete().catch(() => {}), 300000);
+            await sendTemp(message.channel, { embeds: [embed] }, 20000);
         }
 
         // ===================== RIMASTE =====================
         else if (command === 'rimaste') {
             message.delete().catch(() => {});
-            if (message.channel.parentId !== HOUSING.CATEGORIA_CHAT_PRIVATE)
-                return sendTemp(message.channel, "⛔ Solo chat private!");
-
-            // FIX: Permetti uso anche a DEAD e DEAD_SPONSOR
-            if (!message.member.roles.cache.hasAny(...RUOLI_PERMESSI, RUOLI.DEAD, RUOLI.SPONSOR_DEAD)) return;
-
             const info = await db.housing.getVisitInfo(message.author.id);
-            if (!info) return;
+            if (!info) return sendTemp(message.channel, "❌ Errore nel recupero delle visite.");
 
-            const modeStr = info.mode === 'DAY' ? "☀️ GIORNO" : "🌙 NOTTE";
-            sendTemp(message.channel,
-                `📊 **Le tue visite (${modeStr}):**\n🏠 Normali: ${info.used}/${info.totalLimit}\n🧨 Forzate: ${info.forced}\n🕵️ Nascoste: ${info.hidden}`,
-                30000
-            );
+            const embed = new EmbedBuilder()
+                .setTitle('📊 Le Tue Visite')
+                .setColor('#3498DB')
+                .addFields(
+                    { name: '🏃 Usate', value: `${info.used}`, inline: true },
+                    { name: '📦 Totali', value: `${info.totalLimit}`, inline: true },
+                    { name: '🔥 Forzate', value: `${info.forced}`, inline: true },
+                    { name: '🕵️ Nascoste', value: `${info.hidden}`, inline: true },
+                )
+                .setTimestamp();
+
+            await sendTemp(message.channel, { embeds: [embed] }, 20000);
         }
 
         // ===================== RIMUOVI =====================
         else if (command === 'rimuovi') {
             message.delete().catch(() => {});
-            if (message.channel.parentId !== HOUSING.CATEGORIA_CHAT_PRIVATE) return;
+            if (message.channel.parentId !== HOUSING.CATEGORIA_CHAT_PRIVATE)
+                return sendTemp(message.channel, "⛔ Usa !rimuovi solo nella tua chat privata!");
 
-            const options = [];
             const isPending = await db.housing.isPendingKnock(message.author.id);
-            const queueItems = await db.queue.getUserAllPending(message.author.id);
+            const queueItems = await db.queue.getUserPending(message.author.id);
+            const options = [];
 
             if (isPending) {
                 options.push(new StringSelectMenuOptionBuilder()
@@ -399,18 +430,22 @@ module.exports = function registerPlayerCommands(client) {
                         await message.channel.send(`⚠️ I comandi pendenti di ${player1} sono stati cancellati prima dello scambio.`);
                     }
 
-                    // Swap housing + meeting + ruoli in parallelo
+                    // Importa econDb per lo swap economia
+                    const { econDb } = require('./economySystem-2');
+
+                    // Swap housing + meeting + economia + ruoli in parallelo
                     const role1 = usingDeadRoles ? R3 : R1;
                     const role2 = usingDeadRoles ? R4 : R2;
                     
                     await Promise.all([
                         db.housing.swapPlayerData(player1.id, player2.id),
                         db.meeting.swapMeetingData(player1.id, player2.id),
+                        econDb.swapEconomyData(player1.id, player2.id), // ✨ NUOVO: Swap bilancio e inventario
                         player1.roles.remove(role1), player1.roles.add(role2),
                         player2.roles.remove(role2), player2.roles.add(role1),
                     ]);
 
-                    message.channel.send(`✅ **Scambio Completato!**\n👤 ${player1} ora ha il ruolo <@&${role2}>.\n👤 ${player2} ora ha il ruolo <@&${role1}>.`);
+                    message.channel.send(`✅ **Scambio Completato!**\n👤 ${player1} ora ha il ruolo <@&${role2}>.\n👤 ${player2} ora ha il ruolo <@&${role1}>.\n💰 Bilancio e inventario scambiati.`);
                 } catch (error) {
                     console.error("❌ Errore cambio:", error);
                     message.channel.send("❌ Si è verificato un errore critico durante lo scambio.");
@@ -475,3 +510,8 @@ module.exports = function registerPlayerCommands(client) {
         }
     });
 };
+
+// ==========================================
+// 📤 ESPORTA FUNZIONE GET STATO TRASFERIMENTI
+// ==========================================
+module.exports.getTrasferimentiEnabled = () => trasferimentiEnabled;
