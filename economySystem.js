@@ -656,36 +656,71 @@ async function useScopa(message) {
     const removed = await econDb.removeItem(message.author.id, 'scopa');
     if (!removed) return message.reply("❌ Errore: oggetto non disponibile.");
 
-    // Fetch messaggi dopo il riferimento
-    const messages = await message.channel.messages.fetch({ after: refMsg.id, limit: 100 });
-
-    let deletedCount = 0;
-    let protectedCount = 0;
-
-    for (const [, msg] of messages) {
-        // Salta messaggi con reazione 🛡️ (protezione)
-        const hasShield = msg.reactions.cache.has('🛡️') || msg.reactions.cache.has('🛡');
-        if (hasShield) {
-            protectedCount++;
-            // Rimuovi la reazione 🛡️ dopo l'uso (cleanup)
-            msg.reactions.cache.forEach(r => {
-                if (r.emoji.name === '🛡️' || r.emoji.name === '🛡') r.remove().catch(() => {});
-            });
-            continue;
-        }
-        // Salta anche messaggi pinnati (sicurezza extra)
-        if (msg.pinned) { protectedCount++; continue; }
-
-        await msg.delete().catch(() => {});
-        deletedCount++;
-    }
-
-    // Cancella il comando stesso
+    // Cancella il comando subito
     await message.delete().catch(() => {});
+
+    const twoWeeksAgo = Date.now() - 14 * 24 * 60 * 60 * 1000;
+    let totalDeleted = 0;
+    let totalProtected = 0;
+
+    // 🚀 LOOP INFINITO: fetch 1000 → cancella → ripeti finché non finiscono
+    while (true) {
+        // Fetch 1000 messaggi (10 batch da 100)
+        const batch1000 = [];
+        let lastId = refMsg.id;
+        for (let i = 0; i < 10; i++) {
+            const fetched = await message.channel.messages.fetch({ after: lastId, limit: 100 });
+            if (fetched.size === 0) break;
+            batch1000.push(...fetched.values());
+            lastId = fetched.sort((a, b) => b.createdTimestamp - a.createdTimestamp).first().id;
+            if (fetched.size < 100) break;
+        }
+
+        if (batch1000.length === 0) break;
+
+        // Separa: cancellare vs protetti
+        const toDelete = [];
+        for (const msg of batch1000) {
+            const hasShield = msg.reactions.cache.has('🛡️') || msg.reactions.cache.has('🛡');
+            if (hasShield || msg.pinned) {
+                totalProtected++;
+                // Cleanup 🛡️
+                if (hasShield) msg.reactions.cache.forEach(r => {
+                    if (r.emoji.name === '🛡️' || r.emoji.name === '🛡') r.remove().catch(() => {});
+                });
+                continue;
+            }
+            toDelete.push(msg);
+        }
+
+        if (toDelete.length === 0) break;
+
+        // Recenti → bulkDelete a chunk da 100 in parallelo
+        const recent = toDelete.filter(m => m.createdTimestamp > twoWeeksAgo);
+        const old = toDelete.filter(m => m.createdTimestamp <= twoWeeksAgo);
+
+        if (recent.length > 0) {
+            const chunks = [];
+            for (let i = 0; i < recent.length; i += 100) chunks.push(recent.slice(i, i + 100));
+            await Promise.all(chunks.map(c => message.channel.bulkDelete(c, true).catch(() => {})));
+        }
+
+        // Vecchi → parallelo a blocchi da 10
+        if (old.length > 0) {
+            for (let i = 0; i < old.length; i += 10) {
+                await Promise.all(old.slice(i, i + 10).map(m => m.delete().catch(() => {})));
+            }
+        }
+
+        totalDeleted += toDelete.length;
+
+        // Se ha fetchato meno di 1000, non ce ne sono altri
+        if (batch1000.length < 1000) break;
+    }
 
     const confirmMsg = await message.channel.send({ embeds: [
         new EmbedBuilder().setColor('#00FF00').setTitle('🧹 Scopa Usata')
-            .setDescription(`Cancellati **${deletedCount}** messaggi.\nProtetti: **${protectedCount}** (🛡️ o pinnati).`)
+            .setDescription(`Cancellati **${totalDeleted}** messaggi.\nProtetti: **${totalProtected}** (🛡️ o pinnati).`)
             .setTimestamp()
     ]});
     setTimeout(() => confirmMsg.delete().catch(() => {}), 8000);
