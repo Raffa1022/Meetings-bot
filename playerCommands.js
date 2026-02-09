@@ -12,10 +12,8 @@ const eventBus = require('./eventBus');
 const { movePlayer, cleanOldHome } = require('./playerMovement');
 const { isAdmin, formatName, isVisitingOtherHouse, sendTemp, getSponsorsToMove } = require('./helpers');
 
-// ==========================================
-// 🔧 STATO TRASFERIMENTI (globale)
-// ==========================================
-let trasferimentiEnabled = true; // Di default abilitati
+// 🔧 Stato trasferimenti (globale, toggle admin)
+let trasferimentiEnabled = true;
 
 module.exports = function registerPlayerCommands(client) {
 
@@ -165,19 +163,19 @@ module.exports = function registerPlayerCommands(client) {
 
         // ===================== TRASFERIMENTO =====================
         else if (command === 'trasferimento') {
-            // Se è un admin e specifica si/no, cambia lo stato
+            // ===== ADMIN: !trasferimento si/no =====
             if (isAdmin(message.member)) {
-                const action = args[0]?.toLowerCase();
-                if (action === 'si' || action === 'sì' || action === 'yes') {
+                const toggle = args[0]?.toLowerCase();
+                if (toggle === 'si' || toggle === 'sì' || toggle === 'yes') {
                     trasferimentiEnabled = true;
-                    return message.reply("✅ **Trasferimenti ABILITATI**. I giocatori possono ora usare !trasferimento nelle case.");
-                } else if (action === 'no') {
+                    return message.reply("✅ **Trasferimenti ABILITATI.** I giocatori possono usare !trasferimento nelle case.");
+                } else if (toggle === 'no') {
                     trasferimentiEnabled = false;
-                    return message.reply("🚫 **Trasferimenti DISABILITATI**. I giocatori possono trasferirsi solo con la tenda.");
+                    return message.reply("🚫 **Trasferimenti DISABILITATI.** I giocatori possono trasferirsi solo con la Tenda.");
                 }
             }
 
-            // Controllo se i trasferimenti sono disabilitati
+            // ===== BLOCCO se disabilitati =====
             if (!trasferimentiEnabled && !isAdmin(message.member)) {
                 return message.reply("🚫 **I trasferimenti sono disabilitati.** Puoi trasferirti solo utilizzando una **Tenda** (acquistabile nel mercato).");
             }
@@ -301,53 +299,44 @@ module.exports = function registerPlayerCommands(client) {
                 !m.user.bot && m.roles.cache.has(RUOLI.ALIVE) &&
                 targetChannel.permissionOverwrites.cache.has(m.id)
             );
-            const sponsors = targetChannel.members.filter(m => !m.user.bot && m.roles.cache.has(RUOLI.SPONSOR));
-
-            const playerList = players.size > 0 ? players.map(m => m.toString()).join(', ') : "Nessuno";
-            const sponsorList = sponsors.size > 0 ? sponsors.map(m => m.toString()).join(', ') : "Nessuno";
+            const desc = players.size > 0 ? players.map(p => `👤 ${p}`).join('\n') : "Nessuno.";
 
             const embed = new EmbedBuilder()
-                .setTitle(`🏠 ${formatName(targetChannel.name)}`)
-                .addFields(
-                    { name: '🔑 Proprietari', value: ownerMention },
-                    { name: '👥 Giocatori presenti', value: playerList },
-                    { name: '🤝 Sponsor presenti', value: sponsorList }
-                )
-                .setColor('Blue')
-                .setTimestamp();
+                .setTitle("👥 Persone in casa")
+                .setDescription(desc)
+                .addFields({ name: '🔑 Proprietario', value: ownerMention });
 
-            await sendTemp(message.channel, { embeds: [embed] }, 20000);
+            const sentMsg = await message.channel.send({ embeds: [embed] });
+            setTimeout(() => sentMsg.delete().catch(() => {}), 300000);
         }
 
         // ===================== RIMASTE =====================
         else if (command === 'rimaste') {
             message.delete().catch(() => {});
+            if (message.channel.parentId !== HOUSING.CATEGORIA_CHAT_PRIVATE)
+                return sendTemp(message.channel, "⛔ Solo chat private!");
+
+            // FIX: Permetti uso anche a DEAD e DEAD_SPONSOR
+            if (!message.member.roles.cache.hasAny(...RUOLI_PERMESSI, RUOLI.DEAD, RUOLI.SPONSOR_DEAD)) return;
+
             const info = await db.housing.getVisitInfo(message.author.id);
-            if (!info) return sendTemp(message.channel, "❌ Errore nel recupero delle visite.");
+            if (!info) return;
 
-            const embed = new EmbedBuilder()
-                .setTitle('📊 Le Tue Visite')
-                .setColor('#3498DB')
-                .addFields(
-                    { name: '🏃 Usate', value: `${info.used}`, inline: true },
-                    { name: '📦 Totali', value: `${info.totalLimit}`, inline: true },
-                    { name: '🔥 Forzate', value: `${info.forced}`, inline: true },
-                    { name: '🕵️ Nascoste', value: `${info.hidden}`, inline: true },
-                )
-                .setTimestamp();
-
-            await sendTemp(message.channel, { embeds: [embed] }, 20000);
+            const modeStr = info.mode === 'DAY' ? "☀️ GIORNO" : "🌙 NOTTE";
+            sendTemp(message.channel,
+                `📊 **Le tue visite (${modeStr}):**\n🏠 Normali: ${info.used}/${info.totalLimit}\n🧨 Forzate: ${info.forced}\n🕵️ Nascoste: ${info.hidden}`,
+                30000
+            );
         }
 
         // ===================== RIMUOVI =====================
         else if (command === 'rimuovi') {
             message.delete().catch(() => {});
-            if (message.channel.parentId !== HOUSING.CATEGORIA_CHAT_PRIVATE)
-                return sendTemp(message.channel, "⛔ Usa !rimuovi solo nella tua chat privata!");
+            if (message.channel.parentId !== HOUSING.CATEGORIA_CHAT_PRIVATE) return;
 
-            const isPending = await db.housing.isPendingKnock(message.author.id);
-            const queueItems = await db.queue.getUserPending(message.author.id);
             const options = [];
+            const isPending = await db.housing.isPendingKnock(message.author.id);
+            const queueItems = await db.queue.getUserAllPending(message.author.id);
 
             if (isPending) {
                 options.push(new StringSelectMenuOptionBuilder()
@@ -440,12 +429,12 @@ module.exports = function registerPlayerCommands(client) {
                     await Promise.all([
                         db.housing.swapPlayerData(player1.id, player2.id),
                         db.meeting.swapMeetingData(player1.id, player2.id),
-                        econDb.swapEconomyData(player1.id, player2.id), // ✨ NUOVO: Swap bilancio e inventario
+                        econDb.swapEconomyData(player1.id, player2.id),
                         player1.roles.remove(role1), player1.roles.add(role2),
                         player2.roles.remove(role2), player2.roles.add(role1),
                     ]);
 
-                    message.channel.send(`✅ **Scambio Completato!**\n👤 ${player1} ora ha il ruolo <@&${role2}>.\n👤 ${player2} ora ha il ruolo <@&${role1}>.\n💰 Bilancio e inventario scambiati.`);
+                    message.channel.send(`✅ **Scambio Completato!**\n👤 ${player1} ora ha il ruolo <@&${role2}>.\n👤 ${player2} ora ha il ruolo <@&${role1}>.\n🪙 Bilancio e inventario scambiati.`);
                 } catch (error) {
                     console.error("❌ Errore cambio:", error);
                     message.channel.send("❌ Si è verificato un errore critico durante lo scambio.");
@@ -510,8 +499,3 @@ module.exports = function registerPlayerCommands(client) {
         }
     });
 };
-
-// ==========================================
-// 📤 ESPORTA FUNZIONE GET STATO TRASFERIMENTI
-// ==========================================
-module.exports.getTrasferimentiEnabled = () => trasferimentiEnabled;
