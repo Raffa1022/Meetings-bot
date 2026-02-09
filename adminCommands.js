@@ -233,16 +233,25 @@ module.exports = async function handleAdminCommand(message, command, args, clien
             const isOwner = ownerId === member.id;
 
             // FIX: Trova il partner (sponsor) per muoverlo insieme
+            // Cerca prima in membersInside, poi guild-wide se non trovato
             let partner = null;
             if (member.roles.cache.has(RUOLI.ALIVE)) {
                 const sponsorId = await db.meeting.findSponsor(member.id);
                 if (sponsorId) {
                     partner = membersInside.find(m => m.id === sponsorId);
+                    if (!partner) {
+                        partner = await message.guild.members.fetch(sponsorId).catch(() => null);
+                        if (partner && (partner.user.bot || !partner.roles.cache.has(RUOLI.SPONSOR))) partner = null;
+                    }
                 }
             } else if (member.roles.cache.has(RUOLI.DEAD)) {
                 const sponsorId = await db.meeting.findSponsor(member.id);
                 if (sponsorId) {
                     partner = membersInside.find(m => m.id === sponsorId);
+                    if (!partner) {
+                        partner = await message.guild.members.fetch(sponsorId).catch(() => null);
+                        if (partner && (partner.user.bot || !partner.roles.cache.has(RUOLI.SPONSOR_DEAD))) partner = null;
+                    }
                 }
             } else if (member.roles.cache.has(RUOLI.SPONSOR)) {
                 const playerId = await db.meeting.findPlayer(member.id);
@@ -264,10 +273,19 @@ module.exports = async function handleAdminCommand(message, command, args, clien
                     await movePlayer(member, targetChannel, randomHouse, `👋 **${member}** è entrato.`, false);
                     movedPlayers.add(member.id);
                     
-                    // FIX: Sposta anche il partner nella stessa casa
+                    // FIX: Sposta anche il partner nella stessa casa (anche se in un'altra casa)
                     if (partner) {
                         await targetChannel.permissionOverwrites.delete(partner.id).catch(() => {});
-                        await movePlayer(partner, targetChannel, randomHouse, null, false);
+                        // Trova la casa attuale del partner (potrebbe essere altrove)
+                        const partnerCurrentHouse = message.guild.channels.cache.find(c =>
+                            c.parentId === HOUSING.CATEGORIA_CASE && c.type === ChannelType.GuildText &&
+                            c.id !== targetChannel.id && c.id !== randomHouse.id &&
+                            c.permissionOverwrites.cache.has(partner.id)
+                        );
+                        if (partnerCurrentHouse) {
+                            await partnerCurrentHouse.permissionOverwrites.delete(partner.id).catch(() => {});
+                        }
+                        await movePlayer(partner, partnerCurrentHouse || targetChannel, randomHouse, null, false);
                         movedPlayers.add(partner.id);
                     }
                 }
@@ -280,10 +298,18 @@ module.exports = async function handleAdminCommand(message, command, args, clien
                         await movePlayer(member, targetChannel, homeCh, `🏠 ${member} è ritornato.`, false);
                         movedPlayers.add(member.id);
                         
-                        // FIX: Sposta anche il partner nella stessa casa
+                        // FIX: Sposta anche il partner nella stessa casa (anche se in un'altra casa)
                         if (partner) {
                             await targetChannel.permissionOverwrites.delete(partner.id).catch(() => {});
-                            await movePlayer(partner, targetChannel, homeCh, null, false);
+                            const partnerCurrentHouse = message.guild.channels.cache.find(c =>
+                                c.parentId === HOUSING.CATEGORIA_CASE && c.type === ChannelType.GuildText &&
+                                c.id !== targetChannel.id && c.id !== homeCh.id &&
+                                c.permissionOverwrites.cache.has(partner.id)
+                            );
+                            if (partnerCurrentHouse) {
+                                await partnerCurrentHouse.permissionOverwrites.delete(partner.id).catch(() => {});
+                            }
+                            await movePlayer(partner, partnerCurrentHouse || targetChannel, homeCh, null, false);
                             movedPlayers.add(partner.id);
                         }
                     }
@@ -296,10 +322,18 @@ module.exports = async function handleAdminCommand(message, command, args, clien
                         await movePlayer(member, targetChannel, randomHouse, `👋 **${member}** è entrato.`, false);
                         movedPlayers.add(member.id);
                         
-                        // FIX: Sposta anche il partner nella stessa casa
+                        // FIX: Sposta anche il partner nella stessa casa (anche se in un'altra casa)
                         if (partner) {
                             await targetChannel.permissionOverwrites.delete(partner.id).catch(() => {});
-                            await movePlayer(partner, targetChannel, randomHouse, null, false);
+                            const partnerCurrentHouse = message.guild.channels.cache.find(c =>
+                                c.parentId === HOUSING.CATEGORIA_CASE && c.type === ChannelType.GuildText &&
+                                c.id !== targetChannel.id && c.id !== randomHouse.id &&
+                                c.permissionOverwrites.cache.has(partner.id)
+                            );
+                            if (partnerCurrentHouse) {
+                                await partnerCurrentHouse.permissionOverwrites.delete(partner.id).catch(() => {});
+                            }
+                            await movePlayer(partner, partnerCurrentHouse || targetChannel, randomHouse, null, false);
                             movedPlayers.add(partner.id);
                         }
                     }
