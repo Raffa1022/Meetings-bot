@@ -10,7 +10,7 @@ const {
     StringSelectMenuBuilder, StringSelectMenuOptionBuilder,
     ChannelType, PermissionsBitField
 } = require('discord.js');
-const { HOUSING, RUOLI, RUOLI_PUBBLICI, PREFIX } = require('./config');
+const { HOUSING, RUOLI, RUOLI_PUBBLICI, PREFIX, QUEUE } = require('./config');
 const db = require('./db');
 const { isAdmin, formatName, getSponsorsToMove } = require('./helpers');
 const { cleanOldHome } = require('./playerMovement');
@@ -30,7 +30,7 @@ const economySchema = new mongoose.Schema({
 const EconomyModel = mongoose.model('EconomyData', economySchema);
 
 // ==========================================
-// 🛒 SHOP - OGGETTI DISPONIBILI
+// 🛒 SHOP - OGGETTI DISPONIBILI (EMOJI SINGOLE + 🪙)
 // ==========================================
 const SHOP_ITEMS = [
     { id: 'scopa',      name: '🧹 Scopa',                price: 25,  emoji: '🧹', description: 'Cancella messaggi in una casa (rispondi al msg da cui iniziare). Reagisci 🛡️ ai messaggi da proteggere.' },
@@ -181,6 +181,62 @@ const econDb = {
             .limit(limit)
             .lean();
     },
+
+    // 🔄 SWAP ECONOMY DATA (per comando !cambio)
+    async swapEconomyData(p1Id, p2Id) {
+        // Ottieni i profili di entrambi i giocatori
+        const [prof1, prof2] = await Promise.all([
+            EconomyModel.findOne({ userId: p1Id }).lean(),
+            EconomyModel.findOne({ userId: p2Id }).lean()
+        ]);
+
+        // Se uno dei due non esiste, crealo con valori vuoti
+        if (!prof1) await econDb.ensureProfile(p1Id);
+        if (!prof2) await econDb.ensureProfile(p2Id);
+
+        // Estrai i dati da scambiare
+        const data1 = {
+            balance: prof1?.balance || 0,
+            inventory: prof1?.inventory || {},
+            totalEarned: prof1?.totalEarned || 0,
+            totalSpent: prof1?.totalSpent || 0,
+        };
+        
+        const data2 = {
+            balance: prof2?.balance || 0,
+            inventory: prof2?.inventory || {},
+            totalEarned: prof2?.totalEarned || 0,
+            totalSpent: prof2?.totalSpent || 0,
+        };
+
+        // Scambia i dati in modo atomico
+        await Promise.all([
+            EconomyModel.updateOne(
+                { userId: p1Id },
+                { 
+                    $set: { 
+                        balance: data2.balance,
+                        inventory: data2.inventory,
+                        totalEarned: data2.totalEarned,
+                        totalSpent: data2.totalSpent
+                    }
+                },
+                { upsert: true }
+            ),
+            EconomyModel.updateOne(
+                { userId: p2Id },
+                { 
+                    $set: { 
+                        balance: data1.balance,
+                        inventory: data1.inventory,
+                        totalEarned: data1.totalEarned,
+                        totalSpent: data1.totalSpent
+                    }
+                },
+                { upsert: true }
+            )
+        ]);
+    },
 };
 
 // ==========================================
@@ -193,588 +249,663 @@ function setLetteraCache(key, value) {
 }
 
 // ==========================================
-// 🔧 HELPER: Trova partner (sponsor/player)
+// 📝 LOGGER AZIONI SHOP
 // ==========================================
-async function findPartner(member, guild) {
-    let partnerId = null;
-    if (member.roles.cache.has(RUOLI.ALIVE) || member.roles.cache.has(RUOLI.DEAD)) {
-        partnerId = await db.meeting.findSponsor(member.id);
-    } else if (member.roles.cache.has(RUOLI.SPONSOR) || member.roles.cache.has(RUOLI.SPONSOR_DEAD)) {
-        partnerId = await db.meeting.findPlayer(member.id);
+async function logShopAction(client, userId, userName, action, itemName, details = '') {
+    try {
+        const logChannel = client.channels.cache.get(QUEUE.CANALE_LOG);
+        if (!logChannel) return;
+
+        const timestamp = new Date().toLocaleString('it-IT', { 
+            timeZone: 'Europe/Rome',
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit'
+        });
+
+        let logMessage = '';
+        switch(action) {
+            case 'buy':
+                logMessage = `🛒 **ACQUISTO** | ${timestamp}\n👤 ${userName} (<@${userId}>)\n📦 Oggetto: **${itemName}**${details ? `\n📝 ${details}` : ''}`;
+                break;
+            case 'use_scopa':
+                logMessage = `🧹 **USO SCOPA** | ${timestamp}\n👤 ${userName} (<@${userId}>)\n${details}`;
+                break;
+            case 'use_lettera':
+                logMessage = `✉️ **USO LETTERA** | ${timestamp}\n👤 Mittente: ${userName} (<@${userId}>)\n${details}`;
+                break;
+            case 'use_scarpe':
+                logMessage = `👟 **USO SCARPE** | ${timestamp}\n👤 ${userName} (<@${userId}>)\n📊 +1 visita base`;
+                break;
+            case 'use_testamento':
+                logMessage = `📜 **USO TESTAMENTO** | ${timestamp}\n👤 ${userName} (<@${userId}>)\n${details}`;
+                break;
+            case 'use_catene':
+                logMessage = `⛓️ **USO CATENE** | ${timestamp}\n👤 ${userName} (<@${userId}>)\n${details}`;
+                break;
+            case 'use_fuochi':
+                logMessage = `🎆 **USO FUOCHI** | ${timestamp}\n👤 ${userName} (<@${userId}>)\n${details}`;
+                break;
+            case 'use_tenda':
+                logMessage = `⛺ **USO TENDA** | ${timestamp}\n👤 ${userName} (<@${userId}>)\n${details}`;
+                break;
+        }
+
+        if (logMessage) {
+            await logChannel.send(logMessage);
+        }
+    } catch (error) {
+        console.error('Errore nel logging azione shop:', error);
     }
-    if (!partnerId) return null;
-    try { return await guild.members.fetch(partnerId); } catch { return null; }
 }
 
 // ==========================================
-// 💰 MODULO PRINCIPALE
+// 💼 HANDLER COMANDI ECONOMIA
 // ==========================================
-module.exports = function initEconomySystem(client) {
-    console.log("💰 [Economy] Sistema caricato (100% atomico).");
-
-    // --- COMANDI ---
+function registerEconomyCommands(client) {
     client.on('messageCreate', async message => {
         if (message.author.bot || !message.content.startsWith(PREFIX)) return;
         const args = message.content.slice(PREFIX.length).trim().split(/ +/);
         const command = args.shift().toLowerCase();
 
-        try {
-            switch (command) {
-                case 'pagamento':   return await handlePagamento(message, args);
-                case 'bilancio':    return await handleBilancio(message, args);
-                case 'inventario':  return await handleInventario(message);
-                case 'paga':        return await handlePaga(message, args);
-                case 'mercato':     return await handleMercato(message);
-                case 'compra':      return await handleCompra(message, args);
-                case 'usa':         return await handleUsa(message, args, client);
-                case 'classifica':  return await handleClassifica(message);
-                case 'ritira':      return await handleRitira(message, args);
-                case 'regala':      return await handleRegala(message, args);
+        // ===================== MERCATO =====================
+        if (command === 'mercato' || command === 'shop') {
+            await showShop(message);
+        }
+
+        // ===================== BILANCIO =====================
+        else if (command === 'bilancio' || command === 'bal' || command === 'soldi') {
+            const targetUser = message.mentions.users.first() || message.author;
+            if (targetUser.id !== message.author.id && !isAdmin(message.member)) {
+                return message.reply("⛔ Non puoi vedere il bilancio di altri giocatori.");
             }
-        } catch (err) {
-            console.error(`❌ [Economy] Errore comando ${command}:`, err);
-            message.reply("❌ Errore interno economia.").catch(() => {});
+            await econDb.ensureProfile(targetUser.id);
+            const balance = await econDb.getBalance(targetUser.id);
+            message.reply(`🪙 **${targetUser.username}** ha **${balance} monete**.`);
+        }
+
+        // ===================== INVENTARIO =====================
+        else if (command === 'inventario' || command === 'inv') {
+            const targetUser = message.mentions.users.first() || message.author;
+            if (targetUser.id !== message.author.id && !isAdmin(message.member)) {
+                return message.reply("⛔ Non puoi vedere l'inventario di altri giocatori.");
+            }
+            await showInventory(message, targetUser);
+        }
+
+        // ===================== COMPRA =====================
+        else if (command === 'compra' || command === 'buy') {
+            const itemId = args[0]?.toLowerCase();
+            if (!itemId) return message.reply("❌ Uso: `!compra [scopa/lettera/scarpe/testamento/catene/fuochi/tenda]`");
+            await buyItem(message, itemId, client);
+        }
+
+        // ===================== DAI SOLDI (ADMIN) =====================
+        else if ((command === 'dai' || command === 'give') && isAdmin(message.member)) {
+            const targetUser = message.mentions.users.first();
+            const amount = parseInt(args[1]);
+            if (!targetUser || isNaN(amount)) return message.reply("❌ Uso: `!dai @Utente <importo>`");
+            await econDb.addBalance(targetUser.id, amount);
+            message.reply(`✅ Dato **${amount} 🪙** a ${targetUser}.`);
+        }
+
+        // ===================== TOGLI SOLDI (ADMIN) =====================
+        else if ((command === 'togli' || command === 'remove') && isAdmin(message.member)) {
+            const targetUser = message.mentions.users.first();
+            const amount = parseInt(args[1]);
+            if (!targetUser || isNaN(amount)) return message.reply("❌ Uso: `!togli @Utente <importo>`");
+            const removed = await econDb.removeBalance(targetUser.id, amount);
+            if (removed) message.reply(`✅ Rimosso **${amount} 🪙** a ${targetUser}.`);
+            else message.reply("❌ Fondi insufficienti.");
+        }
+
+        // ===================== CLASSIFICA =====================
+        else if (command === 'classifica' || command === 'top') {
+            await showLeaderboard(message, client);
+        }
+
+        // ===================== USA =====================
+        else if (command === 'usa' || command === 'use') {
+            const itemId = args[0]?.toLowerCase();
+            if (!itemId) return message.reply("❌ Uso: `!usa [scopa/lettera/scarpe/testamento/catene/fuochi/tenda]`");
+            
+            const hasItem = await econDb.hasItem(message.author.id, itemId);
+            if (!hasItem) return message.reply(`❌ Non hai **${itemId}** nell'inventario!`);
+
+            // Routing agli handler
+            if (itemId === 'scopa') await useScopa(message, args, client);
+            else if (itemId === 'lettera') await useLettera(message, args, client);
+            else if (itemId === 'scarpe') await useScarpe(message, client);
+            else if (itemId === 'testamento') await useTestamento(message);
+            else if (itemId === 'catene') await useCatene(message, args, client);
+            else if (itemId === 'fuochi') await useFuochi(message, client);
+            else if (itemId === 'tenda') await useTenda(message, client);
+            else message.reply("❌ Oggetto non valido.");
         }
     });
 
-    // --- INTERAZIONI (Lettera, Testamento) ---
+    // ==========================================
+    // 🛍️ SHOP SELECT MENU HANDLER
+    // ==========================================
     client.on('interactionCreate', async interaction => {
-        try {
-            // ========== BOTTONE LETTERA: APRI MODAL ==========
-            if (interaction.isButton() && interaction.customId.startsWith('lettera_open_')) {
-                const parts = interaction.customId.split('_');
-                const targetUserId = parts[2];
-                const senderUserId = parts[3];
-                if (interaction.user.id !== senderUserId)
-                    return interaction.reply({ content: "❌ Non è tuo.", ephemeral: true });
+        if (!interaction.isStringSelectMenu()) return;
+        if (!interaction.customId.startsWith('shop_buy_')) return;
 
-                const modal = new ModalBuilder()
-                    .setCustomId(`lettera_write_${targetUserId}_${senderUserId}`)
-                    .setTitle('✉️ Scrivi la tua Lettera');
-                modal.addComponents(new ActionRowBuilder().addComponents(
-                    new TextInputBuilder()
-                        .setCustomId('lettera_content')
-                        .setLabel('Messaggio (max 10 parole)')
-                        .setStyle(TextInputStyle.Paragraph)
-                        .setMaxLength(200)
-                        .setPlaceholder('Scrivi il tuo messaggio...')
-                        .setRequired(true)
-                ));
-                await interaction.showModal(modal);
+        const userId = interaction.customId.split('_')[2];
+        if (interaction.user.id !== userId) 
+            return interaction.reply({ content: "❌ Non è il tuo menu!", ephemeral: true });
+
+        const itemId = interaction.values[0];
+        const item = SHOP_ITEMS.find(i => i.id === itemId);
+        if (!item) return interaction.reply({ content: "❌ Oggetto non trovato.", ephemeral: true });
+
+        const balance = await econDb.getBalance(userId);
+        if (balance < item.price) {
+            return interaction.reply({ content: `❌ Fondi insufficienti! Ti servono **${item.price} 🪙**, hai solo **${balance} 🪙**.`, ephemeral: true });
+        }
+
+        const removed = await econDb.removeBalance(userId, item.price);
+        if (!removed) return interaction.reply({ content: "❌ Errore nella transazione.", ephemeral: true });
+
+        await econDb.addItem(userId, itemId);
+        
+        // Log acquisto
+        await logShopAction(interaction.client, userId, interaction.user.tag, 'buy', item.name);
+        
+        await interaction.reply({ content: `✅ Hai comprato **${item.name}** per **${item.price} 🪙**!`, ephemeral: true });
+        await interaction.message.delete().catch(() => {});
+    });
+
+    // ==========================================
+    // ✉️ LETTERA SELECT MENU HANDLER
+    // ==========================================
+    client.on('interactionCreate', async interaction => {
+        if (!interaction.isStringSelectMenu()) return;
+        if (!interaction.customId.startsWith('lettera_select_')) return;
+
+        const userId = interaction.customId.split('_')[2];
+        if (interaction.user.id !== userId) 
+            return interaction.reply({ content: "❌ Non è il tuo menu!", ephemeral: true });
+
+        const targetUserId = interaction.values[0];
+        setLetteraCache(userId, targetUserId);
+
+        const modal = new ModalBuilder()
+            .setCustomId(`lettera_modal_${userId}`)
+            .setTitle('Scrivi la tua lettera anonima');
+
+        const textInput = new TextInputBuilder()
+            .setCustomId('lettera_text')
+            .setLabel('Messaggio (max 10 parole)')
+            .setStyle(TextInputStyle.Paragraph)
+            .setMaxLength(200)
+            .setRequired(true);
+
+        modal.addComponents(new ActionRowBuilder().addComponents(textInput));
+        await interaction.showModal(modal);
+    });
+
+    // ==========================================
+    // ✉️ LETTERA MODAL HANDLER
+    // ==========================================
+    client.on('interactionCreate', async interaction => {
+        if (!interaction.isModalSubmit()) return;
+        if (!interaction.customId.startsWith('lettera_modal_')) return;
+
+        const userId = interaction.customId.split('_')[2];
+        if (interaction.user.id !== userId) return;
+
+        const text = interaction.fields.getTextInputValue('lettera_text');
+        const words = text.trim().split(/\s+/);
+        if (words.length > 10) {
+            return interaction.reply({ content: "❌ Massimo 10 parole!", ephemeral: true });
+        }
+
+        const targetUserId = letteraCache.get(userId);
+        if (!targetUserId) {
+            return interaction.reply({ content: "❌ Sessione scaduta. Riprova.", ephemeral: true });
+        }
+
+        const removed = await econDb.removeItem(userId, 'lettera');
+        if (!removed) return interaction.reply({ content: "❌ Errore.", ephemeral: true });
+
+        const targetMember = await interaction.guild.members.fetch(targetUserId).catch(() => null);
+        if (!targetMember) {
+            return interaction.reply({ content: "❌ Destinatario non trovato.", ephemeral: true });
+        }
+
+        // Trova la chat privata del destinatario
+        const privateCat = interaction.guild.channels.cache.get(HOUSING.CATEGORIA_CHAT_PRIVATE);
+        const targetPM = privateCat?.children.cache.find(c =>
+            c.type === ChannelType.GuildText &&
+            c.permissionsFor(targetMember).has(PermissionsBitField.Flags.ViewChannel)
+        );
+
+        if (!targetPM) {
+            return interaction.reply({ content: "❌ Chat privata del destinatario non trovata.", ephemeral: true });
+        }
+
+        await targetPM.send({ embeds: [
+            new EmbedBuilder().setColor('#9B59B6').setTitle('📬 Lettera Anonima')
+                .setDescription(`*"${text}"*`).setTimestamp()
+        ]});
+
+        // Log invio lettera
+        await logShopAction(interaction.client, userId, interaction.user.tag, 'use_lettera', 
+            'Lettera', `👤 Destinatario: ${targetMember.user.tag} (<@${targetUserId}>)\n📝 Messaggio: "${text}"`);
+
+        letteraCache.delete(userId);
+        await interaction.reply({ content: "✉️ Lettera inviata con successo!", ephemeral: true });
+    });
+
+    // ==========================================
+    // ⛓️ CATENE SELECT MENU HANDLER
+    // ==========================================
+    client.on('interactionCreate', async interaction => {
+        if (!interaction.isStringSelectMenu()) return;
+        if (!interaction.customId.startsWith('catene_select_')) return;
+
+        const userId = interaction.customId.split('_')[2];
+        if (interaction.user.id !== userId) 
+            return interaction.reply({ content: "❌ Non è il tuo menu!", ephemeral: true });
+
+        const targetUserId = interaction.values[0];
+        const targetMember = await interaction.guild.members.fetch(targetUserId).catch(() => null);
+        if (!targetMember) {
+            return interaction.reply({ content: "❌ Giocatore non trovato.", ephemeral: true });
+        }
+
+        if (targetUserId === userId) {
+            return interaction.reply({ content: "❌ Non puoi incatenarti da solo!", ephemeral: true });
+        }
+
+        // Verifica che non sia già bloccato
+        const [alreadyVB, alreadyRB] = await Promise.all([
+            db.moderation.isBlockedVB(targetUserId),
+            db.moderation.isBlockedRB(targetUserId),
+        ]);
+        if (alreadyVB && alreadyRB) {
+            return interaction.reply({ content: `⚠️ ${targetMember} è già bloccato (VB + RB).`, ephemeral: true });
+        }
+
+        const removed = await econDb.removeItem(userId, 'catene');
+        if (!removed) return interaction.reply({ content: "❌ Errore.", ephemeral: true });
+
+        // Trova partner
+        let partnerId = null;
+        if (targetMember.roles.cache.has(RUOLI.ALIVE)) {
+            partnerId = await db.meeting.findSponsor(targetUserId);
+        } else if (targetMember.roles.cache.has(RUOLI.SPONSOR)) {
+            partnerId = await db.meeting.findPlayer(targetUserId);
+        }
+
+        const partnerMember = partnerId ? await interaction.guild.members.fetch(partnerId).catch(() => null) : null;
+        const results = [];
+
+        // Applica VB
+        if (!alreadyVB) {
+            await db.moderation.addBlockedVB(targetUserId, targetMember.user.tag);
+            results.push(`🚫 **${targetMember.user.tag}** → Visitblock`);
+            if (partnerMember && !(await db.moderation.isBlockedVB(partnerId))) {
+                await db.moderation.addBlockedVB(partnerId, partnerMember.user.tag);
+                results.push(`🚫 **${partnerMember.user.tag}** (partner) → Visitblock`);
             }
+        }
 
-            // ========== MODAL LETTERA: SUBMIT ==========
-            else if (interaction.isModalSubmit() && interaction.customId.startsWith('lettera_write_')) {
-                const parts = interaction.customId.split('_');
-                const targetUserId = parts[2];
-                const senderUserId = parts[3];
-                if (interaction.user.id !== senderUserId)
-                    return interaction.reply({ content: "❌ Errore.", ephemeral: true });
-
-                const content = interaction.fields.getTextInputValue('lettera_content');
-                if (content.trim().split(/\s+/).length > 10)
-                    return interaction.reply({ content: `❌ Massimo 10 parole!`, ephemeral: true });
-
-                setLetteraCache(`${senderUserId}_${targetUserId}`, content);
-
-                const row = new ActionRowBuilder().addComponents(
-                    new ButtonBuilder()
-                        .setCustomId(`lettera_confirm_${targetUserId}_${senderUserId}`)
-                        .setLabel('✅ Conferma Invio').setStyle(ButtonStyle.Success),
-                    new ButtonBuilder()
-                        .setCustomId('lettera_cancel')
-                        .setLabel('❌ Annulla').setStyle(ButtonStyle.Danger)
-                );
-                const embed = new EmbedBuilder()
-                    .setColor('#3498DB').setTitle('✉️ Anteprima Lettera')
-                    .setDescription(`**Destinatario:** <@${targetUserId}>\n\n**Messaggio:**\n${content}`);
-                await interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
+        // Applica RB
+        if (!alreadyRB) {
+            await db.moderation.addBlockedRB(targetUserId, targetMember.user.tag);
+            results.push(`🚫 **${targetMember.user.tag}** → Roleblock`);
+            if (partnerMember && !(await db.moderation.isBlockedRB(partnerId))) {
+                await db.moderation.addBlockedRB(partnerId, partnerMember.user.tag);
+                results.push(`🚫 **${partnerMember.user.tag}** (partner) → Roleblock`);
             }
+        }
 
-            // ========== BOTTONE LETTERA: CONFERMA ==========
-            else if (interaction.isButton() && interaction.customId.startsWith('lettera_confirm_')) {
-                const parts = interaction.customId.split('_');
-                const targetUserId = parts[2];
-                const senderUserId = parts[3];
-                if (interaction.user.id !== senderUserId)
-                    return interaction.reply({ content: "❌ Non è tuo.", ephemeral: true });
+        // Log uso catene
+        await logShopAction(interaction.client, userId, interaction.user.tag, 'use_catene', 
+            'Catene', `🎯 Target: ${targetMember.user.tag} (<@${targetUserId}>)\n` + results.join('\n'));
 
-                const content = letteraCache.get(`${senderUserId}_${targetUserId}`);
-                if (!content)
-                    return interaction.update({ content: "❌ Messaggio scaduto. Riprova.", embeds: [], components: [] });
+        await interaction.reply({ embeds: [
+            new EmbedBuilder().setColor('#2C3E50').setTitle('⛓️ Catene Applicate!')
+                .setDescription(results.join('\n')).setTimestamp()
+        ], ephemeral: false });
 
-                const removed = await econDb.removeItem(senderUserId, 'lettera');
-                if (!removed)
-                    return interaction.update({ content: "❌ Non possiedi più la lettera.", embeds: [], components: [] });
+        await interaction.message.delete().catch(() => {});
+    });
 
-                // Trova chat privata del destinatario
-                const catPriv = interaction.guild.channels.cache.get(HOUSING.CATEGORIA_CHAT_PRIVATE);
-                const targetChannel = catPriv?.children.cache.find(ch =>
-                    ch.type === ChannelType.GuildText &&
-                    ch.permissionOverwrites.cache.some(p => p.id === targetUserId && p.allow.has(PermissionsBitField.Flags.ViewChannel))
-                );
+    // ==========================================
+    // 📜 TESTAMENTO CHANNEL SELECT HANDLER
+    // ==========================================
+    client.on('interactionCreate', async interaction => {
+        if (!interaction.isStringSelectMenu()) return;
+        if (!interaction.customId.startsWith('testamento_channel_')) return;
 
-                if (!targetChannel)
-                    return interaction.update({ content: "❌ Chat privata del destinatario non trovata.", embeds: [], components: [] });
+        const userId = interaction.customId.split('_')[2];
+        if (interaction.user.id !== userId) 
+            return interaction.reply({ content: "❌ Non è il tuo menu!", ephemeral: true });
 
-                await targetChannel.send({ embeds: [
-                    new EmbedBuilder().setColor('#E74C3C').setTitle('✉️ Lettera Anonima')
-                        .setDescription(content).setFooter({ text: 'Mittente sconosciuto' }).setTimestamp()
-                ]});
+        const channelId = interaction.values[0];
+        const channel = interaction.guild.channels.cache.get(channelId);
+        if (!channel) return interaction.reply({ content: "❌ Canale non trovato.", ephemeral: true });
 
-                letteraCache.delete(`${senderUserId}_${targetUserId}`);
-                await interaction.update({ content: "✅ Lettera inviata!", embeds: [], components: [] });
-                if (interaction.message?.deletable) setTimeout(() => interaction.message.delete().catch(() => {}), 5000);
-            }
+        // Controlla se il testamento è già usato per questo canale
+        const usedChannels = await econDb.getTestamentoChannels(userId);
+        if (usedChannels.includes(channelId)) {
+            return interaction.reply({ content: "❌ Hai già usato il testamento in questo canale!", ephemeral: true });
+        }
 
-            // ========== BOTTONE LETTERA: ANNULLA ==========
-            else if (interaction.isButton() && interaction.customId === 'lettera_cancel') {
-                await interaction.update({ content: "❌ Invio annullato.", embeds: [], components: [] });
-            }
+        const modal = new ModalBuilder()
+            .setCustomId(`testamento_modal_${userId}_${channelId}`)
+            .setTitle(`Messaggio per ${formatName(channel.name)}`);
 
-            // ========== MENU TESTAMENTO: SELEZIONE CANALE ==========
-            else if (interaction.isStringSelectMenu() && interaction.customId.startsWith('testamento_channel_')) {
-                const senderUserId = interaction.customId.split('_')[2];
-                if (interaction.user.id !== senderUserId)
-                    return interaction.reply({ content: "❌ Non è tuo.", ephemeral: true });
+        const textInput = new TextInputBuilder()
+            .setCustomId('testamento_text')
+            .setLabel('Il tuo messaggio')
+            .setStyle(TextInputStyle.Paragraph)
+            .setMaxLength(500)
+            .setRequired(true);
 
-                const channelId = interaction.values[0];
-                const channel = interaction.guild.channels.cache.get(channelId);
-                if (!channel) return interaction.update({ content: "❌ Canale non trovato.", components: [] });
+        modal.addComponents(new ActionRowBuilder().addComponents(textInput));
+        await interaction.showModal(modal);
+    });
 
-                // Rimuovi oggetto
-                const removed = await econDb.removeItem(senderUserId, 'testamento');
-                if (!removed) return interaction.update({ content: "❌ Non possiedi più il testamento.", components: [] });
+    // ==========================================
+    // 📜 TESTAMENTO MODAL HANDLER
+    // ==========================================
+    client.on('interactionCreate', async interaction => {
+        if (!interaction.isModalSubmit()) return;
+        if (!interaction.customId.startsWith('testamento_modal_')) return;
 
-                // Concedi permesso SendMessages (overwrite utente)
-                await channel.permissionOverwrites.create(senderUserId, { SendMessages: true, ViewChannel: true });
-                await econDb.addTestamentoChannel(senderUserId, channelId);
+        const parts = interaction.customId.split('_');
+        const userId = parts[2];
+        const channelId = parts[3];
 
-                await interaction.update({
-                    content: `📜 Testamento attivato! Puoi inviare **1 messaggio** in ${channel}. Dopo verrà revocato.`,
-                    components: []
-                });
+        if (interaction.user.id !== userId) return;
 
-                // Listener: dopo 1 messaggio, revoca permesso
-                const filter = m => m.author.id === senderUserId;
-                const collector = channel.createMessageCollector({ filter, max: 1, time: 3600000 }); // 1h max
+        const text = interaction.fields.getTextInputValue('testamento_text');
+        const channel = interaction.guild.channels.cache.get(channelId);
+        if (!channel) return interaction.reply({ content: "❌ Canale non trovato.", ephemeral: true });
 
-                collector.on('collect', async () => {
-                    await channel.permissionOverwrites.delete(senderUserId).catch(() => {});
-                    await econDb.removeTestamentoChannel(senderUserId, channelId);
-                    channel.send(`📜 Il testamento di <@${senderUserId}> si è esaurito.`).catch(() => {});
-                });
+        // Verifica possesso testamento
+        const hasItem = await econDb.hasItem(userId, 'testamento');
+        if (!hasItem) return interaction.reply({ content: "❌ Non hai il testamento!", ephemeral: true });
 
-                collector.on('end', async (collected) => {
-                    if (collected.size === 0) {
-                        // Scaduto senza messaggi: revoca comunque
-                        await channel.permissionOverwrites.delete(senderUserId).catch(() => {});
-                        await econDb.removeTestamentoChannel(senderUserId, channelId);
-                    }
-                });
-            }
-        } catch (err) {
-            console.error("❌ [Economy] Errore interazione:", err);
+        // Controlla se il testamento è già usato per questo canale
+        const usedChannels = await econDb.getTestamentoChannels(userId);
+        if (usedChannels.includes(channelId)) {
+            return interaction.reply({ content: "❌ Hai già usato il testamento in questo canale!", ephemeral: true });
+        }
+
+        // Rimuovi testamento e aggiungi canale alla lista
+        await Promise.all([
+            econDb.removeItem(userId, 'testamento'),
+            econDb.addTestamentoChannel(userId, channelId)
+        ]);
+
+        await channel.send({ embeds: [
+            new EmbedBuilder().setColor('#8E44AD').setTitle('📜 Messaggio dal Testamento')
+                .setDescription(`*"${text}"*`)
+                .setFooter({ text: 'Messaggio anonimo' })
+                .setTimestamp()
+        ]});
+
+        // Log uso testamento
+        await logShopAction(interaction.client, userId, interaction.user.tag, 'use_testamento', 
+            'Testamento', `📺 Canale: ${formatName(channel.name)}\n📝 Messaggio: "${text}"`);
+
+        await interaction.reply({ content: "📜 Testamento inviato con successo!", ephemeral: true });
+    });
+
+    // ==========================================
+    // ⛺ TENDA BUTTON HANDLERS
+    // ==========================================
+    client.on('interactionCreate', async interaction => {
+        if (!interaction.isButton()) return;
+        if (!interaction.customId.startsWith('tenda_')) return;
+
+        const [, action, requesterId] = interaction.customId.split('_');
+        const ownerId = await db.housing.findOwner(interaction.channel.id);
+        
+        if (interaction.user.id !== ownerId) {
+            return interaction.reply({ content: "❌ Solo il proprietario può rispondere!", ephemeral: true });
+        }
+
+        if (action === 'yes') {
+            const requester = await interaction.guild.members.fetch(requesterId).catch(() => null);
+            if (!requester) return interaction.update({ content: "❌ Richiedente non trovato.", components: [] });
+
+            const sponsors = await getSponsorsToMove(requester, interaction.guild);
+            await cleanOldHome(requesterId, interaction.guild);
+            for (const s of sponsors) await cleanOldHome(s.id, interaction.guild);
+
+            await db.housing.setHome(requesterId, interaction.channel.id);
+            for (const s of sponsors) await db.housing.setHome(s.id, interaction.channel.id);
+
+            await interaction.channel.permissionOverwrites.edit(requesterId, { ViewChannel: true, SendMessages: true });
+            const pinnedMsg = await interaction.channel.send(`🔑 ${requester}, dimora assegnata (Comproprietario).`);
+            await pinnedMsg.pin();
+
+            // Log uso tenda
+            await logShopAction(interaction.client, requesterId, requester.user.tag, 'use_tenda', 
+                'Tenda', `🏠 Casa: ${formatName(interaction.channel.name)}\n✅ Accettato da: ${interaction.user.tag}`);
+
+            await interaction.update({ content: "⛺ Trasferimento accettato!", embeds: [], components: [] });
+        } else {
+            await interaction.update({ content: "❌ Trasferimento rifiutato.", embeds: [], components: [] });
         }
     });
-};
+}
 
 // ==========================================
-// 💰 COMANDO !pagamento [amount] / !pagamento @user amount
+// 🛒 MOSTRA SHOP
 // ==========================================
-async function handlePagamento(message, args) {
-    if (!isAdmin(message.member)) return message.reply("⛔ Solo admin.");
+async function showShop(message) {
+    const description = SHOP_ITEMS.map(item =>
+        `${item.emoji} **${item.name}** - ${item.price} 🪙\n${item.description}\nID: \`${item.id}\``
+    ).join('\n\n');
 
-    const mention = message.mentions.members.first();
+    const options = SHOP_ITEMS.map(item =>
+        new StringSelectMenuOptionBuilder()
+            .setLabel(item.name)
+            .setValue(item.id)
+            .setDescription(`${item.price} 🪙`)
+            .setEmoji(item.emoji)
+    );
 
-    // !pagamento @user amount → pagamento singolo
-    if (mention) {
-        const amount = parseInt(args[1]);
-        if (isNaN(amount) || amount <= 0) return message.reply("❌ Uso: `!pagamento @Utente <quantità>`");
-        await econDb.addBalance(mention.id, amount);
-        return message.reply(`✅ Aggiunte **${amount}** monete a ${mention}.`);
+    const select = new StringSelectMenuBuilder()
+        .setCustomId(`shop_buy_${message.author.id}`)
+        .setPlaceholder('Scegli cosa comprare...')
+        .addOptions(options);
+
+    const embed = new EmbedBuilder()
+        .setTitle('🛒 Mercato')
+        .setDescription('**Oggetti disponibili:**\n\n' + description)
+        .setColor('#3498DB')
+        .setFooter({ text: 'Usa il menu qui sotto per acquistare!' })
+        .setTimestamp();
+
+    const msg = await message.channel.send({
+        embeds: [embed],
+        components: [new ActionRowBuilder().addComponents(select)]
+    });
+
+    setTimeout(() => msg.delete().catch(() => {}), 120000);
+}
+
+// ==========================================
+// 💼 MOSTRA INVENTARIO
+// ==========================================
+async function showInventory(message, user) {
+    await econDb.ensureProfile(user.id);
+    const inventory = await econDb.getInventory(user.id);
+    
+    if (!inventory || Object.keys(inventory).length === 0) {
+        return message.channel.send(`📦 **${user.username}** non ha oggetti nell'inventario.`);
     }
 
-    // !pagamento [amount] → pagamento globale (default 100)
-    const amount = parseInt(args[0]) || 100;
-    const allMembers = await message.guild.members.fetch();
-    const aliveIds = allMembers.filter(m => !m.user.bot && m.roles.cache.has(RUOLI.ALIVE)).map(m => m.id);
+    const items = Object.entries(inventory)
+        .filter(([, qty]) => qty > 0)
+        .map(([id, qty]) => {
+            const item = SHOP_ITEMS.find(i => i.id === id);
+            return item ? `${item.emoji} **${item.name}** x${qty}` : `❓ ${id} x${qty}`;
+        })
+        .join('\n');
 
-    if (aliveIds.length === 0) return message.reply("❌ Nessun giocatore alive trovato.");
-
-    await econDb.bulkAddBalance(aliveIds, amount);
-
-    await message.reply({ embeds: [
-        new EmbedBuilder().setColor('#00FF00').setTitle('💰 Pagamento Eseguito')
-            .setDescription(`Distribuite **${amount} monete** a **${aliveIds.length}** giocatori alive.`)
-            .setTimestamp()
+    message.channel.send({ embeds: [
+        new EmbedBuilder().setTitle(`📦 Inventario di ${user.username}`)
+            .setDescription(items || 'Vuoto').setColor('#27AE60').setTimestamp()
     ]});
 }
 
 // ==========================================
-// 💵 COMANDO !bilancio [@user]
+// 💰 ACQUISTA OGGETTO
 // ==========================================
-async function handleBilancio(message, args) {
-    const mention = message.mentions.members.first();
-
-    // Admin può vedere bilancio altrui
-    if (mention && isAdmin(message.member)) {
-        const profile = await econDb.ensureProfile(mention.id);
-        return message.reply({ embeds: [
-            new EmbedBuilder().setColor('#FFD700').setTitle(`💰 Bilancio di ${mention.displayName}`)
-                .addFields(
-                    { name: '💵 Saldo', value: `**${profile.balance}** monete`, inline: true },
-                    { name: '📈 Guadagnato', value: `${profile.totalEarned}`, inline: true },
-                    { name: '📉 Speso', value: `${profile.totalSpent}`, inline: true }
-                ).setTimestamp()
-        ]});
-    }
-
-    if (!message.member.roles.cache.has(RUOLI.ALIVE)) return message.reply("❌ Solo giocatori alive.");
-
-    const profile = await econDb.ensureProfile(message.author.id);
-    message.reply({ embeds: [
-        new EmbedBuilder().setColor('#FFD700').setTitle('💰 Il Tuo Bilancio')
-            .addFields(
-                { name: '💵 Saldo', value: `**${profile.balance}** monete`, inline: true },
-                { name: '📈 Guadagnato', value: `${profile.totalEarned}`, inline: true },
-                { name: '📉 Speso', value: `${profile.totalSpent}`, inline: true }
-            ).setFooter({ text: message.author.tag }).setTimestamp()
-    ]});
-}
-
-// ==========================================
-// 🎒 COMANDO !inventario
-// ==========================================
-async function handleInventario(message) {
-    if (!message.member.roles.cache.has(RUOLI.ALIVE) && !message.member.roles.cache.has(RUOLI.DEAD))
-        return message.reply("❌ Solo giocatori.");
-
-    const inv = await econDb.getInventory(message.author.id);
-    const items = Object.entries(inv).filter(([, qty]) => qty > 0);
-
-    const desc = items.length > 0
-        ? items.map(([id, qty]) => {
-            const s = SHOP_ITEMS.find(i => i.id === id);
-            return `${s?.emoji || '📦'} **${s?.name || id}** x${qty}`;
-        }).join('\n')
-        : '*Inventario vuoto.*';
-
-    message.reply({ embeds: [
-        new EmbedBuilder().setColor('#9B59B6').setTitle('🎒 Inventario')
-            .setDescription(desc)
-            .setFooter({ text: `${message.author.tag} | Totale: ${items.reduce((s, [, q]) => s + q, 0)} oggetti` })
-            .setTimestamp()
-    ]});
-}
-
-// ==========================================
-// 💸 COMANDO !paga @utente quantità
-// ==========================================
-async function handlePaga(message, args) {
-    if (!message.member.roles.cache.has(RUOLI.ALIVE)) return message.reply("❌ Solo giocatori alive.");
-
-    const target = message.mentions.users.first();
-    if (!target) return message.reply("❌ Uso: `!paga @utente <quantità>`");
-    if (target.id === message.author.id) return message.reply("❌ Non puoi pagare te stesso!");
-
-    const amount = parseInt(args[1]);
-    if (isNaN(amount) || amount <= 0) return message.reply("❌ Quantità non valida.");
-
-    const removed = await econDb.removeBalance(message.author.id, amount);
-    if (!removed) {
-        const bal = await econDb.getBalance(message.author.id);
-        return message.reply(`❌ Saldo insufficiente! Hai **${bal}** monete.`);
-    }
-
-    await econDb.addBalance(target.id, amount);
-
-    message.reply({ embeds: [
-        new EmbedBuilder().setColor('#00FF00').setTitle('💸 Trasferimento')
-            .setDescription(`**${amount} monete** trasferite a ${target}`)
-            .addFields(
-                { name: 'Da', value: `${message.author}`, inline: true },
-                { name: 'A', value: `${target}`, inline: true },
-            ).setTimestamp()
-    ]});
-}
-
-// ==========================================
-// 🛒 COMANDO !mercato
-// ==========================================
-async function handleMercato(message) {
-    if (!message.member.roles.cache.has(RUOLI.ALIVE)) return message.reply("❌ Solo giocatori alive.");
-
-    message.reply({ embeds: [
-        new EmbedBuilder().setColor('#3498DB').setTitle('🛒 Mercato')
-            .setDescription('Oggetti disponibili:')
-            .addFields(SHOP_ITEMS.map(i => ({
-                name: `${i.emoji} ${i.name}`,
-                value: `💰 **${i.price}** monete\n${i.description}\nID: \`${i.id}\``,
-                inline: true
-            })))
-            .setFooter({ text: '!compra <id> [quantità]' }).setTimestamp()
-    ]});
-}
-
-// ==========================================
-// 🛍️ COMANDO !compra <id> [quantità]
-// ==========================================
-async function handleCompra(message, args) {
-    if (!message.member.roles.cache.has(RUOLI.ALIVE)) return message.reply("❌ Solo giocatori alive.");
-    if (message.channel.parentId !== HOUSING.CATEGORIA_CHAT_PRIVATE) return message.reply("⛔ Solo nelle chat private!");
-
-    const itemId = args[0]?.toLowerCase();
-    const quantity = parseInt(args[1]) || 1;
-    if (!itemId) return message.reply("❌ Uso: `!compra <id> [quantità]`");
-    if (quantity <= 0) return message.reply("❌ Quantità non valida.");
-
+async function buyItem(message, itemId, client) {
     const item = SHOP_ITEMS.find(i => i.id === itemId);
-    if (!item) return message.reply("❌ Oggetto non trovato. Usa `!mercato`.");
+    if (!item) return message.reply("❌ Oggetto non valido.");
 
-    const totalCost = item.price * quantity;
-    const removed = await econDb.removeBalance(message.author.id, totalCost);
-    if (!removed) {
-        const bal = await econDb.getBalance(message.author.id);
-        return message.reply(`❌ Servono **${totalCost}** monete, hai **${bal}**.`);
+    const balance = await econDb.getBalance(message.author.id);
+    if (balance < item.price) {
+        return message.reply(`❌ Fondi insufficienti! Ti servono **${item.price} 🪙**, hai solo **${balance} 🪙**.`);
     }
 
-    await econDb.addItem(message.author.id, itemId, quantity);
+    const removed = await econDb.removeBalance(message.author.id, item.price);
+    if (!removed) return message.reply("❌ Errore nella transazione.");
 
-    const newBal = await econDb.getBalance(message.author.id);
-    message.reply({ embeds: [
-        new EmbedBuilder().setColor('#00FF00').setTitle('✅ Acquisto')
-            .setDescription(`Hai comprato **${quantity}x ${item.emoji} ${item.name}**`)
-            .addFields(
-                { name: 'Costo', value: `${totalCost} monete`, inline: true },
-                { name: 'Saldo', value: `${newBal} monete`, inline: true }
-            ).setTimestamp()
+    await econDb.addItem(message.author.id, itemId);
+    
+    // Log acquisto
+    await logShopAction(client, message.author.id, message.author.tag, 'buy', item.name);
+    
+    message.reply(`✅ Hai comprato **${item.name}** per **${item.price} 🪙**!`);
+}
+
+// ==========================================
+// 📊 CLASSIFICA
+// ==========================================
+async function showLeaderboard(message, client) {
+    const top = await econDb.getTopBalances(10);
+    if (top.length === 0) return message.reply("📊 Nessun dato disponibile.");
+
+    const list = await Promise.all(top.map(async (entry, i) => {
+        const user = await client.users.fetch(entry.userId).catch(() => null);
+        const name = user ? user.username : 'Utente sconosciuto';
+        return `**${i + 1}.** ${name} - ${entry.balance} 🪙`;
+    }));
+
+    message.channel.send({ embeds: [
+        new EmbedBuilder().setTitle('🏆 Classifica Ricchezza')
+            .setDescription(list.join('\n')).setColor('#F39C12').setTimestamp()
     ]});
-}
-
-// ==========================================
-// 🏆 COMANDO !classifica
-// ==========================================
-async function handleClassifica(message) {
-    const canUse = message.member.roles.cache.hasAny(RUOLI.ALIVE, RUOLI.SPONSOR, RUOLI.DEAD, RUOLI.SPONSOR_DEAD) || isAdmin(message.member);
-    if (!canUse) return message.reply("⛔ Non hai i permessi.");
-
-    const top = await econDb.getTopBalances(15);
-    if (top.length === 0) return message.reply("📊 Nessun profilo economia trovato.");
-
-    const desc = top.map((p, i) => {
-        const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `**${i + 1}.**`;
-        return `${medal} <@${p.userId}> — **${p.balance}** monete`;
-    }).join('\n');
-
-    message.reply({ embeds: [
-        new EmbedBuilder().setColor('#FFD700').setTitle('🏆 Classifica Ricchezza')
-            .setDescription(desc).setTimestamp()
-    ]});
-}
-
-// ==========================================
-// 💸 COMANDO !ritira @user amount (ADMIN)
-// ==========================================
-async function handleRitira(message, args) {
-    if (!isAdmin(message.member)) return message.reply("⛔ Solo admin.");
-
-    const mention = message.mentions.members.first();
-    const amount = parseInt(args[1]);
-    if (!mention || isNaN(amount) || amount <= 0)
-        return message.reply("❌ Uso: `!ritira @Utente <quantità>`");
-
-    const removed = await econDb.removeBalance(mention.id, amount);
-    if (!removed) return message.reply(`❌ ${mention} non ha abbastanza monete.`);
-
-    message.reply(`✅ Ritirate **${amount}** monete da ${mention}.`);
-}
-
-// ==========================================
-// 🎁 COMANDO !regala @user itemId [qty] (ADMIN)
-// ==========================================
-async function handleRegala(message, args) {
-    if (!isAdmin(message.member)) return message.reply("⛔ Solo admin.");
-
-    const mention = message.mentions.members.first();
-    const itemId = args[1]?.toLowerCase();
-    const quantity = parseInt(args[2]) || 1;
-    if (!mention || !itemId) return message.reply("❌ Uso: `!regala @Utente <oggetto> [quantità]`");
-
-    const item = SHOP_ITEMS.find(i => i.id === itemId);
-    if (!item) return message.reply("❌ Oggetto non trovato.");
-
-    await econDb.addItem(mention.id, itemId, quantity);
-    message.reply(`🎁 Regalati **${quantity}x ${item.emoji} ${item.name}** a ${mention}.`);
-}
-
-// ==========================================
-// 🎯 COMANDO !usa <oggetto> [args]
-// ==========================================
-async function handleUsa(message, args, client) {
-    // Alive per tutti tranne testamento (dead)
-    const itemId = args[0]?.toLowerCase();
-    if (!itemId) return message.reply("❌ Uso: `!usa <oggetto>`");
-
-    // Testamento: richiede DEAD
-    if (itemId === 'testamento') {
-        if (!message.member.roles.cache.has(RUOLI.DEAD))
-            return message.reply("❌ Solo i giocatori dead possono usare il testamento!");
-    } else {
-        if (!message.member.roles.cache.has(RUOLI.ALIVE))
-            return message.reply("❌ Solo giocatori alive.");
-    }
-
-    const has = await econDb.hasItem(message.author.id, itemId);
-    if (!has) return message.reply("❌ Non possiedi questo oggetto.");
-
-    switch (itemId) {
-        case 'scopa':       return useScopa(message);
-        case 'lettera':     return useLettera(message, args);
-        case 'scarpe':      return useScarpe(message);
-        case 'testamento':  return useTestamento(message);
-        case 'catene':      return useCatene(message, args);
-        case 'fuochi':      return useFuochi(message);
-        case 'tenda':       return useTenda(message, client);
-        default:            return message.reply("❌ Oggetto non utilizzabile.");
-    }
 }
 
 // ==========================================
 // 🧹 USA SCOPA
-// Cancella messaggi in una casa. Proteggi con 🛡️
 // ==========================================
-async function useScopa(message) {
+async function useScopa(message, args, client) {
     if (message.channel.parentId !== HOUSING.CATEGORIA_CASE)
         return message.reply("❌ Usa la scopa solo in una casa!");
-    if (!message.reference)
-        return message.reply("❌ Rispondi al messaggio da cui iniziare a cancellare!");
+
+    if (!message.reference) return message.reply("❌ Rispondi al messaggio da cui iniziare la pulizia!");
 
     const refMsg = await message.channel.messages.fetch(message.reference.messageId).catch(() => null);
     if (!refMsg) return message.reply("❌ Messaggio di riferimento non trovato.");
 
     const removed = await econDb.removeItem(message.author.id, 'scopa');
-    if (!removed) return message.reply("❌ Errore: oggetto non disponibile.");
+    if (!removed) return message.reply("❌ Errore.");
 
-    // Cancella il comando subito
-    await message.delete().catch(() => {});
-
-    const twoWeeksAgo = Date.now() - 14 * 24 * 60 * 60 * 1000;
-    let totalDeleted = 0;
-    let totalProtected = 0;
-
-    // 🚀 LOOP INFINITO: fetch 1000 → cancella → ripeti finché non finiscono
-    while (true) {
-        // Fetch 1000 messaggi (10 batch da 100)
-        const batch1000 = [];
-        let lastId = refMsg.id;
-        for (let i = 0; i < 10; i++) {
-            const fetched = await message.channel.messages.fetch({ after: lastId, limit: 100 });
-            if (fetched.size === 0) break;
-            batch1000.push(...fetched.values());
-            lastId = fetched.sort((a, b) => b.createdTimestamp - a.createdTimestamp).first().id;
-            if (fetched.size < 100) break;
-        }
-
-        if (batch1000.length === 0) break;
-
-        // Separa: cancellare vs protetti
-        const toDelete = [];
-        for (const msg of batch1000) {
-            const hasShield = msg.reactions.cache.has('🛡️') || msg.reactions.cache.has('🛡');
-            if (hasShield || msg.pinned) {
-                totalProtected++;
-                // Cleanup 🛡️
-                if (hasShield) msg.reactions.cache.forEach(r => {
-                    if (r.emoji.name === '🛡️' || r.emoji.name === '🛡') r.remove().catch(() => {});
-                });
-                continue;
-            }
-            toDelete.push(msg);
-        }
-
-        if (toDelete.length === 0) break;
-
-        // Recenti → bulkDelete a chunk da 100 in parallelo
-        const recent = toDelete.filter(m => m.createdTimestamp > twoWeeksAgo);
-        const old = toDelete.filter(m => m.createdTimestamp <= twoWeeksAgo);
-
-        if (recent.length > 0) {
-            const chunks = [];
-            for (let i = 0; i < recent.length; i += 100) chunks.push(recent.slice(i, i + 100));
-            await Promise.all(chunks.map(c => message.channel.bulkDelete(c, true).catch(() => {})));
-        }
-
-        // Vecchi → parallelo a blocchi da 10
-        if (old.length > 0) {
-            for (let i = 0; i < old.length; i += 10) {
-                await Promise.all(old.slice(i, i + 10).map(m => m.delete().catch(() => {})));
-            }
-        }
-
-        totalDeleted += toDelete.length;
-
-        // Se ha fetchato meno di 1000, non ce ne sono altri
-        if (batch1000.length < 1000) break;
+    const messages = await message.channel.messages.fetch({ after: refMsg.id, limit: 100 });
+    const toDelete = [];
+    
+    for (const [, msg] of messages) {
+        const hasShield = msg.reactions.cache.has('🛡️');
+        if (!hasShield) toDelete.push(msg);
     }
 
-    const confirmMsg = await message.channel.send({ embeds: [
-        new EmbedBuilder().setColor('#00FF00').setTitle('🧹 Scopa Usata')
-            .setDescription(`Cancellati **${totalDeleted}** messaggi.\nProtetti: **${totalProtected}** (🛡️ o pinnati).`)
-            .setTimestamp()
-    ]});
-    setTimeout(() => confirmMsg.delete().catch(() => {}), 8000);
+    if (!refMsg.reactions.cache.has('🛡️')) toDelete.push(refMsg);
+
+    let deleted = 0;
+    for (const msg of toDelete) {
+        await msg.delete().catch(() => {});
+        deleted++;
+        await new Promise(resolve => setTimeout(resolve, 300));
+    }
+
+    // Log uso scopa
+    await logShopAction(client, message.author.id, message.author.tag, 'use_scopa', 
+        'Scopa', `🏠 Casa: ${formatName(message.channel.name)}\n🗑️ Messaggi cancellati: ${deleted}`);
+
+    const confirmMsg = await message.channel.send(`🧹 Pulizia completata! ${deleted} messaggi rimossi.`);
+    setTimeout(() => confirmMsg.delete().catch(() => {}), 10000);
 }
 
 // ==========================================
-// ✉️ USA LETTERA
+// ✉️ USA LETTERA (con menu a tendina)
 // ==========================================
-async function useLettera(message, args) {
+async function useLettera(message, args, client) {
     if (message.channel.parentId !== HOUSING.CATEGORIA_CHAT_PRIVATE)
         return message.reply("❌ Usa la lettera solo nella tua chat privata!");
 
-    const target = message.mentions.users.first();
-    if (!target) return message.reply("❌ Uso: `!usa lettera @utente`");
-    if (target.id === message.author.id) return message.reply("❌ Non puoi inviare una lettera a te stesso!");
+    // Ottieni tutti i giocatori con ruolo ALIVE che non sono nella lista morti
+    const markedForDeath = await db.moderation.getMarkedForDeath();
+    const deadUserIds = markedForDeath.map(m => m.userId);
+    
+    const allMembers = await message.guild.members.fetch();
+    const aliveMembers = allMembers.filter(m => 
+        !m.user.bot && 
+        m.roles.cache.has(RUOLI.ALIVE) && 
+        !deadUserIds.includes(m.id) &&
+        m.id !== message.author.id
+    );
 
-    // Mostra bottone per aprire il modal
-    const btn = new ButtonBuilder()
-        .setCustomId(`lettera_open_${target.id}_${message.author.id}`)
-        .setLabel('✉️ Scrivi Lettera').setStyle(ButtonStyle.Primary);
+    if (aliveMembers.size === 0) {
+        return message.reply("❌ Nessun giocatore disponibile per inviare la lettera.");
+    }
 
-    const msg = await message.channel.send({
-        embeds: [new EmbedBuilder().setColor('#3498DB').setTitle('✉️ Lettera')
-            .setDescription(`Clicca per scrivere la lettera a ${target}`)],
-        components: [new ActionRowBuilder().addComponents(btn)]
+    // Crea menu a tendina con i nomi visualizzati
+    const options = aliveMembers.map(m => 
+        new StringSelectMenuOptionBuilder()
+            .setLabel(m.displayName)
+            .setValue(m.id)
+            .setEmoji('👤')
+    ).slice(0, 25); // Max 25 opzioni
+
+    const select = new StringSelectMenuBuilder()
+        .setCustomId(`lettera_select_${message.author.id}`)
+        .setPlaceholder('Seleziona il destinatario...')
+        .addOptions(options);
+
+    const msg = await message.reply({
+        content: '✉️ **Seleziona a chi vuoi inviare la lettera:**',
+        components: [new ActionRowBuilder().addComponents(select)]
     });
-    setTimeout(() => msg.delete().catch(() => {}), 120000); // 2 min
+
+    setTimeout(() => msg.delete().catch(() => {}), 120000);
 }
 
 // ==========================================
-// 👟 USA SCARPE (auto +1 visita base)
+// 👟 USA SCARPE
 // ==========================================
-async function useScarpe(message) {
+async function useScarpe(message, client) {
     if (message.channel.parentId !== HOUSING.CATEGORIA_CHAT_PRIVATE)
         return message.reply("❌ Usa le scarpe solo nella tua chat privata!");
 
     const removed = await econDb.removeItem(message.author.id, 'scarpe');
     if (!removed) return message.reply("❌ Errore.");
 
-    // Determina modalità attuale e aggiungi visita base
-    const mode = await db.housing.getMode();
-    const isDay = mode === 'DAY';
-    await db.housing.addExtraVisit(message.author.id, 'base', 1, isDay);
-
-    // Aggiungi anche allo sponsor (se abbinato)
-    const sponsor = await findPartner(message.member, message.guild);
-    if (sponsor) {
-        await db.housing.addExtraVisit(sponsor.id, 'base', 1, isDay);
-    }
-
+    await db.housing.addExtraVisit(message.author.id, 'base', 1, false);
     const info = await db.housing.getVisitInfo(message.author.id);
-    message.reply({ embeds: [
-        new EmbedBuilder().setColor('#00FF00').setTitle('👟 Scarpe Usate')
-            .setDescription(`Hai ottenuto **+1 visita base** (${isDay ? '☀️ Giorno' : '🌙 Notte'})!`)
+
+    // Log uso scarpe
+    await logShopAction(client, message.author.id, message.author.tag, 'use_scarpe', 'Scarpe');
+
+    message.channel.send({ embeds: [
+        new EmbedBuilder().setColor('#E74C3C').setTitle('👟 Scarpe Utilizzate!')
+            .setDescription('Hai ottenuto **+1 visita base**!')
             .addFields({ name: 'Visite attuali', value: `${info?.used || 0}/${info?.totalLimit || 0}`, inline: true })
             .setTimestamp()
     ]});
@@ -817,60 +948,64 @@ async function useTestamento(message) {
 }
 
 // ==========================================
-// ⛓️ USA CATENE (auto VB + RB su target + partner)
+// ⛓️ USA CATENE (auto VB + RB su target + partner con menu a tendina)
 // ==========================================
-async function useCatene(message, args) {
+async function useCatene(message, args, client) {
     if (message.channel.parentId !== HOUSING.CATEGORIA_CHAT_PRIVATE)
         return message.reply("❌ Usa le catene solo nella tua chat privata!");
 
-    const target = message.mentions.members.first();
-    if (!target) return message.reply("❌ Uso: `!usa catene @utente`");
-    if (target.id === message.author.id) return message.reply("❌ Non puoi incatenarti da solo!");
+    // Ottieni tutti i giocatori con ruolo ALIVE che non sono nella lista morti
+    const markedForDeath = await db.moderation.getMarkedForDeath();
+    const deadUserIds = markedForDeath.map(m => m.userId);
+    
+    const allMembers = await message.guild.members.fetch();
+    const aliveMembers = allMembers.filter(m => 
+        !m.user.bot && 
+        m.roles.cache.has(RUOLI.ALIVE) && 
+        !deadUserIds.includes(m.id) &&
+        m.id !== message.author.id
+    );
 
-    // Verifica che non sia già bloccato
-    const [alreadyVB, alreadyRB] = await Promise.all([
-        db.moderation.isBlockedVB(target.id),
-        db.moderation.isBlockedRB(target.id),
-    ]);
-    if (alreadyVB && alreadyRB)
-        return message.reply(`⚠️ ${target} è già bloccato (VB + RB).`);
-
-    const removed = await econDb.removeItem(message.author.id, 'catene');
-    if (!removed) return message.reply("❌ Errore.");
-
-    const partner = await findPartner(target, message.guild);
-    const results = [];
-
-    // Applica VB
-    if (!alreadyVB) {
-        await db.moderation.addBlockedVB(target.id, target.user.tag);
-        results.push(`🚫 **${target.user.tag}** → Visitblock`);
-        if (partner && !(await db.moderation.isBlockedVB(partner.id))) {
-            await db.moderation.addBlockedVB(partner.id, partner.user.tag);
-            results.push(`🚫 **${partner.user.tag}** (partner) → Visitblock`);
-        }
+    if (aliveMembers.size === 0) {
+        return message.reply("❌ Nessun giocatore disponibile per usare le catene.");
     }
 
-    // Applica RB
-    if (!alreadyRB) {
-        await db.moderation.addBlockedRB(target.id, target.user.tag);
-        results.push(`🚫 **${target.user.tag}** → Roleblock`);
-        if (partner && !(await db.moderation.isBlockedRB(partner.id))) {
-            await db.moderation.addBlockedRB(partner.id, partner.user.tag);
-            results.push(`🚫 **${partner.user.tag}** (partner) → Roleblock`);
-        }
-    }
+    // Crea menu a tendina con i nomi visualizzati
+    const options = aliveMembers.map(m => 
+        new StringSelectMenuOptionBuilder()
+            .setLabel(m.displayName)
+            .setValue(m.id)
+            .setEmoji('⛓️')
+    ).slice(0, 25); // Max 25 opzioni
 
-    message.reply({ embeds: [
-        new EmbedBuilder().setColor('#2C3E50').setTitle('⛓️ Catene Applicate!')
-            .setDescription(results.join('\n')).setTimestamp()
-    ]});
+    const select = new StringSelectMenuBuilder()
+        .setCustomId(`catene_select_${message.author.id}`)
+        .setPlaceholder('Seleziona chi bloccare...')
+        .addOptions(options);
+
+    const msg = await message.reply({
+        content: '⛓️ **Seleziona il giocatore da bloccare (VB + RB):**',
+        components: [new ActionRowBuilder().addComponents(select)]
+    });
+
+    setTimeout(() => msg.delete().catch(() => {}), 120000);
+}
+
+// Helper per trovare partner
+async function findPartner(member, guild) {
+    let partnerId = null;
+    if (member.roles.cache.has(RUOLI.ALIVE)) {
+        partnerId = await db.meeting.findSponsor(member.id);
+    } else if (member.roles.cache.has(RUOLI.SPONSOR)) {
+        partnerId = await db.meeting.findPlayer(member.id);
+    }
+    return partnerId ? await guild.members.fetch(partnerId).catch(() => null) : null;
 }
 
 // ==========================================
 // 🎆 USA FUOCHI D'ARTIFICIO
 // ==========================================
-async function useFuochi(message) {
+async function useFuochi(message, client) {
     if (message.channel.parentId !== HOUSING.CATEGORIA_CASE)
         return message.reply("❌ Usa i fuochi solo in una casa!");
 
@@ -887,6 +1022,10 @@ async function useFuochi(message) {
             .setImage('https://media.giphy.com/media/26tOZ42Mg6pbTUPHW/giphy.gif')
             .setTimestamp()
     ]});
+
+    // Log uso fuochi
+    await logShopAction(client, message.author.id, message.author.tag, 'use_fuochi', 
+        'Fuochi d\'artificio', `🏠 Casa: ${houseName}`);
 
     message.reply(`🎆 Fuochi lanciati! Annuncio pubblicato.`);
 }
@@ -925,6 +1064,10 @@ async function useTenda(message, client) {
         await newHomeChannel.permissionOverwrites.edit(message.author.id, { ViewChannel: true, SendMessages: true });
         const pinnedMsg = await newHomeChannel.send(`🔑 **${message.author}**, questa è la tua dimora privata.`);
         await pinnedMsg.pin();
+
+        // Log uso tenda
+        await logShopAction(client, message.author.id, message.author.tag, 'use_tenda', 
+            'Tenda', `🏠 Casa: ${formatName(newHomeChannel.name)}\n✅ Trasferimento diretto (casa senza proprietario)`);
 
         return message.reply("⛺ Tenda montata! Trasferimento completato.");
     }
@@ -968,3 +1111,9 @@ async function useTenda(message, client) {
         }
     });
 }
+
+module.exports = { 
+    registerEconomyCommands, 
+    econDb, 
+    SHOP_ITEMS
+};
