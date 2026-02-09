@@ -33,6 +33,78 @@ async function findPartner(member, guild) {
     } catch { return null; }
 }
 
+/**
+ * Rimuove proprietà casa e accesso fisico a tutte le case per un giocatore e partner.
+ * 1. Cancella pin "dimora privata" / "dimora assegnata" dalla casa di proprietà
+ * 2. Rimuove proprietà dal DB
+ * 3. Rimuove permessi da TUTTE le case dove si trova
+ */
+async function removeHomeOwnershipAndAccess(targetMember, partner, guild, botId) {
+    const results = [];
+
+    // Processa giocatore
+    const homeId = await db.housing.getHome(targetMember.id);
+    if (homeId) {
+        const homeChannel = guild.channels.cache.get(homeId);
+        if (homeChannel) {
+            // Cancella messaggi pinnati di proprietà
+            try {
+                const pinnedMessages = await homeChannel.messages.fetchPinned();
+                for (const [, msg] of pinnedMessages) {
+                    if (msg.author.id === botId &&
+                        (msg.content.includes("questa è la tua dimora privata") || msg.content.includes("dimora assegnata")) &&
+                        msg.content.includes(`<@${targetMember.id}>`)) {
+                        await msg.delete();
+                    }
+                }
+            } catch {}
+        }
+        await db.housing.removeHome(targetMember.id);
+        results.push(`🏠 Proprietà rimossa per ${targetMember}.`);
+    }
+
+    // Processa partner
+    if (partner) {
+        const partnerHomeId = await db.housing.getHome(partner.id);
+        if (partnerHomeId) {
+            const partnerHomeChannel = guild.channels.cache.get(partnerHomeId);
+            if (partnerHomeChannel) {
+                try {
+                    const pinnedMessages = await partnerHomeChannel.messages.fetchPinned();
+                    for (const [, msg] of pinnedMessages) {
+                        if (msg.author.id === botId &&
+                            (msg.content.includes("questa è la tua dimora privata") || msg.content.includes("dimora assegnata")) &&
+                            msg.content.includes(`<@${partner.id}>`)) {
+                            await msg.delete();
+                        }
+                    }
+                } catch {}
+            }
+            await db.housing.removeHome(partner.id);
+            results.push(`🏠 Proprietà rimossa per ${partner} (partner).`);
+        }
+    }
+
+    // Rimuovi accesso fisico da TUTTE le case
+    const allHouses = guild.channels.cache.filter(c =>
+        c.parentId === HOUSING.CATEGORIA_CASE && c.type === ChannelType.GuildText
+    );
+
+    for (const [, house] of allHouses) {
+        if (house.permissionOverwrites.cache.has(targetMember.id)) {
+            await house.permissionOverwrites.delete(targetMember.id).catch(() => {});
+        }
+        if (partner && house.permissionOverwrites.cache.has(partner.id)) {
+            await house.permissionOverwrites.delete(partner.id).catch(() => {});
+        }
+    }
+
+    results.push(`🚪 ${targetMember} rimosso da tutte le case.`);
+    if (partner) results.push(`🚪 ${partner} (partner) rimosso da tutte le case.`);
+
+    return results;
+}
+
 module.exports = function initModerationSystem(client) {
     console.log("🛡️ [Moderation] Sistema caricato (100% atomico).");
 
@@ -173,6 +245,10 @@ module.exports = function initModerationSystem(client) {
                         response += `\n⚔️ Anche ${partner} (partner) aggiunto alla lista morti.`;
                     }
                 }
+
+                // Rimuovi proprietà casa e accesso fisico
+                const homeResults = await removeHomeOwnershipAndAccess(mention, partner, message.guild, client.user.id);
+                response += '\n' + homeResults.join('\n');
 
                 message.reply(response);
             }
@@ -348,6 +424,32 @@ module.exports = function initModerationSystem(client) {
             message.reply(summary);
         }
 
+        // ===================== CIMITERO =====================
+        else if (command === 'cimitero') {
+            const canUse = message.member.roles.cache.hasAny(RUOLI.ALIVE, RUOLI.SPONSOR, RUOLI.DEAD, RUOLI.SPONSOR_DEAD) || isAdmin(message.member);
+            if (!canUse) return message.reply("⛔ Non hai i permessi.");
+
+            // Fetch tutti i membri con ruolo DEAD
+            const deadMembers = message.guild.members.cache.filter(m =>
+                !m.user.bot && m.roles.cache.has(RUOLI.DEAD)
+            );
+
+            if (deadMembers.size === 0) {
+                return message.reply("✅ Nessun giocatore morto al momento.");
+            }
+
+            const list = [...deadMembers.values()].map((m, i) => `**${i + 1}.** ${m.user.tag}`).join('\n');
+
+            const embed = new EmbedBuilder()
+                .setTitle('⚰️ Cimitero')
+                .setDescription(list)
+                .setColor('DarkButNotBlack')
+                .setFooter({ text: `Totale: ${deadMembers.size} giocatori` })
+                .setTimestamp();
+
+            message.reply({ embeds: [embed] });
+        }
+
         // ===================== OSAB =====================
         else if (command === 'osab') {
             if (!isAdmin(message.member)) return message.reply("⛔ Solo admin.");
@@ -432,6 +534,10 @@ module.exports = function initModerationSystem(client) {
                     db.moderation.removeProtected(userId),
                     partner ? db.moderation.removeProtected(partner.id) : Promise.resolve()
                 ]);
+
+                // Rimuovi proprietà casa e accesso fisico
+                const homeResults = await removeHomeOwnershipAndAccess(member, partner, guild, client.user.id);
+                response += '\n' + homeResults.join('\n');
 
                 await interaction.update({ 
                     content: response, 
