@@ -1000,12 +1000,25 @@ const shopEffects = {
             if (batch1000.length < 1000) break;
         }
 
-        const confirmMsg = await channel.send({ embeds: [
-            new EmbedBuilder().setColor('#00FF00').setTitle('🧹 Scopa Usata')
-                .setDescription(`Cancellati **${totalDeleted}** messaggi.\nProtetti: **${totalProtected}** (🛡️ o pinnati).`)
-                .setTimestamp()
-        ]});
-        setTimeout(() => confirmMsg.delete().catch(() => {}), 8000);
+        // NON inviare nessun messaggio nella casa — i visitatori successivi non devono sapere nulla
+        // Conferma solo nella chat privata dell'utente
+        try {
+            const guild = client.guilds.cache.first();
+            if (guild) {
+                const catPriv = guild.channels.cache.get(HOUSING.CATEGORIA_CHAT_PRIVATE);
+                const privChannel = catPriv?.children.cache.find(ch =>
+                    ch.type === ChannelType.GuildText &&
+                    ch.permissionOverwrites.cache.some(p => p.id === userId && p.allow.has(PermissionsBitField.Flags.ViewChannel))
+                );
+                if (privChannel) {
+                    await privChannel.send({ embeds: [
+                        new EmbedBuilder().setColor('#00FF00').setTitle('🧹 Scopa Usata')
+                            .setDescription(`Cancellati **${totalDeleted}** messaggi in **${channel.name}**.\nProtetti: **${totalProtected}** (🛡️ o pinnati).`)
+                            .setTimestamp()
+                    ]}).catch(() => {});
+                }
+            }
+        } catch {}
     },
 
     // ✉️ LETTERA: invia messaggio anonimo
