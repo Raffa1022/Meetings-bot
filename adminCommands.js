@@ -205,24 +205,31 @@ module.exports = async function handleAdminCommand(message, command, args, clien
             if (keyMsg) await keyMsg.delete();
         } catch {}
 
-        // Trova occupanti fisici
+        // FIX: Trova occupanti fisici con guild.members.fetch (cache limitata a 50 non basta)
         const membersInside = [];
-        targetChannel.permissionOverwrites.cache.forEach((overwrite, id) => {
-            if (overwrite.type === 1) {
-                const m = targetChannel.members.get(id);
+        for (const [id, overwrite] of targetChannel.permissionOverwrites.cache) {
+            if (overwrite.type !== 1) continue; // Solo Member, non Role
+            try {
+                const m = await message.guild.members.fetch(id);
                 if (m && !m.user.bot && m.id !== message.member.id) membersInside.push(m);
-            }
-        });
+            } catch {}
+        }
 
         const allHomes = await db.housing.getAllHomes();
         const ownerId = Object.keys(allHomes).find(k => allHomes[k] === targetChannel.id);
         const destroyed = await db.housing.getDestroyedHouses();
 
-        // FIX: Traccia coppie già spostate per evitare doppio spostamento
+        // FIX: Ordina - PLAYER (ALIVE/DEAD) prima, SPONSOR dopo
+        // Così il player decide la destinazione e trascina lo sponsor
+        membersInside.sort((a, b) => {
+            const aIsPlayer = a.roles.cache.has(RUOLI.ALIVE) || a.roles.cache.has(RUOLI.DEAD) ? 0 : 1;
+            const bIsPlayer = b.roles.cache.has(RUOLI.ALIVE) || b.roles.cache.has(RUOLI.DEAD) ? 0 : 1;
+            return aIsPlayer - bIsPlayer;
+        });
+
         const movedPlayers = new Set();
 
         for (const member of membersInside) {
-            // Se già spostato come parte di una coppia, salta
             if (movedPlayers.has(member.id)) continue;
 
             const prevMode = await db.housing.getPlayerMode(member.id);
@@ -232,8 +239,7 @@ module.exports = async function handleAdminCommand(message, command, args, clien
 
             const isOwner = ownerId === member.id;
 
-            // FIX: Trova il partner (sponsor) per muoverlo insieme
-            // Cerca prima in membersInside, poi guild-wide se non trovato
+            // FIX: Trova il partner - cerca in membersInside, poi guild-wide
             let partner = null;
             if (member.roles.cache.has(RUOLI.ALIVE)) {
                 const sponsorId = await db.meeting.findSponsor(member.id);
@@ -257,85 +263,90 @@ module.exports = async function handleAdminCommand(message, command, args, clien
                 const playerId = await db.meeting.findPlayer(member.id);
                 if (playerId) {
                     partner = membersInside.find(m => m.id === playerId);
+                    if (!partner) {
+                        partner = await message.guild.members.fetch(playerId).catch(() => null);
+                        if (partner && (partner.user.bot || !partner.roles.cache.has(RUOLI.ALIVE))) partner = null;
+                    }
                 }
             } else if (member.roles.cache.has(RUOLI.SPONSOR_DEAD)) {
                 const playerId = await db.meeting.findPlayer(member.id);
                 if (playerId) {
                     partner = membersInside.find(m => m.id === playerId);
+                    if (!partner) {
+                        partner = await message.guild.members.fetch(playerId).catch(() => null);
+                        if (partner && (partner.user.bot || !partner.roles.cache.has(RUOLI.DEAD))) partner = null;
+                    }
                 }
             }
 
+            // Helper: sposta il partner nella stessa destinazione
+            const movePartnerToo = async (destination) => {
+                if (!partner) return;
+                await targetChannel.permissionOverwrites.delete(partner.id).catch(() => {});
+                // Rimuovi partner da qualsiasi altra casa dove si trova
+                const partnerOldHouse = message.guild.channels.cache.find(c =>
+                    c.parentId === HOUSING.CATEGORIA_CASE && c.type === ChannelType.GuildText &&
+                    c.id !== targetChannel.id && c.id !== destination.id &&
+                    c.permissionOverwrites.cache.has(partner.id)
+                );
+                if (partnerOldHouse) {
+                    await partnerOldHouse.permissionOverwrites.delete(partner.id).catch(() => {});
+                }
+                await movePlayer(partner, partnerOldHouse || targetChannel, destination, null, false);
+                movedPlayers.add(partner.id);
+            };
+
+            // FIX: Se è SPONSOR solo (il player non è nella casa),
+            // usa la home del PLAYER come destinazione preferita
+            let playerHomeForSponsor = null;
+            if ((member.roles.cache.has(RUOLI.SPONSOR) || member.roles.cache.has(RUOLI.SPONSOR_DEAD)) && partner) {
+                const partnerHomeId = allHomes[partner.id];
+                if (partnerHomeId && partnerHomeId !== targetChannel.id && !destroyed.includes(partnerHomeId)) {
+                    playerHomeForSponsor = message.guild.channels.cache.get(partnerHomeId);
+                }
+            }
+
+            // --- Decidi destinazione ---
             if (isOwner) {
+                // Proprietario della casa distrutta → casa random
                 const randomHouse = message.guild.channels.cache
                     .filter(c => c.parentId === HOUSING.CATEGORIA_CASE && c.id !== targetChannel.id && !destroyed.includes(c.id))
                     .random();
                 if (randomHouse) {
                     await movePlayer(member, targetChannel, randomHouse, `👋 **${member}** è entrato.`, false);
                     movedPlayers.add(member.id);
-                    
-                    // FIX: Sposta anche il partner nella stessa casa (anche se in un'altra casa)
-                    if (partner) {
-                        await targetChannel.permissionOverwrites.delete(partner.id).catch(() => {});
-                        // Trova la casa attuale del partner (potrebbe essere altrove)
-                        const partnerCurrentHouse = message.guild.channels.cache.find(c =>
-                            c.parentId === HOUSING.CATEGORIA_CASE && c.type === ChannelType.GuildText &&
-                            c.id !== targetChannel.id && c.id !== randomHouse.id &&
-                            c.permissionOverwrites.cache.has(partner.id)
-                        );
-                        if (partnerCurrentHouse) {
-                            await partnerCurrentHouse.permissionOverwrites.delete(partner.id).catch(() => {});
-                        }
-                        await movePlayer(partner, partnerCurrentHouse || targetChannel, randomHouse, null, false);
-                        movedPlayers.add(partner.id);
-                    }
+                    await movePartnerToo(randomHouse);
                 }
             } else {
-                const homeId = allHomes[member.id];
+                // FIX: Cerca home - per SPONSOR usa home del player partner
+                let homeId = allHomes[member.id];
+                if (!homeId && playerHomeForSponsor) {
+                    homeId = playerHomeForSponsor.id;
+                }
+                // Se è un player (ALIVE/DEAD), cerca anche la home del partner (sponsor)
+                if (!homeId && partner) {
+                    const partnerHomeId = allHomes[partner.id];
+                    if (partnerHomeId && partnerHomeId !== targetChannel.id && !destroyed.includes(partnerHomeId)) {
+                        homeId = partnerHomeId;
+                    }
+                }
+
                 const hasSafe = homeId && homeId !== targetChannel.id && !destroyed.includes(homeId);
                 if (hasSafe) {
                     const homeCh = message.guild.channels.cache.get(homeId);
                     if (homeCh) {
                         await movePlayer(member, targetChannel, homeCh, `🏠 ${member} è ritornato.`, false);
                         movedPlayers.add(member.id);
-                        
-                        // FIX: Sposta anche il partner nella stessa casa (anche se in un'altra casa)
-                        if (partner) {
-                            await targetChannel.permissionOverwrites.delete(partner.id).catch(() => {});
-                            const partnerCurrentHouse = message.guild.channels.cache.find(c =>
-                                c.parentId === HOUSING.CATEGORIA_CASE && c.type === ChannelType.GuildText &&
-                                c.id !== targetChannel.id && c.id !== homeCh.id &&
-                                c.permissionOverwrites.cache.has(partner.id)
-                            );
-                            if (partnerCurrentHouse) {
-                                await partnerCurrentHouse.permissionOverwrites.delete(partner.id).catch(() => {});
-                            }
-                            await movePlayer(partner, partnerCurrentHouse || targetChannel, homeCh, null, false);
-                            movedPlayers.add(partner.id);
-                        }
+                        await movePartnerToo(homeCh);
                     }
                 } else if (member.roles.cache.hasAny(...RUOLI_PERMESSI, RUOLI.DEAD, RUOLI.SPONSOR_DEAD)) {
-                    // FIX: Includi anche DEAD e SPONSOR_DEAD
                     const randomHouse = message.guild.channels.cache
                         .filter(c => c.parentId === HOUSING.CATEGORIA_CASE && c.id !== targetChannel.id && !destroyed.includes(c.id))
                         .random();
                     if (randomHouse) {
                         await movePlayer(member, targetChannel, randomHouse, `👋 **${member}** è entrato.`, false);
                         movedPlayers.add(member.id);
-                        
-                        // FIX: Sposta anche il partner nella stessa casa (anche se in un'altra casa)
-                        if (partner) {
-                            await targetChannel.permissionOverwrites.delete(partner.id).catch(() => {});
-                            const partnerCurrentHouse = message.guild.channels.cache.find(c =>
-                                c.parentId === HOUSING.CATEGORIA_CASE && c.type === ChannelType.GuildText &&
-                                c.id !== targetChannel.id && c.id !== randomHouse.id &&
-                                c.permissionOverwrites.cache.has(partner.id)
-                            );
-                            if (partnerCurrentHouse) {
-                                await partnerCurrentHouse.permissionOverwrites.delete(partner.id).catch(() => {});
-                            }
-                            await movePlayer(partner, partnerCurrentHouse || targetChannel, randomHouse, null, false);
-                            movedPlayers.add(partner.id);
-                        }
+                        await movePartnerToo(randomHouse);
                     }
                 }
             }
