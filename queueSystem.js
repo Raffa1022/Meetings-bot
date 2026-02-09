@@ -32,7 +32,10 @@ async function updateDashboard() {
         const names = { ABILITY: "ABILITÀ", RETURN: "TORNA", KNOCK: "BUSSA", SHOP: "SHOP" };
         const pointer = index === 0 ? "👉 **IN CORSO:**" : `**#${index + 1}**`;
         let label = `${icons[item.type] || ""} \`${names[item.type] || item.type}\``;
-        if (item.type === 'SHOP' && item.details?.subType) label += ` (${item.details.subType})`;
+        if (item.type === 'SHOP' && item.details?.subType) {
+            const shopNames = { acquisto: '🛒 Acquisto', scopa: '🧹 Scopa', lettera: '✉️ Lettera', scarpe: '👟 Scarpe', testamento: '📜 Testamento', catene: '⛓️ Catene', fuochi: '🎆 Fuochi', tenda: '⛺ Tenda' };
+            label = `\`${shopNames[item.details.subType] || item.details.subType}\``;
+        }
         description += `${pointer} ${label} - <@${item.userId}> (${time})\n`;
     });
 
@@ -104,9 +107,23 @@ async function processQueue() {
             await new Promise(r => setTimeout(r, 300)); // Anti-race
         }
 
-        // SHOP → Auto-processo (azione già eseguita, solo log in tabella)
+        // SHOP → Esegui effetto automaticamente (come KNOCK/RETURN)
         if (currentItem.type === 'SHOP') {
-            console.log(`🛒 [Queue] Shop action di ${currentItem.userId}: ${currentItem.details?.subType || 'N/A'}`);
+            const subType = currentItem.details?.subType;
+            console.log(`🛒 [Queue] Eseguo SHOP (${subType}) di ${currentItem.userId}`);
+
+            // Acquisti: nessun effetto da eseguire (già processati)
+            // Use actions: esegui l'effetto tramite shopEffects
+            if (subType && subType !== 'acquisto') {
+                try {
+                    const { shopEffects } = require('./economySystem');
+                    const handler = shopEffects[subType];
+                    if (handler) await handler(clientRef, currentItem.userId, currentItem.details);
+                } catch (err) {
+                    console.error(`❌ [Queue] Errore SHOP ${subType}:`, err);
+                }
+            }
+
             await db.queue.remove(currentItem._id);
             await new Promise(r => setTimeout(r, 300));
         }
