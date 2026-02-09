@@ -1112,8 +1112,8 @@ async function useTenda(message, client) {
     });
 }
 
-module.exports = { 
-    registerEconomyCommands, 
-    econDb, 
-    SHOP_ITEMS
-};
+// Export principale: funzione init (compatibile con app.js)
+// + econDb e SHOP_ITEMS per uso esterno (es. !cambio)
+module.exports = registerEconomyCommands;
+module.exports.econDb = econDb;
+module.exports.SHOP_ITEMS = SHOP_ITEMS;
