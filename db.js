@@ -704,6 +704,31 @@ const moderation = {
     async clearMarkedForDeath() {
         return ModerationModel.updateOne(MOD_ID, { $set: { markedForDeath: [] } });
     },
+
+    // --- Unprotectable (Non Proteggibili - Catene) ---
+    async isUnprotectable(userId) {
+        const doc = await ModerationModel.findOne(
+            { ...MOD_ID, 'unprotectable.userId': userId }, { _id: 1 }
+        ).lean();
+        return !!doc;
+    },
+
+    async addUnprotectable(userId, userTag) {
+        return ModerationModel.updateOne(MOD_ID, {
+            $push: { unprotectable: { userId, userTag, timestamp: new Date() } }
+        });
+    },
+
+    async removeUnprotectable(userId) {
+        return ModerationModel.updateOne(MOD_ID, {
+            $pull: { unprotectable: { userId } }
+        });
+    },
+
+    async getUnprotectable() {
+        const doc = await ModerationModel.findOne(MOD_ID, { unprotectable: 1 }).lean();
+        return doc?.unprotectable || [];
+    },
 };
 
 module.exports = { housing, queue, meeting, ability, moderation };
