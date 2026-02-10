@@ -919,7 +919,7 @@ async function useCatene(message, args) {
         setTimeout(() => msg.delete().catch(() => {}), 120000);
     } catch (err) {
         console.error('❌ [Economy] Errore useCatene:', err);
-        return message.reply("❌ Errore nel caricamento giocatori. Riprova.");
+        return message.reply("❌ Si è verificato un errore. Riprova tra qualche secondo.");
     }
 }
 
@@ -1128,8 +1128,8 @@ const shopEffects = {
         const member = await guild.members.fetch(userId).catch(() => null);
         if (!member) return;
 
-        const hasDeadRole = member.roles.cache.has('1460741405722022151'); // DEAD
-        const hasSponsorDeadRole = member.roles.cache.has('1469862321563238502'); // SPONSOR_DEAD
+        const hasDeadRole = member.roles.cache.has('1460741405722022151'); // DEAD (R3)
+        const hasSponsorDeadRole = member.roles.cache.has('1469862321563238502'); // SPONSOR_DEAD (R4)
 
         if (!hasDeadRole && !hasSponsorDeadRole) {
             const responseChannel = client.channels.cache.get(details.responseChannelId);
@@ -1139,11 +1139,27 @@ const shopEffects = {
             return;
         }
 
-        // Attiva permessi di scrittura nei canali morti
+        // Controlla se siamo in modalità GIORNO
+        const mode = await db.housing.getMode();
+        if (mode !== 'DAY') {
+            const responseChannel = client.channels.cache.get(details.responseChannelId);
+            if (responseChannel) {
+                responseChannel.send(`❌ <@${userId}> Il testamento può essere usato solo durante la fase GIORNO!`).catch(() => {});
+            }
+            return;
+        }
+
+        // Attiva permessi di scrittura nei canali morti SOLO se siamo in modalità GIORNO
         for (const channelId of DEAD_CHANNELS) {
             const channel = guild.channels.cache.get(channelId);
             if (channel) {
-                await channel.permissionOverwrites.create(userId, { SendMessages: true, ViewChannel: true });
+                await channel.permissionOverwrites.create(userId, { 
+                    SendMessages: true, 
+                    ViewChannel: true,
+                    AddReactions: true,
+                    CreatePublicThreads: false,
+                    CreatePrivateThreads: false 
+                });
                 await econDb.addTestamentoChannel(userId, channelId);
             }
         }
