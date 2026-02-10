@@ -94,22 +94,24 @@ module.exports = function initMeetingSystem(client) {
                 .addFields(
                     { name: '🚫 !vb @utente', value: 'Mette un giocatore in **Visitblock**: non può usare `!bussa` e `!torna`. Automaticamente applicato anche al partner (sponsor/giocatore abbinato).' },
                     { name: '❌ !rb @utente', value: 'Mette un giocatore in **Roleblock**: non può usare `!abilità`. Automaticamente applicato anche al partner.' },
-                    { name: '🛡️ !protezione @utente', value: 'Protegge un giocatore dagli attacchi. Se qualcuno lo attacca, l\'overseer vedrà un avviso prima di procedere. Automaticamente applicata anche al partner.' },
-                    { name: '⚔️ !attacco @utente', value: 'Attacca un giocatore. Se protetto, mostra opzioni (rimuovi protezione / aggiungi a lista morti). Se non protetto, lo aggiunge direttamente alla lista morti e rimuove casa + accesso.' },
-                    { name: '💊 !cura vb/rb/protezione @utente', value: 'Rimuove VB, RB o Protezione da un giocatore. Anche il partner viene curato. Es: `!cura vb @Tizio`' },
-                    { name: '☠️ !morte', value: 'Processa TUTTI i giocatori nella lista morti: cambia ruolo (Alive→Dead, Sponsor→Sponsor Dead), rimuove da case, cancella azioni in coda, annuncia la morte nelle case.' },
-                    { name: '📋 !osab', value: 'Pannello interattivo per gestire le liste VB, RB e Protezione. Permette di visualizzare e rimuovere singoli giocatori con bottoni.' },
+                    { name: '⛓️ !noprot @utente', value: 'Aggiunge un giocatore alla lista Non Proteggibili: non può essere protetto con `!protezione`. Automaticamente applicato anche al partner.' },
+                    { name: '🛡️ !protezione @utente', value: 'Protegge un giocatore dagli attacchi. Se qualcuno lo attacca, l\'overseer vedrà un avviso prima di procedere. Automaticamente applicata anche al partner. Se il giocatore ha le catene (!noprot), la protezione fallirà.' },
+                    { name: '⚔️ !attacco @utente', value: 'Attacca un giocatore. Se è protetto, mostra opzioni (rimuovi protezione / aggiungi a lista morti). Se non è protetto, lo aggiunge direttamente alla lista morti e rimuove casa + accesso.' },
+                    { name: '🧹 !cura vb @utente', value: 'Rimuove un giocatore da Visitblock (e il suo partner).' },
+                    { name: '🧹 !cura rb @utente', value: 'Rimuove un giocatore da Roleblock (e il suo partner).' },
+                    { name: '🧹 !cura protezione @utente', value: 'Rimuove la protezione da un giocatore (e dal suo partner).' },
+                    { name: '🧹 !cura noprot @utente', value: 'Rimuove un giocatore dalla lista Non Proteggibili (e il suo partner).' },
+                    { name: '🧹 !cura tutto', value: 'Pulisce TUTTE le liste globalmente (Visitblock, Roleblock, Protezione, Non Proteggibili) senza specificare utente.' },
+                    { name: '⚰️ !morte', value: 'Processa TUTTI i giocatori nella lista morti: cambia ruolo (Alive→Dead, Sponsor→Sponsor Dead), rimuove da case, cancella azioni in coda, annuncia la morte nelle case.' },
+                    { name: '📋 !osab', value: 'Pannello interattivo per gestire le liste VB, RB, Protezione e Non Proteggibili. Permette di visualizzare e rimuovere singoli giocatori con bottoni.' },
                 )
             );
 
             embeds.push(new EmbedBuilder()
-                .setTitle('👥 Comandi Overseer — Meeting')
+                .setTitle('👥 Comandi Overseer — Meeting & Tabella')
                 .setColor(0x3498DB)
                 .addFields(
-                    { name: '🔹 !meeting @giocatore', value: 'Invita un giocatore a un meeting. Crea un canale privato nel server meeting. Gli sponsor vengono aggiunti automaticamente. Limite configurato per giocatore.' },
-                    { name: '👁️ !lettura', value: 'Rispondi a un messaggio verde di log meeting per supervisionare la conversazione. Anche lo sponsor del supervisore viene aggiunto. Lettura sola.' },
-                    { name: '🛑 !fine', value: 'Chiude il meeting corrente. Usalo dentro il canale meeting. Rimuove gli utenti attivi e dopo 10 secondi cancella il canale.' },
-                    { name: '🚪 !entrata', value: 'Toggle auto-ruolo all\'ingresso nel server meeting. Quando attivo, assegna ruoli automaticamente ai nuovi membri.' },
+                    { name: '🚪 !entrata', value: 'Toggle auto-ruolo all\'ingresso nel server meeting. Quando è attivo, assegna ruoli automaticamente ai nuovi membri.' },
                     { name: '📋 !tabella [numero]', value: 'Crea una tabella di iscrizioni con X slot. I giocatori e sponsor possono registrarsi tramite menu. Es: `!tabella 20`' },
                     { name: '🚀 !assegna', value: 'Assegna automaticamente ruoli, stanze e case ai giocatori/sponsor registrati nella tabella. Crea le chat private e saluta.' },
                     { name: '🔄 !riprendi tabella', value: 'Riapre la tabella per permettere a nuovi sponsor di registrarsi negli slot vuoti.' },
@@ -141,12 +143,12 @@ module.exports = function initMeetingSystem(client) {
                 .setTitle('🏠 Comandi Giocatori — Housing')
                 .setColor(0x2ECC71)
                 .addFields(
-                    { name: '✊ !bussa', value: 'Bussa alla porta di una casa per visitarla. Disponibile solo dalla tua **chat privata**. Scegli tra 3 modalità:\n• **👋 Visita Normale** — gli occupanti decidono se aprirti\n• **🧨 Visita Forzata** — entri senza permesso (consume 1 visita forzata)\n• **🕵️ Visita Nascosta** — entri invisibilmente (consume 1 visita nascosta)\nDopo aver scelto la modalità, seleziona la casa dal menu.' },
+                    { name: '✊ !bussa', value: 'Bussa alla porta di una casa per visitarla. Disponibile solo dalla tua **chat privata**. Scegli tra 3 modalità:\n• **👋 Visita Normale** — gli occupanti decidono se aprirti\n• **🧨 Visita Forzata** — entri senza permesso (consuma 1 visita forzata)\n• **🕵️ Visita Nascosta** — entri invisibilmente (consuma 1 visita nascosta)\nDopo aver scelto la modalità, seleziona la casa dal menu.' },
                     { name: '🏠 !torna', value: 'Torna alla tua casa. Disponibile solo dalla **chat privata** e solo se ti trovi in un\'altra casa. Viene messo in coda e processato in ordine cronologico.' },
                     { name: '📦 !trasferimento', value: 'Trasferisciti in una nuova casa. Usalo **dentro la casa** dove vuoi trasferirti. Se la casa ha un proprietario, serve la sua approvazione. Se non ha proprietario, il trasferimento è immediato. ⚠️ Può essere disabilitato dall\'overseer.' },
                     { name: '👥 !chi', value: 'Mostra chi è presente nella casa dove ti trovi. Indica il proprietario e gli occupanti visibili.' },
                     { name: '📊 !rimaste', value: 'Mostra quante visite ti rimangono (base, forzate, nascoste). Disponibile dalla tua chat privata.' },
-                    { name: '🗑️ !rimuovi', value: 'Annulla un\'azione in coda (bussata pendente, ritorno, abilità, o selezione casa attiva). Menu interattivo.' },
+                    { name: '🗑️ !rimuovi', value: 'Annulla un\'azione in coda (bussata pendente, ritorno, abilità o selezione casa attiva). Menu interattivo.' },
                     { name: '🔄 !cambio', value: 'Scambia identità con il tuo partner nella stessa chat. Lo sponsor diventa giocatore e viceversa. Include scambio di ruoli, casa, meeting, bilancio e inventario. Se lo sponsor richiede, il giocatore deve accettare.' },
                     { name: '🏚️ !case', value: 'Mostra la lista delle case attualmente distrutte.' },
                 )
@@ -156,7 +158,7 @@ module.exports = function initMeetingSystem(client) {
                 .setTitle('✨ Comandi Giocatori — Abilità')
                 .setColor(0x9B59B6)
                 .addFields(
-                    { name: '✨ !abilità', value: 'Usa la tua abilità. Richiede il ruolo abilità (<@&' + RUOLI.ABILITA + '>). Apre un form dove descrivi cosa vuoi fare. L\'abilità viene messa in **coda** e l\'overseer la approva o rifiuta.\n⚠️ Se sei in **Roleblock**, l\'abilità verrà annullata automaticamente.' },
+                    { name: '✨ !abilità', value: 'Usa la tua abilità. Richiede il ruolo abilità (<@&' + RUOLI.ABILITA + '>). Apre un form dove descrivi cosa vuoi fare. L\'abilità viene messa in **coda** e l\'overseer la approva o la rifiuta.\n⚠️ Se sei in **Roleblock**, l\'abilità verrà annullata automaticamente.' },
                 )
             );
 
@@ -167,7 +169,7 @@ module.exports = function initMeetingSystem(client) {
                     { name: '🛒 !mercato', value: 'Mostra il negozio con tutti gli oggetti disponibili, i prezzi e le descrizioni. Solo giocatori alive.' },
                     { name: '🛍️ !compra [oggetto] [quantità]', value: 'Acquista un oggetto dal mercato. Usalo nella tua **chat privata**. Es: `!compra scopa` o `!compra scarpe 2`. Il costo viene scalato dal tuo bilancio.' },
                     { name: '🎒 !inventario', value: 'Mostra tutti gli oggetti che possiedi e le relative quantità.' },
-                    { name: '🎯 !usa [oggetto]', value: 'Usa un oggetto del tuo inventario. L\'azione viene messa in **coda** e processata in ordine cronologico. Oggetti disponibili:\n• **🧹 scopa** — cancella messaggi in una casa (rispondi al messaggio da cui iniziare)\n• **✉️ lettera** — invia un messaggio anonimo a un giocatore (dropdown)\n• **👟 scarpe** — +1 visita base (anche allo sponsor)\n• **📜 testamento** — scrivi 1 messaggio in un canale diurno (solo dead)\n• **⛓️ catene** — applica VB + RB a un giocatore e al suo partner (dropdown)\n• **🎆 fuochi** — annuncia la tua posizione nel canale annunci\n• **⛺ tenda** — trasferisciti in una casa (funziona anche se i trasferimenti sono disabilitati)' },
+                    { name: '🎯 !usa [oggetto]', value: 'Usa un oggetto del tuo inventario. L\'azione viene messa in **coda** e processata in ordine cronologico. Oggetti disponibili:\n• **🧹 scopa** — cancella messaggi in una casa (rispondi al messaggio da cui iniziare)\n• **✉️ lettera** — invia un messaggio anonimo a un giocatore (dropdown)\n• **👟 scarpe** — +1 visita base (anche allo sponsor)\n• **📜 testamento** — permette di scrivere nei canali diurni fino a !notte (solo dead, solo durante !giorno)\n• **⛓️ catene** — applica VB + RB a un giocatore e al suo partner (dropdown)\n• **🎆 fuochi** — annuncia la tua posizione nel canale annunci\n• **⛺ tenda** — trasferisciti in una casa (funziona anche se i trasferimenti sono disabilitati)' },
                     { name: '💵 !bilancio', value: 'Mostra il tuo bilancio personale: saldo attuale, totale guadagnato e totale speso.' },
                     { name: '💸 !paga @utente [importo]', value: 'Trasferisci monete a un altro giocatore. Il saldo viene scalato dal tuo bilancio e aggiunto al destinatario. Es: `!paga @Tizio 50`' },
                     { name: '🏆 !classifica', value: 'Mostra la classifica dei 15 giocatori più ricchi.' },
