@@ -398,32 +398,6 @@ module.exports = function initEconomySystem(client) {
                 if (interaction.message?.deletable) interaction.message.delete().catch(() => {});
             }
 
-            // ========== MENU TESTAMENTO: SELEZIONE CANALE ==========
-            else if (interaction.isStringSelectMenu() && interaction.customId.startsWith('testamento_channel_')) {
-                const senderUserId = interaction.customId.split('_')[2];
-                if (interaction.user.id !== senderUserId)
-                    return interaction.reply({ content: "❌ Non è tuo.", ephemeral: true });
-
-                const channelId = interaction.values[0];
-                const channel = interaction.guild.channels.cache.get(channelId);
-                if (!channel) return interaction.update({ content: "❌ Canale non trovato.", components: [] });
-
-                // Rimuovi oggetto
-                const removed = await econDb.removeItem(senderUserId, 'testamento');
-                if (!removed) return interaction.update({ content: "❌ Non possiedi più il testamento.", components: [] });
-
-                // 📝 In coda — l'effetto verrà eseguito dal processore
-                emitShopAction(senderUserId, 'testamento', `📺 Canale: ${formatName(channel.name)}`, {
-                    channelId,
-                    responseChannelId: interaction.channelId,
-                });
-
-                await interaction.update({
-                    content: `🔄 **Testamento in coda!** Verrà attivato in ${channel} quando sarà il tuo turno.`,
-                    components: []
-                });
-            }
-
             // ========== MENU CATENE: SELEZIONE TARGET (TENDINA) ==========
             else if (interaction.isStringSelectMenu() && interaction.customId.startsWith('catene_target_')) {
                 const senderUserId = interaction.customId.split('_')[2];
@@ -844,39 +818,21 @@ async function useScarpe(message) {
 }
 
 // ==========================================
-// 📜 USA TESTAMENTO (dead → 1 msg in chat diurna)
+// 📜 USA TESTAMENTO (dead → accesso automatico canali diurni)
 // ==========================================
 async function useTestamento(message) {
     if (message.channel.parentId !== HOUSING.CATEGORIA_CHAT_PRIVATE)
         return message.reply("❌ Usa il testamento solo nella tua chat privata!");
 
-    // Trova canali diurni disponibili
-    const catDiurna = message.guild.channels.cache.get(HOUSING.CATEGORIA_CHAT_DIURNA);
-    if (!catDiurna) return message.reply("❌ Categoria diurna non trovata.");
+    const removed = await econDb.removeItem(message.author.id, 'testamento');
+    if (!removed) return message.reply("❌ Errore.");
 
-    const channels = catDiurna.children.cache
-        .filter(c => c.type === ChannelType.GuildText && c.id !== HOUSING.CANALE_BLOCCO_TOTALE)
-        .sort((a, b) => a.rawPosition - b.rawPosition);
-
-    if (channels.size === 0) return message.reply("❌ Nessun canale diurno disponibile.");
-
-    const options = channels.map(ch =>
-        new StringSelectMenuOptionBuilder()
-            .setLabel(formatName(ch.name))
-            .setValue(ch.id)
-            .setEmoji('💬')
-    );
-
-    const select = new StringSelectMenuBuilder()
-        .setCustomId(`testamento_channel_${message.author.id}`)
-        .setPlaceholder('Scegli dove scrivere...')
-        .addOptions(options.slice(0, 25));
-
-    const msg = await message.reply({
-        content: '📜 **Scegli il canale diurno dove vuoi inviare il tuo messaggio:**',
-        components: [new ActionRowBuilder().addComponents(select)]
+    // 📝 In coda — l'effetto verrà eseguito dal processore
+    emitShopAction(message.author.id, 'testamento', `📜 Testamento attivato`, {
+        responseChannelId: message.channel.id,
     });
-    setTimeout(() => msg.delete().catch(() => {}), 120000);
+
+    message.reply("🔄 **Testamento in coda!** I permessi verranno attivati quando sarà il tuo turno.");
 }
 
 // ==========================================
@@ -1149,7 +1105,10 @@ const shopEffects = {
             return;
         }
 
-        // Attiva permessi di scrittura nei canali morti SOLO se siamo in modalità GIORNO
+        // Trova il partner (sponsor dead)
+        const partner = await findPartner(member, guild);
+
+        // Attiva permessi di scrittura nei canali morti per il giocatore
         for (const channelId of DEAD_CHANNELS) {
             const channel = guild.channels.cache.get(channelId);
             if (channel) {
@@ -1164,9 +1123,30 @@ const shopEffects = {
             }
         }
 
+        // Attiva permessi di scrittura anche per il partner (sponsor dead)
+        if (partner) {
+            for (const channelId of DEAD_CHANNELS) {
+                const channel = guild.channels.cache.get(channelId);
+                if (channel) {
+                    await channel.permissionOverwrites.create(partner.id, { 
+                        SendMessages: true, 
+                        ViewChannel: true,
+                        AddReactions: true,
+                        CreatePublicThreads: false,
+                        CreatePrivateThreads: false 
+                    });
+                    await econDb.addTestamentoChannel(partner.id, channelId);
+                }
+            }
+        }
+
         const responseChannel = client.channels.cache.get(details.responseChannelId);
         if (responseChannel) {
-            responseChannel.send(`📜 <@${userId}> Testamento attivato! Puoi scrivere nei canali diurni fino al comando !notte.`).catch(() => {});
+            let response = `📜 <@${userId}> Testamento attivato! Puoi scrivere nei canali diurni fino al comando !notte.`;
+            if (partner) {
+                response += `\n📜 Anche <@${partner.id}> (partner) ha ottenuto l'accesso ai canali diurni.`;
+            }
+            responseChannel.send(response).catch(() => {});
         }
     },
 
