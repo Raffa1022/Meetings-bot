@@ -79,6 +79,31 @@ const moderationSchema = new mongoose.Schema({
 }, { minimize: false, versionKey: false });
 
 // ==========================================
+// 📊 SCHEMA PRESET NOTTURNO
+// ==========================================
+const presetNightSchema = new mongoose.Schema({
+    userId: { type: String, required: true, index: true },
+    userName: { type: String, required: true },
+    type: { type: String, required: true },        // ABILITY, KNOCK, SHOP
+    category: { type: String, required: true },    // PROTEZIONE, LETALE, KNOCK, SHOP, etc.
+    details: { type: Object, default: {} },
+    timestamp: { type: Date, default: Date.now, index: true }
+}, { versionKey: false });
+
+// ==========================================
+// 📊 SCHEMA PRESET PROGRAMMATO
+// ==========================================
+const presetScheduledSchema = new mongoose.Schema({
+    userId: { type: String, required: true, index: true },
+    userName: { type: String, required: true },
+    type: { type: String, required: true },        // ABILITY, KNOCK, SHOP
+    category: { type: String, required: true },    // PROTEZIONE, LETALE, KNOCK, SHOP, etc.
+    details: { type: Object, default: {} },
+    timestamp: { type: Date, default: Date.now },
+    triggerTime: { type: String, required: true, index: true }  // HH:MM
+}, { versionKey: false });
+
+// ==========================================
 // 📦 MODELLI
 // ==========================================
 const HousingModel = mongoose.model('HousingData', housingSchema);
@@ -86,6 +111,8 @@ const MeetingModel = mongoose.model('MeetingData', meetingSchema);
 const AbilityModel = mongoose.model('AbilityData', abilitySchema);
 const QueueModel = mongoose.model('QueueData', queueSchema);
 const ModerationModel = mongoose.model('ModerationData', moderationSchema);
+const PresetNightModel = mongoose.model('PresetNightData', presetNightSchema);
+const PresetScheduledModel = mongoose.model('PresetScheduledData', presetScheduledSchema);
 
 // ==========================================
 // 🔌 CONNESSIONE
@@ -124,4 +151,6 @@ module.exports = {
     AbilityModel,
     QueueModel,
     ModerationModel,
+    PresetNightModel,
+    PresetScheduledModel,
 };
