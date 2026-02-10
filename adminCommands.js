@@ -99,163 +99,180 @@ module.exports = async function handleAdminCommand(message, command, args, clien
 
     // ===================== NOTTE =====================
     else if (command === 'notte') {
-        const numero = args[0];
-        if (!numero) return message.reply("❌ Specifica numero notte.");
+        try {
+            const numero = args[0];
+            if (!numero) return message.reply("❌ Specifica numero notte.");
 
-        await Promise.all([
-            db.housing.setMode('NIGHT'),
-            db.housing.applyLimitsForMode('NIGHT'),
-        ]);
+            await Promise.all([
+                db.housing.setMode('NIGHT'),
+                db.housing.applyLimitsForMode('NIGHT'),
+            ]);
 
-        // Rimuovi permessi testamento dai canali morti
-        const DEAD_CHANNELS = ['1460741481420558469', '1460741482876239944'];
-        const { econDb } = require('./economySystem');
-        
-        // Ottieni tutti gli utenti con testamento attivo
-        const allMembers = await message.guild.members.fetch();
-        for (const [, member] of allMembers) {
-            const testamentoChannels = await econDb.getTestamentoChannels(member.id);
-            if (testamentoChannels.length > 0) {
-                for (const channelId of DEAD_CHANNELS) {
-                    const channel = message.guild.channels.cache.get(channelId);
-                    if (channel) {
-                        await channel.permissionOverwrites.delete(member.id).catch(() => {});
+            // Rimuovi permessi testamento dai canali morti
+            const DEAD_CHANNELS = ['1460741481420558469', '1460741482876239944'];
+            const { econDb } = require('./economySystem');
+            
+            // Ottieni tutti gli utenti con testamento attivo
+            const allMembers = await message.guild.members.fetch();
+            for (const [, member] of allMembers) {
+                const testamentoChannels = await econDb.getTestamentoChannels(member.id);
+                if (testamentoChannels.length > 0) {
+                    for (const channelId of DEAD_CHANNELS) {
+                        const channel = message.guild.channels.cache.get(channelId);
+                        if (channel) {
+                            await channel.permissionOverwrites.delete(member.id).catch(() => {});
+                        }
+                    }
+                    await econDb.clearTestamento(member.id);
+                }
+            }
+
+            const annunciChannel = message.guild.channels.cache.get(HOUSING.CANALE_ANNUNCI);
+            if (annunciChannel) {
+                await annunciChannel.send({
+                    content: `<@&${RUOLI.ALIVE}> <@&${RUOLI.SPONSOR}>\n🌑 **NOTTE ${numero} HA INIZIO**`,
+                    files: [GIF.NOTTE]
+                });
+            }
+
+            // Blocca canali diurni
+            const catDiurna = message.guild.channels.cache.get(HOUSING.CATEGORIA_CHAT_DIURNA);
+            if (catDiurna) {
+                const canali = catDiurna.children.cache.filter(c => c.type === ChannelType.GuildText);
+                const ruoli = [RUOLI.ALIVE, RUOLI.SPONSOR, RUOLI.DEAD, RUOLI.SPONSOR_DEAD];
+                const ops = [];
+                for (const [, channel] of canali) {
+                    for (const r of ruoli) {
+                        if (r) ops.push(channel.permissionOverwrites.edit(r, { SendMessages: false }).catch(() => {}));
                     }
                 }
-                await econDb.clearTestamento(member.id);
+                await Promise.all(ops);
             }
-        }
-
-        const annunciChannel = message.guild.channels.cache.get(HOUSING.CANALE_ANNUNCI);
-        if (annunciChannel) {
-            await annunciChannel.send({
-                content: `<@&${RUOLI.ALIVE}> <@&${RUOLI.SPONSOR}>\n🌑 **NOTTE ${numero} HA INIZIO**`,
-                files: [GIF.NOTTE]
-            });
-        }
-
-        // Blocca canali diurni
-        const catDiurna = message.guild.channels.cache.get(HOUSING.CATEGORIA_CHAT_DIURNA);
-        if (catDiurna) {
-            const canali = catDiurna.children.cache.filter(c => c.type === ChannelType.GuildText);
-            const ruoli = [RUOLI.ALIVE, RUOLI.SPONSOR, RUOLI.DEAD];
-            const ops = [];
-            for (const [, channel] of canali) {
-                for (const r of ruoli) {
-                    if (r) ops.push(channel.permissionOverwrites.edit(r, { SendMessages: false }).catch(() => {}));
+            
+            // 💰 Dai 100 monete a tutti i giocatori con ruolo ALIVE
+            const aliveMembers = message.guild.members.cache.filter(m => 
+                !m.user.bot && m.roles.cache.has(RUOLI.ALIVE)
+            );
+            const aliveUserIds = Array.from(aliveMembers.keys());
+            
+            if (aliveUserIds.length > 0) {
+                await econDb.bulkAddBalance(aliveUserIds, 100);
+                
+                // Tag il ruolo @Alive invece dei singoli utenti
+                if (annunciChannel) {
+                    await annunciChannel.send(`🪙 <@&${RUOLI.ALIVE}> avete ricevuto il vostro collect giornaliero di **100 monete**!`);
                 }
             }
-            await Promise.all(ops);
-        }
-        
-        // 💰 Dai 100 monete a tutti i giocatori con ruolo ALIVE
-        const aliveMembers = message.guild.members.cache.filter(m => 
-            !m.user.bot && m.roles.cache.has(RUOLI.ALIVE)
-        );
-        const aliveUserIds = Array.from(aliveMembers.keys());
-        
-        if (aliveUserIds.length > 0) {
-            await econDb.bulkAddBalance(aliveUserIds, 100);
             
-            // Tag tutti i giocatori nel canale annunci
-            const tagList = aliveUserIds.map(id => `<@${id}>`).join(' ');
-            if (annunciChannel) {
-                await annunciChannel.send(`💰 ${tagList}\nAvete ricevuto il vostro collect giornaliero di **100 monete**!`);
-            }
+            message.reply(`✅ **Notte ${numero} avviata.**`);
+        } catch (error) {
+            console.error('❌ Errore comando !notte:', error);
+            return message.reply("❌ Errore durante l'esecuzione del comando.");
         }
-        
-        message.reply(`✅ **Notte ${numero} avviata.**`);
     }
 
     // ===================== GIORNO =====================
     else if (command === 'giorno') {
-        // Se menziona un utente → config giorno
-        if (message.mentions.members.size > 0) {
-            const targetUser = message.mentions.members.first();
-            const [base, forced, hidden] = [parseInt(args[1]), parseInt(args[2]), parseInt(args[3])];
-            await db.housing.setDayLimits(targetUser.id, base, forced, hidden);
-            const mode = await db.housing.getMode();
-            if (mode === 'DAY') {
-                await db.housing.setDayForcedHidden(targetUser.id, forced, hidden);
-            }
-            return message.reply("✅ Config Giorno salvata.");
-        }
-
-        const numero = args[0];
-        if (!numero) return message.reply("❌ Specifica giorno.");
-
-        await Promise.all([
-            db.housing.setMode('DAY'),
-            db.housing.applyLimitsForMode('DAY'),
-        ]);
-
-        const annunciChannel = message.guild.channels.cache.get(HOUSING.CANALE_ANNUNCI);
-        if (annunciChannel) {
-            await annunciChannel.send({
-                content: `<@&${RUOLI.ALIVE}> <@&${RUOLI.SPONSOR}> <@&${RUOLI.DEAD}>\n☀️ **GIORNO ${numero}**`,
-                files: [GIF.GIORNO]
-            });
-        }
-
-        // Sblocca canali diurni MA impedisci scrittura a chi aveva testamento attivo
-        const DEAD_CHANNELS = ['1460741481420558469', '1460741482876239944'];
-        const { econDb } = require('./economySystem');
-        
-        // Raccogli tutti gli utenti che avevano testamento attivo (prima di rimuoverlo)
-        const testamentoUsers = [];
-        const allMembers = await message.guild.members.fetch();
-        for (const [, member] of allMembers) {
-            const testamentoChannels = await econDb.getTestamentoChannels(member.id);
-            if (testamentoChannels.length > 0) {
-                testamentoUsers.push(member.id);
-            }
-        }
-        
-        const catDiurna = message.guild.channels.cache.get(HOUSING.CATEGORIA_CHAT_DIURNA);
-        if (catDiurna) {
-            const canali = catDiurna.children.cache.filter(c => c.type === ChannelType.GuildText);
-            const ops = [];
-            for (const [, channel] of canali) {
-                if (channel.id === HOUSING.CANALE_BLOCCO_TOTALE) continue;
-                if (HOUSING.CANALI_BLOCCO_PARZIALE.includes(channel.id)) {
-                    ops.push(channel.permissionOverwrites.edit(RUOLI.ALIVE, { SendMessages: true }).catch(() => {}));
-                } else {
-                    [RUOLI.ALIVE, RUOLI.SPONSOR, RUOLI.DEAD].forEach(r => {
-                        if (r) ops.push(channel.permissionOverwrites.edit(r, { SendMessages: true }).catch(() => {}));
-                    });
+        try {
+            // Se menziona un utente → config giorno
+            if (message.mentions.members.size > 0) {
+                const targetUser = message.mentions.members.first();
+                const [base, forced, hidden] = [parseInt(args[1]), parseInt(args[2]), parseInt(args[3])];
+                await db.housing.setDayLimits(targetUser.id, base, forced, hidden);
+                const mode = await db.housing.getMode();
+                if (mode === 'DAY') {
+                    await db.housing.setDayForcedHidden(targetUser.id, forced, hidden);
                 }
-                
-                // Blocca gli utenti con testamento nei canali morti
-                if (DEAD_CHANNELS.includes(channel.id)) {
-                    for (const userId of testamentoUsers) {
-                        ops.push(channel.permissionOverwrites.edit(userId, { SendMessages: false }).catch(() => {}));
-                    }
-                }
-                
-                ops.push(
-                    channel.send(`☀️ **GIORNO ${numero}**`).then(msg => msg.pin()).catch(() => {})
-                );
+                return message.reply("✅ Config Giorno salvata.");
             }
-            await Promise.all(ops);
-        }
-        
-        // 💰 Dai 100 monete a tutti i giocatori con ruolo ALIVE
-        const aliveMembers = message.guild.members.cache.filter(m => 
-            !m.user.bot && m.roles.cache.has(RUOLI.ALIVE)
-        );
-        const aliveUserIds = Array.from(aliveMembers.keys());
-        
-        if (aliveUserIds.length > 0) {
-            await econDb.bulkAddBalance(aliveUserIds, 100);
-            
-            // Tag tutti i giocatori nel canale annunci
-            const tagList = aliveUserIds.map(id => `<@${id}>`).join(' ');
+
+            const numero = args[0];
+            if (!numero) return message.reply("❌ Specifica giorno.");
+
+            await Promise.all([
+                db.housing.setMode('DAY'),
+                db.housing.applyLimitsForMode('DAY'),
+            ]);
+
+            const annunciChannel = message.guild.channels.cache.get(HOUSING.CANALE_ANNUNCI);
             if (annunciChannel) {
-                await annunciChannel.send(`💰 ${tagList}\nAvete ricevuto il vostro collect giornaliero di **100 monete**!`);
+                await annunciChannel.send({
+                    content: `<@&${RUOLI.ALIVE}> <@&${RUOLI.SPONSOR}> <@&${RUOLI.DEAD}>\n☀️ **GIORNO ${numero}**`,
+                    files: [GIF.GIORNO]
+                });
             }
+
+            // Sblocca canali diurni
+            const DEAD_CHANNELS = ['1460741481420558469', '1460741482876239944'];
+            const { econDb } = require('./economySystem');
+            
+            const catDiurna = message.guild.channels.cache.get(HOUSING.CATEGORIA_CHAT_DIURNA);
+            if (catDiurna) {
+                const canali = catDiurna.children.cache.filter(c => c.type === ChannelType.GuildText);
+                const ops = [];
+                for (const [, channel] of canali) {
+                    if (channel.id === HOUSING.CANALE_BLOCCO_TOTALE) continue;
+                    if (HOUSING.CANALI_BLOCCO_PARZIALE.includes(channel.id)) {
+                        ops.push(channel.permissionOverwrites.edit(RUOLI.ALIVE, { SendMessages: true }).catch(() => {}));
+                    } else {
+                        // Canali normali: permetti ALIVE e SPONSOR
+                        [RUOLI.ALIVE, RUOLI.SPONSOR].forEach(r => {
+                            if (r) ops.push(channel.permissionOverwrites.edit(r, { SendMessages: true }).catch(() => {}));
+                        });
+                        
+                        // Blocca DEAD e SPONSOR_DEAD nei canali normali (possono solo vedere)
+                        if (!DEAD_CHANNELS.includes(channel.id)) {
+                            [RUOLI.DEAD, RUOLI.SPONSOR_DEAD].forEach(r => {
+                                if (r) ops.push(channel.permissionOverwrites.edit(r, { 
+                                    SendMessages: false, 
+                                    AddReactions: false, 
+                                    CreatePublicThreads: false,
+                                    CreatePrivateThreads: false 
+                                }).catch(() => {}));
+                            });
+                        }
+                    }
+                    
+                    // Nei canali DEAD_CHANNELS: blocca DEAD e SPONSOR_DEAD di default (sbloccati solo con testamento)
+                    if (DEAD_CHANNELS.includes(channel.id)) {
+                        [RUOLI.DEAD, RUOLI.SPONSOR_DEAD].forEach(r => {
+                            if (r) ops.push(channel.permissionOverwrites.edit(r, { 
+                                SendMessages: false, 
+                                ViewChannel: true,
+                                AddReactions: false,
+                                CreatePublicThreads: false,
+                                CreatePrivateThreads: false 
+                            }).catch(() => {}));
+                        });
+                    }
+                    
+                    ops.push(
+                        channel.send(`☀️ **GIORNO ${numero}**`).then(msg => msg.pin()).catch(() => {})
+                    );
+                }
+                await Promise.all(ops);
+            }
+            
+            // 💰 Dai 100 monete a tutti i giocatori con ruolo ALIVE
+            const aliveMembers = message.guild.members.cache.filter(m => 
+                !m.user.bot && m.roles.cache.has(RUOLI.ALIVE)
+            );
+            const aliveUserIds = Array.from(aliveMembers.keys());
+            
+            if (aliveUserIds.length > 0) {
+                await econDb.bulkAddBalance(aliveUserIds, 100);
+                
+                // Tag il ruolo @Alive invece dei singoli utenti
+                if (annunciChannel) {
+                    await annunciChannel.send(`🪙 <@&${RUOLI.ALIVE}> avete ricevuto il vostro collect giornaliero di **100 monete**!`);
+                }
+            }
+            
+            message.reply(`✅ **Giorno ${numero} avviato.**`);
+        } catch (error) {
+            console.error('❌ Errore comando !giorno:', error);
+            return message.reply("❌ Errore durante l'esecuzione del comando.");
         }
-        
-        message.reply(`✅ **Giorno ${numero} avviato.**`);
     }
 
     // ===================== DISTRUZIONE =====================
