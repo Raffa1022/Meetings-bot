@@ -206,11 +206,15 @@ async function updatePresetDashboard() {
         .setFooter({ text: 'Aggiornamento automatico in tempo reale' })
         .setTimestamp();
 
-    // Pulisci vecchi messaggi
+    // Pulisci SOLO i messaggi della dashboard preset (non tutti i messaggi del bot)
     try {
-        const messages = await channel.messages.fetch({ limit: 10 });
-        const botMsgs = messages.filter(m => m.author.id === clientRef.user.id);
-        if (botMsgs.size > 0) await channel.bulkDelete(botMsgs).catch(() => {});
+        const messages = await channel.messages.fetch({ limit: 50 });
+        const presetDashboardMsgs = messages.filter(m => 
+            m.author.id === clientRef.user.id && 
+            m.embeds.length > 0 && 
+            m.embeds[0].title === '⏰ Dashboard Preset - Azioni Programmate'
+        );
+        if (presetDashboardMsgs.size > 0) await channel.bulkDelete(presetDashboardMsgs).catch(() => {});
     } catch {}
 
     await channel.send({ embeds: [embed] });
@@ -421,7 +425,7 @@ function registerPresetInteractions(client) {
                     components: []
                 });
             } else {
-                // Per scheduled, recuperiamo il triggerTime dallo stato (da implementare storage temporaneo)
+                // Per scheduled, recuperiamo il triggerTime dal messaggio
                 const triggerTime = interaction.message.content.match(/\d{2}:\d{2}/)?.[0] || '00:00';
                 await presetDb.addScheduledPreset(userId, userName, 'KNOCK', 'KNOCK', details, triggerTime);
                 await interaction.update({
@@ -577,8 +581,8 @@ function registerPresetInteractions(client) {
                     ephemeral: true
                 });
             } else {
-                // Recupera triggerTime (dovremo gestire uno storage temporaneo)
-                const triggerTime = '00:00'; // Placeholder
+                // CORREZIONE BUG: Recupera il triggerTime dal messaggio originale
+                const triggerTime = interaction.message.content.match(/\d{2}:\d{2}/)?.[0] || '00:00';
                 await presetDb.addScheduledPreset(userId, userName, 'ABILITY', category, details, triggerTime);
                 await interaction.reply({
                     content: `✅ **Preset programmato salvato!** Abilità categoria ${category} eseguita alle ${triggerTime}.`,
