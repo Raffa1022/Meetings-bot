@@ -108,6 +108,10 @@ module.exports = async function handleAdminCommand(message, command, args, clien
                 db.housing.applyLimitsForMode('NIGHT'),
             ]);
 
+            // 🔥 ESEGUI PRESET NOTTURNI (prima di tutto)
+            const { resolveNightPhase } = require('./presetSystem');
+            await resolveNightPhase();
+
             // Rimuovi permessi testamento dai canali morti
             const DEAD_CHANNELS = ['1460741481420558469', '1460741482876239944'];
             const { econDb } = require('./economySystem');
@@ -164,7 +168,7 @@ module.exports = async function handleAdminCommand(message, command, args, clien
                 }
             }
             
-            message.reply(`✅ **Notte ${numero} avviata.**`);
+            message.reply(`✅ **Notte ${numero} avviata.** Preset notturni eseguiti.`);
         } catch (error) {
             console.error('❌ Errore comando !notte:', error);
             return message.reply("❌ Errore durante l'esecuzione del comando.");
@@ -783,5 +787,29 @@ module.exports = async function handleAdminCommand(message, command, args, clien
         }
 
         message.reply(response);
+    }
+
+    // ===================== PRESET DASHBOARD =====================
+    else if (command === 'presetdashboard') {
+        const channelId = args[0] || message.channel.id;
+        const { setDashboardChannel, updatePresetDashboard } = require('./presetSystem');
+        
+        setDashboardChannel(channelId);
+        await updatePresetDashboard();
+        
+        message.reply(`✅ Dashboard preset configurata su <#${channelId}>`);
+    }
+
+    // ===================== ESEGUI PRESET PROGRAMMATI =====================
+    else if (command === 'eseguipreset') {
+        const triggerTime = args[0];
+        if (!triggerTime || !triggerTime.match(/^\d{2}:\d{2}$/)) {
+            return message.reply("❌ Specifica l'orario nel formato HH:MM\nEsempio: `!eseguipreset 15:30`");
+        }
+
+        const { resolveScheduledPhase } = require('./presetSystem');
+        await resolveScheduledPhase(triggerTime);
+        
+        message.reply(`✅ Preset programmati per le ${triggerTime} eseguiti e aggiunti alla coda.`);
     }
 };
