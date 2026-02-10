@@ -74,6 +74,7 @@ const moderationSchema = new mongoose.Schema({
     blockedVB: { type: Array, default: [] },       // [{ userId, userTag, timestamp }]
     blockedRB: { type: Array, default: [] },       // [{ userId, userTag, timestamp }]
     protected: { type: Array, default: [] },       // [{ userId, userTag, timestamp }]
+    unprotectable: { type: Array, default: [] },   // [{ userId, userTag, timestamp }] - Non può essere protetto (catene)
     markedForDeath: { type: Array, default: [] }   // [{ userId, userTag, timestamp }] - Lista morti
 }, { minimize: false, versionKey: false });
 
