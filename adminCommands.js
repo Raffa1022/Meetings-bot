@@ -107,6 +107,25 @@ module.exports = async function handleAdminCommand(message, command, args, clien
             db.housing.applyLimitsForMode('NIGHT'),
         ]);
 
+        // Rimuovi permessi testamento dai canali morti
+        const DEAD_CHANNELS = ['1460741481420558469', '1460741482876239944'];
+        const { econDb } = require('./economySystem');
+        
+        // Ottieni tutti gli utenti con testamento attivo
+        const allMembers = await message.guild.members.fetch();
+        for (const [, member] of allMembers) {
+            const testamentoChannels = await econDb.getTestamentoChannels(member.id);
+            if (testamentoChannels.length > 0) {
+                for (const channelId of DEAD_CHANNELS) {
+                    const channel = message.guild.channels.cache.get(channelId);
+                    if (channel) {
+                        await channel.permissionOverwrites.delete(member.id).catch(() => {});
+                    }
+                }
+                await econDb.clearTestamento(member.id);
+            }
+        }
+
         const annunciChannel = message.guild.channels.cache.get(HOUSING.CANALE_ANNUNCI);
         if (annunciChannel) {
             await annunciChannel.send({
@@ -128,6 +147,23 @@ module.exports = async function handleAdminCommand(message, command, args, clien
             }
             await Promise.all(ops);
         }
+        
+        // 💰 Dai 100 monete a tutti i giocatori con ruolo ALIVE
+        const aliveMembers = message.guild.members.cache.filter(m => 
+            !m.user.bot && m.roles.cache.has(RUOLI.ALIVE)
+        );
+        const aliveUserIds = Array.from(aliveMembers.keys());
+        
+        if (aliveUserIds.length > 0) {
+            await econDb.bulkAddBalance(aliveUserIds, 100);
+            
+            // Tag tutti i giocatori nel canale annunci
+            const tagList = aliveUserIds.map(id => `<@${id}>`).join(' ');
+            if (annunciChannel) {
+                await annunciChannel.send(`💰 ${tagList}\nAvete ricevuto il vostro collect giornaliero di **100 monete**!`);
+            }
+        }
+        
         message.reply(`✅ **Notte ${numero} avviata.**`);
     }
 
@@ -161,7 +197,20 @@ module.exports = async function handleAdminCommand(message, command, args, clien
             });
         }
 
-        // Sblocca canali diurni
+        // Sblocca canali diurni MA impedisci scrittura a chi aveva testamento attivo
+        const DEAD_CHANNELS = ['1460741481420558469', '1460741482876239944'];
+        const { econDb } = require('./economySystem');
+        
+        // Raccogli tutti gli utenti che avevano testamento attivo (prima di rimuoverlo)
+        const testamentoUsers = [];
+        const allMembers = await message.guild.members.fetch();
+        for (const [, member] of allMembers) {
+            const testamentoChannels = await econDb.getTestamentoChannels(member.id);
+            if (testamentoChannels.length > 0) {
+                testamentoUsers.push(member.id);
+            }
+        }
+        
         const catDiurna = message.guild.channels.cache.get(HOUSING.CATEGORIA_CHAT_DIURNA);
         if (catDiurna) {
             const canali = catDiurna.children.cache.filter(c => c.type === ChannelType.GuildText);
@@ -175,12 +224,37 @@ module.exports = async function handleAdminCommand(message, command, args, clien
                         if (r) ops.push(channel.permissionOverwrites.edit(r, { SendMessages: true }).catch(() => {}));
                     });
                 }
+                
+                // Blocca gli utenti con testamento nei canali morti
+                if (DEAD_CHANNELS.includes(channel.id)) {
+                    for (const userId of testamentoUsers) {
+                        ops.push(channel.permissionOverwrites.edit(userId, { SendMessages: false }).catch(() => {}));
+                    }
+                }
+                
                 ops.push(
                     channel.send(`☀️ **GIORNO ${numero}**`).then(msg => msg.pin()).catch(() => {})
                 );
             }
             await Promise.all(ops);
         }
+        
+        // 💰 Dai 100 monete a tutti i giocatori con ruolo ALIVE
+        const aliveMembers = message.guild.members.cache.filter(m => 
+            !m.user.bot && m.roles.cache.has(RUOLI.ALIVE)
+        );
+        const aliveUserIds = Array.from(aliveMembers.keys());
+        
+        if (aliveUserIds.length > 0) {
+            await econDb.bulkAddBalance(aliveUserIds, 100);
+            
+            // Tag tutti i giocatori nel canale annunci
+            const tagList = aliveUserIds.map(id => `<@${id}>`).join(' ');
+            if (annunciChannel) {
+                await annunciChannel.send(`💰 ${tagList}\nAvete ricevuto il vostro collect giornaliero di **100 monete**!`);
+            }
+        }
+        
         message.reply(`✅ **Giorno ${numero} avviato.**`);
     }
 
