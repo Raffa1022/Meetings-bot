@@ -232,9 +232,21 @@ async function handlePresetCommand(message, args, presetType) {
     const userId = message.author.id;
     const userName = message.member?.displayName || message.author.username;
 
+    // Per scheduled preset, estrai e valida il triggerTime
+    let triggerTime = '00:00';
+    if (presetType !== 'night' && args[0]) {
+        const match = args[0].match(/^(\d{1,2}):(\d{2})$/);
+        if (match) {
+            const hours = match[1].padStart(2, '0');
+            const minutes = match[2];
+            triggerTime = `${hours}:${minutes}`;
+        }
+    }
+
     // Step 1: Scelta Categoria
+    // Include triggerTime nel customId per preservarlo
     const categorySelect = new StringSelectMenuBuilder()
-        .setCustomId(`preset_category_${presetType}`)
+        .setCustomId(`preset_category_${presetType}_${triggerTime}`)
         .setPlaceholder('Scegli la categoria dell\'azione...')
         .addOptions(CATEGORIES.map(cat => 
             new StringSelectMenuOptionBuilder()
@@ -252,7 +264,7 @@ async function handlePresetCommand(message, args, presetType) {
             .setEmoji('❌')
     );
 
-    const typeLabel = presetType === 'night' ? 'notturno' : `programmato (${args[0] || 'HH:MM'})`;
+    const typeLabel = presetType === 'night' ? 'notturno' : `programmato (${triggerTime})`;
     await message.reply({
         content: `⏰ **Creazione preset ${typeLabel}**\nStep 1: Seleziona la categoria dell'azione:`,
         components: [row, closeRow]
@@ -276,7 +288,9 @@ function registerPresetInteractions(client) {
 
         // ===================== SELEZIONE CATEGORIA =====================
         if (interaction.customId.startsWith('preset_category_')) {
-            const presetType = interaction.customId.split('_')[2];
+            const parts = interaction.customId.split('_');
+            const presetType = parts[2];
+            const triggerTime = parts[3] || '00:00';
             const category = interaction.values[0];
 
             // CASO 1: BUSSA → Mostra select case
@@ -291,7 +305,7 @@ function registerPresetInteractions(client) {
                 }
 
                 const houseSelect = new StringSelectMenuBuilder()
-                    .setCustomId(`preset_house_${presetType}`)
+                    .setCustomId(`preset_house_${presetType}_${triggerTime}`)
                     .setPlaceholder('Scegli la casa dove bussare...')
                     .addOptions(houses.slice(0, 25).map(house => 
                         new StringSelectMenuOptionBuilder()
@@ -302,7 +316,7 @@ function registerPresetInteractions(client) {
 
                 const backRow = new ActionRowBuilder().addComponents(
                     new ButtonBuilder()
-                        .setCustomId(`preset_back_category_${presetType}`)
+                        .setCustomId(`preset_back_category_${presetType}_${triggerTime}`)
                         .setLabel('Indietro')
                         .setStyle(ButtonStyle.Secondary)
                         .setEmoji('◀️')
@@ -325,7 +339,7 @@ function registerPresetInteractions(client) {
                 }
 
                 const itemSelect = new StringSelectMenuBuilder()
-                    .setCustomId(`preset_shop_item_${presetType}`)
+                    .setCustomId(`preset_shop_item_${presetType}_${triggerTime}`)
                     .setPlaceholder('Scegli l\'oggetto da usare...')
                     .addOptions(items.map(item => 
                         new StringSelectMenuOptionBuilder()
@@ -336,7 +350,7 @@ function registerPresetInteractions(client) {
 
                 const backRow = new ActionRowBuilder().addComponents(
                     new ButtonBuilder()
-                        .setCustomId(`preset_back_category_${presetType}`)
+                        .setCustomId(`preset_back_category_${presetType}_${triggerTime}`)
                         .setLabel('Indietro')
                         .setStyle(ButtonStyle.Secondary)
                         .setEmoji('◀️')
@@ -350,7 +364,7 @@ function registerPresetInteractions(client) {
             // CASO 3: Altre categorie → Mostra modale
             else {
                 const modal = new ModalBuilder()
-                    .setCustomId(`preset_modal_${category}_${presetType}`)
+                    .setCustomId(`preset_modal_${category}_${presetType}_${triggerTime}`)
                     .setTitle(`Preset ${category}`);
 
                 const targetInput = new TextInputBuilder()
@@ -378,10 +392,12 @@ function registerPresetInteractions(client) {
 
         // ===================== TORNA INDIETRO CATEGORIA =====================
         if (interaction.customId.startsWith('preset_back_category_')) {
-            const presetType = interaction.customId.split('_')[3];
+            const parts = interaction.customId.split('_');
+            const presetType = parts[3];
+            const triggerTime = parts[4] || '00:00';
             
             const categorySelect = new StringSelectMenuBuilder()
-                .setCustomId(`preset_category_${presetType}`)
+                .setCustomId(`preset_category_${presetType}_${triggerTime}`)
                 .setPlaceholder('Scegli la categoria dell\'azione...')
                 .addOptions(CATEGORIES.map(cat => 
                     new StringSelectMenuOptionBuilder()
@@ -407,7 +423,9 @@ function registerPresetInteractions(client) {
 
         // ===================== SELEZIONE CASA (BUSSA) =====================
         if (interaction.customId.startsWith('preset_house_')) {
-            const presetType = interaction.customId.split('_')[2];
+            const parts = interaction.customId.split('_');
+            const presetType = parts[2];
+            const triggerTime = parts[3] || '00:00';
             const targetChannelId = interaction.values[0];
             const userId = interaction.user.id;
             const userName = interaction.member?.displayName || interaction.user.username;
@@ -425,8 +443,6 @@ function registerPresetInteractions(client) {
                     components: []
                 });
             } else {
-                // Per scheduled, recuperiamo il triggerTime dal messaggio
-                const triggerTime = interaction.message.content.match(/\d{2}:\d{2}/)?.[0] || '00:00';
                 await presetDb.addScheduledPreset(userId, userName, 'KNOCK', 'KNOCK', details, triggerTime);
                 await interaction.update({
                     content: `✅ **Preset programmato salvato!** Bussa eseguita alle ${triggerTime}.`,
@@ -440,7 +456,9 @@ function registerPresetInteractions(client) {
 
         // ===================== SELEZIONE SHOP ITEM =====================
         if (interaction.customId.startsWith('preset_shop_item_')) {
-            const presetType = interaction.customId.split('_')[3];
+            const parts = interaction.customId.split('_');
+            const presetType = parts[3];
+            const triggerTime = parts[4] || '00:00';
             const itemId = interaction.values[0];
 
             // Verifica se l'oggetto è "catene" (richiede target)
@@ -470,7 +488,7 @@ function registerPresetInteractions(client) {
                 }
 
                 const playerSelect = new StringSelectMenuBuilder()
-                    .setCustomId(`preset_catene_target_${presetType}`)
+                    .setCustomId(`preset_catene_target_${presetType}_${triggerTime}`)
                     .setPlaceholder('Scegli il target per le catene...')
                     .addOptions(aliveMembers.slice(0, 25).map(player => 
                         new StringSelectMenuOptionBuilder()
@@ -481,7 +499,7 @@ function registerPresetInteractions(client) {
 
                 const backRow = new ActionRowBuilder().addComponents(
                     new ButtonBuilder()
-                        .setCustomId(`preset_back_category_${presetType}`)
+                        .setCustomId(`preset_back_category_${presetType}_${triggerTime}`)
                         .setLabel('Indietro')
                         .setStyle(ButtonStyle.Secondary)
                         .setEmoji('◀️')
@@ -511,7 +529,6 @@ function registerPresetInteractions(client) {
                         components: []
                     });
                 } else {
-                    const triggerTime = interaction.message.content.match(/\d{2}:\d{2}/)?.[0] || '00:00';
                     await presetDb.addScheduledPreset(userId, userName, 'SHOP', 'SHOP', details, triggerTime);
                     await interaction.update({
                         content: `✅ **Preset programmato salvato!** Oggetto "${item?.name}" eseguito alle ${triggerTime}.`,
@@ -526,7 +543,9 @@ function registerPresetInteractions(client) {
 
         // ===================== SELEZIONE TARGET CATENE =====================
         if (interaction.customId.startsWith('preset_catene_target_')) {
-            const presetType = interaction.customId.split('_')[3];
+            const parts = interaction.customId.split('_');
+            const presetType = parts[3];
+            const triggerTime = parts[4] || '00:00';
             const targetUserId = interaction.values[0];
             const userId = interaction.user.id;
             const userName = interaction.member?.displayName || interaction.user.username;
@@ -545,7 +564,6 @@ function registerPresetInteractions(client) {
                     components: []
                 });
             } else {
-                const triggerTime = interaction.message.content.match(/\d{2}:\d{2}/)?.[0] || '00:00';
                 await presetDb.addScheduledPreset(userId, userName, 'SHOP', 'SHOP', details, triggerTime);
                 await interaction.update({
                     content: `✅ **Preset programmato salvato!** Catene su <@${targetUserId}> eseguite alle ${triggerTime}.`,
@@ -562,6 +580,7 @@ function registerPresetInteractions(client) {
             const parts = interaction.customId.split('_');
             const category = parts[2];
             const presetType = parts[3];
+            const triggerTime = parts[4] || '00:00';
 
             const target = interaction.fields.getTextInputValue('target');
             const description = interaction.fields.getTextInputValue('description');
@@ -581,8 +600,6 @@ function registerPresetInteractions(client) {
                     ephemeral: true
                 });
             } else {
-                // CORREZIONE BUG: Recupera il triggerTime dal messaggio originale
-                const triggerTime = interaction.message.content.match(/\d{2}:\d{2}/)?.[0] || '00:00';
                 await presetDb.addScheduledPreset(userId, userName, 'ABILITY', category, details, triggerTime);
                 await interaction.reply({
                     content: `✅ **Preset programmato salvato!** Abilità categoria ${category} eseguita alle ${triggerTime}.`,
