@@ -498,5 +498,48 @@ module.exports = function registerPlayerCommands(client) {
 
             message.reply({ embeds: [embed] });
         }
+
+        // ===================== PRESET NOTTURNO =====================
+        else if (command === 'preset') {
+            const subcommand = args[0]?.toLowerCase();
+
+            // Check ruolo
+            const canUse = message.member.roles.cache.hasAny(RUOLI.ALIVE, RUOLI.SPONSOR, RUOLI.DEAD, RUOLI.SPONSOR_DEAD) || isAdmin(message.member);
+            if (!canUse) return message.reply("⛔ Non hai i permessi per usare i preset.");
+
+            if (subcommand === 'notturno') {
+                const { handlePresetCommand } = require('./presetSystem');
+                await handlePresetCommand(message, args.slice(1), 'night');
+            }
+            else if (subcommand === 'intermedio') {
+                const timeArg = args[1];
+                if (!timeArg || !timeArg.match(/^\d{2}:\d{2}$/)) {
+                    return message.reply("❌ Specifica l'orario nel formato HH:MM\nEsempio: `!preset intermedio 15:30`");
+                }
+
+                // Smart Rollover: se orario già passato, considera domani
+                const [hours, minutes] = timeArg.split(':').map(Number);
+                const now = new Date();
+                const triggerDate = new Date();
+                triggerDate.setHours(hours, minutes, 0, 0);
+
+                if (triggerDate <= now) {
+                    triggerDate.setDate(triggerDate.getDate() + 1);
+                }
+
+                const { handlePresetCommand } = require('./presetSystem');
+                // Salviamo il triggerTime nel messaggio per recuperarlo dopo
+                const originalContent = message.content;
+                message.content = `${originalContent} (trigger: ${timeArg})`;
+                await handlePresetCommand(message, args.slice(2), 'scheduled');
+            }
+            else if (subcommand === 'list') {
+                const { showUserPresets } = require('./presetSystem');
+                await showUserPresets(message);
+            }
+            else {
+                message.reply("❌ Uso:\n`!preset notturno` - Crea preset per fase notturna\n`!preset intermedio HH:MM` - Crea preset programmato\n`!preset list` - Visualizza i tuoi preset");
+            }
+        }
     });
 };
