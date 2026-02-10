@@ -164,6 +164,30 @@ module.exports = function initModerationSystem(client) {
             message.reply(response);
         }
 
+        // ===================== NOPROT =====================
+        else if (command === 'noprot') {
+            if (!isAdmin(message.member)) return message.reply("⛔ Solo admin.");
+            const mention = message.mentions.members.first();
+            if (!mention) return message.reply("❌ Uso: `!noprot @Utente`");
+
+            const alreadyNoProt = await db.moderation.isUnprotectable(mention.id);
+            if (alreadyNoProt) return message.reply("⚠️ Utente già nella lista Non Proteggibili.");
+
+            await db.moderation.addUnprotectable(mention.id, mention.user.tag);
+            let response = `⛓️ **${mention.user.tag}** aggiunto alla lista Non Proteggibili (non può essere protetto).`;
+
+            const partner = await findPartner(mention, message.guild);
+            if (partner) {
+                const partnerNoProt = await db.moderation.isUnprotectable(partner.id);
+                if (!partnerNoProt) {
+                    await db.moderation.addUnprotectable(partner.id, partner.user.tag);
+                    response += `\n⛓️ Anche **${partner.user.tag}** (partner) aggiunto alla lista Non Proteggibili.`;
+                }
+            }
+
+            message.reply(response);
+        }
+
         // ===================== PROTEZIONE =====================
         else if (command === 'protezione') {
             if (!isAdmin(message.member)) return message.reply("⛔ Solo admin.");
@@ -269,72 +293,51 @@ module.exports = function initModerationSystem(client) {
             const type = args[0]?.toLowerCase();
             const mention = message.mentions.members.first();
 
-            // !cura tutto - pulisce tutte le liste
-            if (type === 'tutto' && mention) {
-                const partner = await findPartner(mention, message.guild);
-                let response = `🧹 **Pulizia completa per ${mention.user.tag}:**\n`;
-
-                // Rimuovi da VB
-                const wasVB = await db.moderation.isBlockedVB(mention.id);
-                if (wasVB) {
-                    await db.moderation.removeBlockedVB(mention.id);
-                    response += `✅ Rimosso da Visitblock\n`;
+            // !cura tutto - pulisce TUTTE le liste GLOBALMENTE (senza @utente)
+            if (type === 'tutto' && !mention) {
+                let response = `🧹 **Pulizia globale di tutte le liste:**\n`;
+                
+                // Pulisci tutte le liste
+                const [vbList, rbList, protList, unpList] = await Promise.all([
+                    db.moderation.getBlockedVB(),
+                    db.moderation.getBlockedRB(),
+                    db.moderation.getProtected(),
+                    db.moderation.getUnprotectable(),
+                ]);
+                
+                // Rimuovi tutti da Visitblock
+                for (const entry of vbList) {
+                    await db.moderation.removeBlockedVB(entry.userId);
                 }
-                if (partner) {
-                    const partnerVB = await db.moderation.isBlockedVB(partner.id);
-                    if (partnerVB) {
-                        await db.moderation.removeBlockedVB(partner.id);
-                        response += `✅ Partner rimosso da Visitblock\n`;
-                    }
+                if (vbList.length > 0) response += `✅ Rimossi ${vbList.length} utenti da Visitblock\n`;
+                
+                // Rimuovi tutti da Roleblock
+                for (const entry of rbList) {
+                    await db.moderation.removeBlockedRB(entry.userId);
                 }
-
-                // Rimuovi da RB
-                const wasRB = await db.moderation.isBlockedRB(mention.id);
-                if (wasRB) {
-                    await db.moderation.removeBlockedRB(mention.id);
-                    response += `✅ Rimosso da Roleblock\n`;
+                if (rbList.length > 0) response += `✅ Rimossi ${rbList.length} utenti da Roleblock\n`;
+                
+                // Rimuovi tutti da Protezione
+                for (const entry of protList) {
+                    await db.moderation.removeProtected(entry.userId);
                 }
-                if (partner) {
-                    const partnerRB = await db.moderation.isBlockedRB(partner.id);
-                    if (partnerRB) {
-                        await db.moderation.removeBlockedRB(partner.id);
-                        response += `✅ Partner rimosso da Roleblock\n`;
-                    }
+                if (protList.length > 0) response += `✅ Rimossi ${protList.length} utenti da Protezione\n`;
+                
+                // Rimuovi tutti da Non Proteggibili
+                for (const entry of unpList) {
+                    await db.moderation.removeUnprotectable(entry.userId);
                 }
-
-                // Rimuovi da Protezione
-                const wasProt = await db.moderation.isProtected(mention.id);
-                if (wasProt) {
-                    await db.moderation.removeProtected(mention.id);
-                    response += `✅ Rimosso da Protezione\n`;
+                if (unpList.length > 0) response += `✅ Rimossi ${unpList.length} utenti da Non Proteggibili (catene)\n`;
+                
+                if (vbList.length === 0 && rbList.length === 0 && protList.length === 0 && unpList.length === 0) {
+                    response = `⚠️ Tutte le liste erano già vuote.`;
                 }
-                if (partner) {
-                    const partnerProt = await db.moderation.isProtected(partner.id);
-                    if (partnerProt) {
-                        await db.moderation.removeProtected(partner.id);
-                        response += `✅ Partner rimosso da Protezione\n`;
-                    }
-                }
-
-                // Rimuovi da Unprotectable (catene)
-                const wasUnprot = await db.moderation.isUnprotectable(mention.id);
-                if (wasUnprot) {
-                    await db.moderation.removeUnprotectable(mention.id);
-                    response += `✅ Rimosso da Non Proteggibili (catene)\n`;
-                }
-                if (partner) {
-                    const partnerUnprot = await db.moderation.isUnprotectable(partner.id);
-                    if (partnerUnprot) {
-                        await db.moderation.removeUnprotectable(partner.id);
-                        response += `✅ Partner rimosso da Non Proteggibili (catene)\n`;
-                    }
-                }
-
-                return message.reply(response || `⚠️ ${mention.user.tag} non era in nessuna lista.`);
+                
+                return message.reply(response);
             }
 
-            if (!mention || (type !== 'vb' && type !== 'rb' && type !== 'protezione')) {
-                return message.reply("❌ Uso:\n`!cura vb @Utente`\n`!cura rb @Utente`\n`!cura protezione @Utente`\n`!cura tutto @Utente` - pulisce tutte le liste");
+            if (!mention || (type !== 'vb' && type !== 'rb' && type !== 'protezione' && type !== 'noprot')) {
+                return message.reply("❌ Uso:\n`!cura vb @Utente`\n`!cura rb @Utente`\n`!cura protezione @Utente`\n`!cura noprot @Utente`\n`!cura tutto` - pulisce tutte le liste");
             }
 
             const partner = await findPartner(mention, message.guild);
@@ -383,6 +386,22 @@ module.exports = function initModerationSystem(client) {
                     if (partnerWas) {
                         await db.moderation.removeProtected(partner.id);
                         response += `\n✅ Anche **${partner.user.tag}** (partner) rimosso da Protezione.`;
+                    }
+                }
+                message.reply(response);
+            }
+            else if (type === 'noprot') {
+                const was = await db.moderation.isUnprotectable(mention.id);
+                if (!was) return message.reply("⚠️ Utente non in lista Non Proteggibili.");
+
+                await db.moderation.removeUnprotectable(mention.id);
+                let response = `✅ **${mention.user.tag}** rimosso da lista Non Proteggibili.`;
+
+                if (partner) {
+                    const partnerWas = await db.moderation.isUnprotectable(partner.id);
+                    if (partnerWas) {
+                        await db.moderation.removeUnprotectable(partner.id);
+                        response += `\n✅ Anche **${partner.user.tag}** (partner) rimosso da lista Non Proteggibili.`;
                     }
                 }
                 message.reply(response);
