@@ -15,6 +15,7 @@ const initMeetingSystem = require('./meetingSystem');
 const initAbilitySystem = require('./abilitySystem');
 const initModerationSystem = require('./moderationSystem'); // FIX: Aggiunto import mancante
 const initEconomySystem = require('./economySystem');       // 💰 Economy System
+const { registerPresetInteractions } = require('./presetSystem'); // ⏰ Preset System
 const { isAdmin } = require('./helpers');
 
 // --- WEB SERVER (UptimeRobot) ---
@@ -45,7 +46,8 @@ const client = new Client({
 const ADMIN_COMMANDS = new Set([
     'assegnacasa', 'visite', 'aggiunta', 'resetvisite', 'sblocca',
     'notte', 'giorno', 'distruzione', 'ricostruzione', 'pubblico',
-    'sposta', 'dove', 'multipla', 'ritirata', 'ram', 'memoria', 'cancella', 'ritorno'
+    'sposta', 'dove', 'multipla', 'ritirata', 'ram', 'memoria', 'cancella', 'ritorno',
+    'presetdashboard', 'eseguipreset'
 ]);
 
 client.on('messageCreate', async message => {
@@ -77,6 +79,7 @@ client.on('messageCreate', async message => {
         initQueueSystem(client);       // Ascolta eventBus
         registerPlayerCommands(client); // Emette verso eventBus
         registerKnockInteractions(client);
+        registerPresetInteractions(client); // ⏰ Preset System
         initMeetingSystem(client);
         initAbilitySystem(client);
         initModerationSystem(client);  // FIX: Aggiunta inizializzazione mancante
@@ -93,6 +96,7 @@ client.on('messageCreate', async message => {
         console.log('✨ Abilità: Coda cronologica');
         console.log('🛡️ Moderazione: Attivo');
         console.log('💰 Economia: Mercato, Inventario, Shop');
+        console.log('⏰ Preset: Sistema azioni programmate');
         console.log('💾 Database: MongoDB-First, zero dbCache');
         console.log('='.repeat(50));
 
