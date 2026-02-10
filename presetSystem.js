@@ -228,20 +228,9 @@ function getCategoryIcon(category) {
 // ==========================================
 // 🎮 GESTIONE GIOCATORE - UI A STEP
 // ==========================================
-async function handlePresetCommand(message, args, presetType) {
+async function handlePresetCommand(message, args, presetType, triggerTime = '00:00') {
     const userId = message.author.id;
     const userName = message.member?.displayName || message.author.username;
-
-    // Per scheduled preset, estrai e valida il triggerTime
-    let triggerTime = '00:00';
-    if (presetType !== 'night' && args[0]) {
-        const match = args[0].match(/^(\d{1,2}):(\d{2})$/);
-        if (match) {
-            const hours = match[1].padStart(2, '0');
-            const minutes = match[2];
-            triggerTime = `${hours}:${minutes}`;
-        }
-    }
 
     // Step 1: Scelta Categoria
     // Include triggerTime nel customId per preservarlo
@@ -293,26 +282,25 @@ function registerPresetInteractions(client) {
             const triggerTime = parts[3] || '00:00';
             const category = interaction.values[0];
 
-            // CASO 1: BUSSA → Mostra select case
+            // CASO 1: BUSSA → Mostra select modalità (come il comando originale)
             if (category === 'KNOCK') {
-                const houses = await getAvailableHouses(interaction.guild, interaction.user.id);
-                
-                if (houses.length === 0) {
-                    return interaction.reply({
-                        content: '❌ Nessuna casa disponibile per bussare.',
-                        ephemeral: true
-                    });
-                }
-
-                const houseSelect = new StringSelectMenuBuilder()
-                    .setCustomId(`preset_house_${presetType}_${triggerTime}`)
-                    .setPlaceholder('Scegli la casa dove bussare...')
-                    .addOptions(houses.slice(0, 25).map(house => 
+                const modeSelect = new StringSelectMenuBuilder()
+                    .setCustomId(`preset_knock_mode_${presetType}_${triggerTime}`)
+                    .setPlaceholder('Come vuoi entrare?')
+                    .addOptions(
                         new StringSelectMenuOptionBuilder()
-                            .setLabel(formatName(house.name))
-                            .setValue(house.id)
-                            .setEmoji('🏠')
-                    ));
+                            .setLabel('Visita Normale')
+                            .setValue('mode_normal')
+                            .setEmoji('👋'),
+                        new StringSelectMenuOptionBuilder()
+                            .setLabel('Visita Forzata')
+                            .setValue('mode_forced')
+                            .setEmoji('🧨'),
+                        new StringSelectMenuOptionBuilder()
+                            .setLabel('Visita Nascosta')
+                            .setValue('mode_hidden')
+                            .setEmoji('🕵️')
+                    );
 
                 const backRow = new ActionRowBuilder().addComponents(
                     new ButtonBuilder()
@@ -323,8 +311,8 @@ function registerPresetInteractions(client) {
                 );
 
                 await interaction.update({
-                    content: '🏘️ **Step 2: Scegli la casa dove vuoi bussare:**',
-                    components: [new ActionRowBuilder().addComponents(houseSelect), backRow]
+                    content: '🎭 **Step 2: Scegli la modalità di visita:**',
+                    components: [new ActionRowBuilder().addComponents(modeSelect), backRow]
                 });
             }
             // CASO 2: SHOP → Mostra select inventario
@@ -388,6 +376,47 @@ function registerPresetInteractions(client) {
 
                 await interaction.showModal(modal);
             }
+        }
+
+        // ===================== SELEZIONE MODALITÀ BUSSA =====================
+        if (interaction.customId.startsWith('preset_knock_mode_')) {
+            const parts = interaction.customId.split('_');
+            const presetType = parts[3];
+            const triggerTime = parts[4] || '00:00';
+            const mode = interaction.values[0];
+
+            const houses = await getAvailableHouses(interaction.guild, interaction.user.id);
+            
+            if (houses.length === 0) {
+                return interaction.reply({
+                    content: '❌ Nessuna casa disponibile per bussare.',
+                    ephemeral: true
+                });
+            }
+
+            const houseSelect = new StringSelectMenuBuilder()
+                .setCustomId(`preset_house_${mode}_${presetType}_${triggerTime}`)
+                .setPlaceholder('Scegli la casa dove bussare...')
+                .addOptions(houses.slice(0, 25).map(house => 
+                    new StringSelectMenuOptionBuilder()
+                        .setLabel(formatName(house.name))
+                        .setValue(house.id)
+                        .setEmoji('🏠')
+                ));
+
+            const backRow = new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`preset_back_category_${presetType}_${triggerTime}`)
+                    .setLabel('Indietro')
+                    .setStyle(ButtonStyle.Secondary)
+                    .setEmoji('◀️')
+            );
+
+            const modeLabel = mode === 'mode_normal' ? 'Normale' : mode === 'mode_forced' ? 'Forzata' : 'Nascosta';
+            await interaction.update({
+                content: `🏘️ **Step 3: Scegli la casa (Modalità: ${modeLabel}):**`,
+                components: [new ActionRowBuilder().addComponents(houseSelect), backRow]
+            });
         }
 
         // ===================== TORNA INDIETRO CATEGORIA =====================
@@ -461,7 +490,76 @@ function registerPresetInteractions(client) {
             const triggerTime = parts[4] || '00:00';
             const itemId = interaction.values[0];
 
-            // Verifica se l'oggetto è "catene" (richiede target)
+            // Verifica che l'utente abbia ancora l'oggetto
+            const econDb = require('./economySystem').econDb;
+            const hasItem = await econDb.hasItem(interaction.user.id, itemId);
+            if (!hasItem) {
+                return interaction.reply({
+                    content: '❌ Non possiedi più questo oggetto.',
+                    ephemeral: true
+                });
+            }
+
+            // SCOPA: Non supportata nei preset (richiede messaggio di riferimento)
+            if (itemId === 'scopa') {
+                return interaction.reply({
+                    content: '❌ La scopa non può essere usata nei preset (richiede un messaggio di riferimento specifico).',
+                    ephemeral: true
+                });
+            }
+
+            // LETTERA: Richiede target + contenuto
+            if (itemId === 'lettera') {
+                const guild = interaction.guild;
+                const aliveRole = guild.roles.cache.get(RUOLI.ALIVE);
+                
+                if (!aliveRole) {
+                    return interaction.reply({
+                        content: '❌ Ruolo giocatori non trovato.',
+                        ephemeral: true
+                    });
+                }
+
+                const aliveMembers = aliveRole.members
+                    .filter(m => m.id !== interaction.user.id && !m.user.bot)
+                    .map(m => ({
+                        id: m.id,
+                        name: m.displayName || m.user.username
+                    }));
+
+                if (aliveMembers.length === 0) {
+                    return interaction.reply({
+                        content: '❌ Nessun giocatore disponibile come destinatario.',
+                        ephemeral: true
+                    });
+                }
+
+                const playerSelect = new StringSelectMenuBuilder()
+                    .setCustomId(`preset_lettera_target_${presetType}_${triggerTime}`)
+                    .setPlaceholder('Scegli il destinatario della lettera...')
+                    .addOptions(aliveMembers.slice(0, 25).map(player => 
+                        new StringSelectMenuOptionBuilder()
+                            .setLabel(player.name)
+                            .setValue(player.id)
+                            .setEmoji('📬')
+                    ));
+
+                const backRow = new ActionRowBuilder().addComponents(
+                    new ButtonBuilder()
+                        .setCustomId(`preset_back_category_${presetType}_${triggerTime}`)
+                        .setLabel('Indietro')
+                        .setStyle(ButtonStyle.Secondary)
+                        .setEmoji('◀️')
+                );
+
+                await interaction.update({
+                    content: '✉️ **Step 3: Scegli il destinatario della lettera:**',
+                    components: [new ActionRowBuilder().addComponents(playerSelect), backRow]
+                });
+                return;
+            }
+
+            // CATENE: Richiede target
             if (itemId === 'catene') {
                 const guild = interaction.guild;
                 const aliveRole = guild.roles.cache.get(RUOLI.ALIVE);
@@ -509,36 +607,106 @@ function registerPresetInteractions(client) {
                     content: '⛓️ **Step 3: Scegli il target per le catene:**',
                     components: [new ActionRowBuilder().addComponents(playerSelect), backRow]
                 });
-            } else {
-                // Altri oggetti shop non richiedono target
-                const userId = interaction.user.id;
-                const userName = interaction.member?.displayName || interaction.user.username;
-                const { SHOP_ITEMS } = require('./economySystem');
-                const item = SHOP_ITEMS.find(i => i.id === itemId);
-
-                const details = {
-                    subType: itemId,
-                    itemName: item?.name || itemId,
-                    responseChannelId: interaction.channel.id
-                };
-
-                if (presetType === 'night') {
-                    await presetDb.addNightPreset(userId, userName, 'SHOP', 'SHOP', details);
-                    await interaction.update({
-                        content: `✅ **Preset notturno salvato!** Oggetto "${item?.name}" programmato per la fase notturna.`,
-                        components: []
-                    });
-                } else {
-                    await presetDb.addScheduledPreset(userId, userName, 'SHOP', 'SHOP', details, triggerTime);
-                    await interaction.update({
-                        content: `✅ **Preset programmato salvato!** Oggetto "${item?.name}" eseguito alle ${triggerTime}.`,
-                        components: []
-                    });
-                }
-
-                setTimeout(() => interaction.message.delete().catch(() => {}), 3000);
-                await updatePresetDashboard();
+                return;
             }
+
+            // ALTRI OGGETTI (scarpe, testamento, fuochi, tenda): Non richiedono input aggiuntivo
+            const userId = interaction.user.id;
+            const userName = interaction.member?.displayName || interaction.user.username;
+            const { SHOP_ITEMS } = require('./economySystem');
+            const item = SHOP_ITEMS.find(i => i.id === itemId);
+
+            const details = {
+                subType: itemId,
+                itemName: item?.name || itemId,
+                responseChannelId: interaction.channel.id
+            };
+
+            if (presetType === 'night') {
+                await presetDb.addNightPreset(userId, userName, 'SHOP', 'SHOP', details);
+                await interaction.update({
+                    content: `✅ **Preset notturno salvato!** Oggetto "${item?.name}" programmato per la fase notturna.`,
+                    components: []
+                });
+            } else {
+                await presetDb.addScheduledPreset(userId, userName, 'SHOP', 'SHOP', details, triggerTime);
+                await interaction.update({
+                    content: `✅ **Preset programmato salvato!** Oggetto "${item?.name}" eseguito alle ${triggerTime}.`,
+                    components: []
+                });
+            }
+
+            setTimeout(() => interaction.message.delete().catch(() => {}), 3000);
+            await updatePresetDashboard();
+        }
+
+        // ===================== SELEZIONE TARGET LETTERA =====================
+        if (interaction.customId.startsWith('preset_lettera_target_')) {
+            const parts = interaction.customId.split('_');
+            const presetType = parts[3];
+            const triggerTime = parts[4] || '00:00';
+            const targetUserId = interaction.values[0];
+
+            // Mostra modal per scrivere il contenuto della lettera
+            const modal = new ModalBuilder()
+                .setCustomId(`preset_lettera_content_${targetUserId}_${presetType}_${triggerTime}`)
+                .setTitle('✉️ Scrivi la tua Lettera');
+
+            const contentInput = new TextInputBuilder()
+                .setCustomId('lettera_content')
+                .setLabel('Messaggio (max 10 parole)')
+                .setStyle(TextInputStyle.Paragraph)
+                .setMaxLength(200)
+                .setPlaceholder('Scrivi il tuo messaggio...')
+                .setRequired(true);
+
+            modal.addComponents(new ActionRowBuilder().addComponents(contentInput));
+            await interaction.showModal(modal);
+        }
+
+        // ===================== SUBMIT MODALE LETTERA =====================
+        if (interaction.customId.startsWith('preset_lettera_content_')) {
+            const parts = interaction.customId.split('_');
+            const targetUserId = parts[3];
+            const presetType = parts[4];
+            const triggerTime = parts[5] || '00:00';
+
+            const content = interaction.fields.getTextInputValue('lettera_content');
+            
+            // Verifica max 10 parole
+            if (content.trim().split(/\s+/).length > 10) {
+                return interaction.reply({
+                    content: '❌ Massimo 10 parole!',
+                    ephemeral: true
+                });
+            }
+
+            const userId = interaction.user.id;
+            const userName = interaction.member?.displayName || interaction.user.username;
+
+            const details = {
+                subType: 'lettera',
+                itemName: 'Lettera',
+                targetUserId,
+                content,
+                responseChannelId: interaction.message?.channel?.id || interaction.channel.id
+            };
+
+            if (presetType === 'night') {
+                await presetDb.addNightPreset(userId, userName, 'SHOP', 'SHOP', details);
+                await interaction.reply({
+                    content: `✅ **Preset notturno salvato!** Lettera per <@${targetUserId}> programmata per la fase notturna.`,
+                    ephemeral: true
+                });
+            } else {
+                await presetDb.addScheduledPreset(userId, userName, 'SHOP', 'SHOP', details, triggerTime);
+                await interaction.reply({
+                    content: `✅ **Preset programmato salvato!** Lettera per <@${targetUserId}> eseguita alle ${triggerTime}.`,
+                    ephemeral: true
+                });
+            }
+
+            await updatePresetDashboard();
         }
 
         // ===================== SELEZIONE TARGET CATENE =====================
