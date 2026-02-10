@@ -28,7 +28,13 @@ const economySchema = new mongoose.Schema({
     testamentoActive: { type: Array, default: [] }, // [channelId] - canali diurni sbloccati
 }, { minimize: false, versionKey: false });
 
+const economySettingsSchema = new mongoose.Schema({
+    id: { type: String, default: 'main_economy_settings', index: true },
+    classificaVisible: { type: Boolean, default: true }, // Classifica visibile ai giocatori
+}, { minimize: false, versionKey: false });
+
 const EconomyModel = mongoose.model('EconomyData', economySchema);
+const EconomySettingsModel = mongoose.model('EconomySettings', economySettingsSchema);
 
 // ==========================================
 // 🛒 SHOP - OGGETTI DISPONIBILI
@@ -37,8 +43,8 @@ const SHOP_ITEMS = [
     { id: 'scopa',      name: 'Scopa',                price: 25,  emoji: '🧹', description: 'Cancella messaggi in una casa (rispondi al msg da cui iniziare). Reagisci 🛡️ ai messaggi da proteggere.' },
     { id: 'lettera',    name: 'Lettera',               price: 90,  emoji: '✉️', description: 'Invia un messaggio anonimo (max 10 parole) a un giocatore.' },
     { id: 'scarpe',     name: 'Scarpe',                price: 125, emoji: '👟', description: 'Ottieni +1 visita base aggiuntiva.' },
-    { id: 'testamento', name: 'Testamento',            price: 80,  emoji: '📜', description: 'Permette di inviare 1 messaggio nella chat diurna (solo dead).' },
-    { id: 'catene',     name: 'Catene',                price: 500, emoji: '⛓️', description: 'Blocca un giocatore (Visitblock + Roleblock).' },
+    { id: 'testamento', name: 'Testamento',            price: 80,  emoji: '📜', description: 'Può essere comprato solo quando si è vivi. Quando usato durante la fase diurna sarete in grado di parlare per tutta la durata della fase e inoltre avrete la possibilità di cedere 1 vostra abilità non letale ad un giocatore attualmente vivo.' },
+    { id: 'catene',     name: 'Catene',                price: 700, emoji: '⛓️', description: '(Visitblock + Roleblock) + nega ogni protezione ad un giocatore.' },
     { id: 'fuochi',     name: 'Fuochi d\'artificio',   price: 100, emoji: '🎆', description: 'Annuncia la tua presenza in una casa nel canale annunci.' },
     { id: 'tenda',      name: 'Tenda',                 price: 35,  emoji: '⛺', description: 'Trasferisciti nella casa dove ti trovi.' },
 ];
@@ -181,6 +187,20 @@ const econDb = {
             .sort({ balance: -1 })
             .limit(limit)
             .lean();
+    },
+
+    // Impostazioni classifica
+    async isClassificaVisible() {
+        const doc = await EconomySettingsModel.findOne({ id: 'main_economy_settings' }).lean();
+        return doc?.classificaVisible !== false; // Default: true
+    },
+
+    async setClassificaVisible(visible) {
+        return EconomySettingsModel.findOneAndUpdate(
+            { id: 'main_economy_settings' },
+            { $set: { classificaVisible: visible } },
+            { upsert: true, new: true }
+        );
     },
 
     // 🔄 SWAP ECONOMY DATA (per comando !cambio)
@@ -626,8 +646,30 @@ async function handleCompra(message, args) {
 // 🏆 COMANDO !classifica
 // ==========================================
 async function handleClassifica(message) {
+    // Admin può usare !classifica si/no per controllare la visibilità
+    if (isAdmin(message.member)) {
+        const arg = message.content.split(/\s+/)[1]?.toLowerCase();
+        if (arg === 'si' || arg === 'sì') {
+            await econDb.setClassificaVisible(true);
+            return message.reply("✅ Classifica ora **VISIBILE** ai giocatori.");
+        }
+        if (arg === 'no') {
+            await econDb.setClassificaVisible(false);
+            return message.reply("✅ Classifica ora **NASCOSTA** ai giocatori.");
+        }
+        // Se admin senza argomento, mostra la classifica
+    }
+
     const canUse = message.member.roles.cache.hasAny(RUOLI.ALIVE, RUOLI.SPONSOR, RUOLI.DEAD, RUOLI.SPONSOR_DEAD) || isAdmin(message.member);
     if (!canUse) return message.reply("⛔ Non hai i permessi.");
+
+    // Se non è admin, controlla se la classifica è visibile
+    if (!isAdmin(message.member)) {
+        const isVisible = await econDb.isClassificaVisible();
+        if (!isVisible) {
+            return message.reply("❌ La classifica non è attualmente disponibile.");
+        }
+    }
 
     const top = await econDb.getTopBalances(15);
     if (top.length === 0) return message.reply("📊 Nessun profilo economia trovato.");
@@ -1033,10 +1075,14 @@ const shopEffects = {
         );
         if (!targetChannel) return;
 
-        await targetChannel.send({ embeds: [
-            new EmbedBuilder().setColor('#E74C3C').setTitle('✉️ Lettera Anonima')
-                .setDescription(details.content).setFooter({ text: 'Mittente sconosciuto' }).setTimestamp()
-        ]});
+        // Invia la lettera con tag al destinatario
+        await targetChannel.send({
+            content: `📬 <@${details.targetUserId}> Hai ricevuto una lettera!`,
+            embeds: [
+                new EmbedBuilder().setColor('#E74C3C').setTitle('✉️ Lettera Anonima')
+                    .setDescription(details.content).setFooter({ text: 'Mittente sconosciuto' }).setTimestamp()
+            ]
+        });
 
         // Conferma al mittente
         const responseChannel = client.channels.cache.get(details.responseChannelId);
@@ -1071,38 +1117,44 @@ const shopEffects = {
         }
     },
 
-    // 📜 TESTAMENTO: permesso 1 msg in chat diurna
+    // 📜 TESTAMENTO: permesso di scrivere nei canali diurni fino a !notte
     async testamento(client, userId, details) {
-        const channel = client.channels.cache.get(details.channelId);
-        if (!channel) return;
+        const guild = client.guilds.cache.first();
+        if (!guild) return;
 
-        await channel.permissionOverwrites.create(userId, { SendMessages: true, ViewChannel: true });
-        await econDb.addTestamentoChannel(userId, details.channelId);
+        // Canali specifici per R3 (DEAD) e R4 (SPONSOR_DEAD)
+        const DEAD_CHANNELS = ['1460741481420558469', '1460741482876239944'];
+        
+        const member = await guild.members.fetch(userId).catch(() => null);
+        if (!member) return;
+
+        const hasDeadRole = member.roles.cache.has('1460741405722022151'); // DEAD
+        const hasSponsorDeadRole = member.roles.cache.has('1469862321563238502'); // SPONSOR_DEAD
+
+        if (!hasDeadRole && !hasSponsorDeadRole) {
+            const responseChannel = client.channels.cache.get(details.responseChannelId);
+            if (responseChannel) {
+                responseChannel.send(`❌ <@${userId}> Il testamento può essere usato solo da giocatori morti.`).catch(() => {});
+            }
+            return;
+        }
+
+        // Attiva permessi di scrittura nei canali morti
+        for (const channelId of DEAD_CHANNELS) {
+            const channel = guild.channels.cache.get(channelId);
+            if (channel) {
+                await channel.permissionOverwrites.create(userId, { SendMessages: true, ViewChannel: true });
+                await econDb.addTestamentoChannel(userId, channelId);
+            }
+        }
 
         const responseChannel = client.channels.cache.get(details.responseChannelId);
         if (responseChannel) {
-            responseChannel.send(`📜 <@${userId}> Testamento attivato! Puoi inviare **1 messaggio** in ${channel}. Dopo verrà revocato.`).catch(() => {});
+            responseChannel.send(`📜 <@${userId}> Testamento attivato! Puoi scrivere nei canali diurni fino al comando !notte.`).catch(() => {});
         }
-
-        // Listener: dopo 1 messaggio, revoca permesso
-        const filter = m => m.author.id === userId;
-        const collector = channel.createMessageCollector({ filter, max: 1, time: 3600000 });
-
-        collector.on('collect', async () => {
-            await channel.permissionOverwrites.delete(userId).catch(() => {});
-            await econDb.removeTestamentoChannel(userId, details.channelId);
-            channel.send(`📜 Il testamento di <@${userId}> si è esaurito.`).catch(() => {});
-        });
-
-        collector.on('end', async (collected) => {
-            if (collected.size === 0) {
-                await channel.permissionOverwrites.delete(userId).catch(() => {});
-                await econDb.removeTestamentoChannel(userId, details.channelId);
-            }
-        });
     },
 
-    // ⛓️ CATENE: VB + RB su target + partner
+    // ⛓️ CATENE: VB + RB su target + partner + nega protezione
     async catene(client, userId, details) {
         const guild = client.guilds.cache.first();
         if (!guild) return;
@@ -1132,6 +1184,20 @@ const shopEffects = {
             if (partner && !(await db.moderation.isBlockedRB(partner.id))) {
                 await db.moderation.addBlockedRB(partner.id, partner.user.tag);
                 results.push(`🚫 **${partner.user.tag}** (partner) → Roleblock`);
+            }
+        }
+
+        // Aggiungi alla lista di chi non può essere protetto
+        const alreadyUnprotectable = await db.moderation.isUnprotectable(details.targetUserId);
+        if (!alreadyUnprotectable) {
+            await db.moderation.addUnprotectable(details.targetUserId, target.user.tag);
+            results.push(`⛓️ **${target.user.tag}** → Non può essere protetto`);
+        }
+        if (partner) {
+            const partnerUnprotectable = await db.moderation.isUnprotectable(partner.id);
+            if (!partnerUnprotectable) {
+                await db.moderation.addUnprotectable(partner.id, partner.user.tag);
+                results.push(`⛓️ **${partner.user.tag}** (partner) → Non può essere protetto`);
             }
         }
 
