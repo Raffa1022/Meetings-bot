@@ -1,7 +1,3 @@
-{
-type: uploaded file
-fileName: presetSystem.js
-fullContent:
 // ==========================================
 // ⏰ PRESET SYSTEM - Azioni Programmate
 // ADMIN DASHBOARD + TIMER + NOTTE
