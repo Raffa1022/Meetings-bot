@@ -347,7 +347,11 @@ module.exports = async function handleAdminCommand(message, command, args, clien
         if (!targetChannel || targetChannel.parentId !== HOUSING.CATEGORIA_CASE)
             return message.reply("❌ Devi menzionare un canale casa valido.");
 
-        await db.housing.addDestroyedHouse(targetChannel.id);
+        // Rileva la fase corrente dal canale annunci
+        const { detectCurrentPhase } = require('./helpers');
+        const currentPhase = await detectCurrentPhase(message.guild);
+        
+        await db.housing.addDestroyedHouse(targetChannel.id, currentPhase);
 
         const removeRoles = RUOLI_PUBBLICI.map(r =>
             r ? targetChannel.permissionOverwrites.delete(r).catch(() => {}) : Promise.resolve()
