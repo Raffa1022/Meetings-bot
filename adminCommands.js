@@ -11,6 +11,7 @@ const db = require('./db');
 const { movePlayer } = require('./playerMovement');
 const { isAdmin, formatName } = require('./helpers');
 const { resolveNightPhase, resolveDayPhase } = require('./presetSystem');
+const eventBus = require('./eventBus'); // ✅ IMPORT FONDAMENTALE PER SBLOCCARE LA CODA
 
 module.exports = async function handleAdminCommand(message, command, args, client) {
     if (!isAdmin(message.member)) return message.reply("⛔ Non sei admin.");
@@ -104,29 +105,28 @@ module.exports = async function handleAdminCommand(message, command, args, clien
             const numero = args[0];
             if (!numero) return message.reply("❌ Specifica numero notte.");
 
+            // 1. Attiva blocco preset PRIMA di tutto
+            await db.moderation.setPresetPhaseActive(true);
+
+            // 2. Setta modalità Notte
             await Promise.all([
                 db.housing.setMode('NIGHT'),
                 db.housing.applyLimitsForMode('NIGHT'),
-                // 🔥 ATTIVA BLOCCO PRESET (Nessuna abilità finché non si fa !fine preset)
-                db.moderation.setPresetPhaseActive(true)
             ]);
 
-            // 🔥 ESEGUI PRESET NOTTURNI (Salvato nel PresetNightModel)
+            // 3. 🔥 ESEGUI PRESET NOTTURNI (Risolve e manda in coda)
             await resolveNightPhase();
 
-            // Rimuovi permessi testamento dai canali morti
+            // 4. Logica canali morti/testamento
             const DEAD_CHANNELS = ['1460741481420558469', '1460741482876239944'];
             const { econDb } = require('./economySystem');
-            
             const allMembers = await message.guild.members.fetch();
             for (const [, member] of allMembers) {
                 const testamentoChannels = await econDb.getTestamentoChannels(member.id);
                 if (testamentoChannels.length > 0) {
                     for (const channelId of DEAD_CHANNELS) {
                         const channel = message.guild.channels.cache.get(channelId);
-                        if (channel) {
-                            await channel.permissionOverwrites.delete(member.id).catch(() => {});
-                        }
+                        if (channel) await channel.permissionOverwrites.delete(member.id).catch(() => {});
                     }
                     await econDb.clearTestamento(member.id);
                 }
@@ -154,20 +154,15 @@ module.exports = async function handleAdminCommand(message, command, args, clien
                 await Promise.all(ops);
             }
             
-            // 💰 Dai 100 monete
-            const aliveMembers = message.guild.members.cache.filter(m => 
-                !m.user.bot && m.roles.cache.has(RUOLI.ALIVE)
-            );
+            // Collect
+            const aliveMembers = message.guild.members.cache.filter(m => !m.user.bot && m.roles.cache.has(RUOLI.ALIVE));
             const aliveUserIds = Array.from(aliveMembers.keys());
-            
             if (aliveUserIds.length > 0) {
                 await econDb.bulkAddBalance(aliveUserIds, 100);
-                if (annunciChannel) {
-                    await annunciChannel.send(`🪙 <@&${RUOLI.ALIVE}> avete ricevuto il vostro collect giornaliero di **100 monete**!`);
-                }
+                if (annunciChannel) await annunciChannel.send(`🪙 <@&${RUOLI.ALIVE}> avete ricevuto il vostro collect giornaliero di **100 monete**!`);
             }
             
-            message.reply(`✅ **Notte ${numero} avviata.** Preset notturni eseguiti. Abilità bloccate fino a \`!fine preset\`.`);
+            message.reply(`✅ **Notte ${numero} avviata.** Preset notturni elaborati. Abilità bloccate fino a \`!fine preset\`.`);
         } catch (error) {
             console.error('❌ Errore comando !notte:', error);
             return message.reply("❌ Errore durante l'esecuzione del comando.");
@@ -177,29 +172,28 @@ module.exports = async function handleAdminCommand(message, command, args, clien
     // ===================== GIORNO =====================
     else if (command === 'giorno') {
         try {
-            // Se menziona un utente → config giorno
             if (message.mentions.members.size > 0) {
                 const targetUser = message.mentions.members.first();
                 const [base, forced, hidden] = [parseInt(args[1]), parseInt(args[2]), parseInt(args[3])];
                 await db.housing.setDayLimits(targetUser.id, base, forced, hidden);
                 const mode = await db.housing.getMode();
-                if (mode === 'DAY') {
-                    await db.housing.setDayForcedHidden(targetUser.id, forced, hidden);
-                }
+                if (mode === 'DAY') await db.housing.setDayForcedHidden(targetUser.id, forced, hidden);
                 return message.reply("✅ Config Giorno salvata.");
             }
 
             const numero = args[0];
             if (!numero) return message.reply("❌ Specifica giorno.");
 
+            // 1. Attiva blocco preset
+            await db.moderation.setPresetPhaseActive(true);
+
+            // 2. Setta modalità Giorno
             await Promise.all([
                 db.housing.setMode('DAY'),
                 db.housing.applyLimitsForMode('DAY'),
-                // 🔥 ATTIVA BLOCCO PRESET (Nessuna abilità finché non si fa !fine preset)
-                db.moderation.setPresetPhaseActive(true)
             ]);
             
-            // 🔥 ESEGUI PRESET DIURNI (Salvato nel PresetDayModel)
+            // 3. 🔥 ESEGUI PRESET DIURNI
             await resolveDayPhase();
 
             const annunciChannel = message.guild.channels.cache.get(HOUSING.CANALE_ANNUNCI);
@@ -226,51 +220,30 @@ module.exports = async function handleAdminCommand(message, command, args, clien
                         [RUOLI.ALIVE, RUOLI.SPONSOR].forEach(r => {
                             if (r) ops.push(channel.permissionOverwrites.edit(r, { SendMessages: true }).catch(() => {}));
                         });
-                        
                         if (!DEAD_CHANNELS.includes(channel.id)) {
                             [RUOLI.DEAD, RUOLI.SPONSOR_DEAD].forEach(r => {
-                                if (r) ops.push(channel.permissionOverwrites.edit(r, { 
-                                    SendMessages: false, 
-                                    AddReactions: false, 
-                                    CreatePublicThreads: false,
-                                    CreatePrivateThreads: false 
-                                }).catch(() => {}));
+                                if (r) ops.push(channel.permissionOverwrites.edit(r, { SendMessages: false, AddReactions: false, CreatePublicThreads: false, CreatePrivateThreads: false }).catch(() => {}));
                             });
                         }
                     }
-                    
                     if (DEAD_CHANNELS.includes(channel.id)) {
                         [RUOLI.DEAD, RUOLI.SPONSOR_DEAD].forEach(r => {
-                            if (r) ops.push(channel.permissionOverwrites.edit(r, { 
-                                SendMessages: false, 
-                                ViewChannel: true,
-                                AddReactions: false,
-                                CreatePublicThreads: false,
-                                CreatePrivateThreads: false 
-                            }).catch(() => {}));
+                            if (r) ops.push(channel.permissionOverwrites.edit(r, { SendMessages: false, ViewChannel: true, AddReactions: false, CreatePublicThreads: false, CreatePrivateThreads: false }).catch(() => {}));
                         });
                     }
-                    
-                    ops.push(
-                        channel.send(`☀️ **GIORNO ${numero}**`).then(msg => msg.pin()).catch(() => {})
-                    );
+                    ops.push(channel.send(`☀️ **GIORNO ${numero}**`).then(msg => msg.pin()).catch(() => {}));
                 }
                 await Promise.all(ops);
             }
             
-            const aliveMembers = message.guild.members.cache.filter(m => 
-                !m.user.bot && m.roles.cache.has(RUOLI.ALIVE)
-            );
+            const aliveMembers = message.guild.members.cache.filter(m => !m.user.bot && m.roles.cache.has(RUOLI.ALIVE));
             const aliveUserIds = Array.from(aliveMembers.keys());
-            
             if (aliveUserIds.length > 0) {
                 await econDb.bulkAddBalance(aliveUserIds, 100);
-                if (annunciChannel) {
-                    await annunciChannel.send(`🪙 <@&${RUOLI.ALIVE}> avete ricevuto il vostro collect giornaliero di **100 monete**!`);
-                }
+                if (annunciChannel) await annunciChannel.send(`🪙 <@&${RUOLI.ALIVE}> avete ricevuto il vostro collect giornaliero di **100 monete**!`);
             }
             
-            message.reply(`✅ **Giorno ${numero} avviato.** Preset diurni eseguiti. Abilità bloccate fino a \`!fine preset\`.`);
+            message.reply(`✅ **Giorno ${numero} avviato.** Preset diurni elaborati. Abilità bloccate fino a \`!fine preset\`.`);
         } catch (error) {
             console.error('❌ Errore comando !giorno:', error);
             return message.reply("❌ Errore durante l'esecuzione del comando.");
@@ -279,67 +252,62 @@ module.exports = async function handleAdminCommand(message, command, args, clien
 
     // ===================== FINE PRESET =====================
     else if (command === 'fine' && args[0]?.toLowerCase() === 'preset') {
-        // 1. Disattiva il blocco
+        // 1. Sblocca il flag nel DB
         await db.moderation.setPresetPhaseActive(false);
 
-        // 2. Annuncio ufficiale nel canale annunci
+        // 2. 🔥 TRIGGERA LA CODA per processare le abilità rimaste in sospeso
+        eventBus.emit('queue:process');
+
+        // 3. Annuncio
         const annunciChannel = message.guild.channels.cache.get(HOUSING.CANALE_ANNUNCI);
         if (annunciChannel) {
             await annunciChannel.send(
-                `<@&${RUOLI.ALIVE}> <@&${RUOLI.SPONSOR}>\n✅ **Tutti i preset sono stati effettuati!**\nDa ora in poi potrete nuovamente utilizzare il comando \`!abilità\`.`
+                `<@&${RUOLI.ALIVE}> <@&${RUOLI.SPONSOR}>\n✅ **I PRESET SONO STATI TUTTI EFFETTUATI!**\nDa ora in poi potrete nuovamente utilizzare il comando \`!abilità\`.`
             );
         }
-        
-        // 3. Risposta conferma admin
-        message.reply("✅ **Fase Preset Terminata.** Abilità sbloccate e annuncio inviato.");
-        
-        // 4. Trigger coda process per sbloccare le abilità in attesa
-        const eventBus = require('./eventBus');
-        eventBus.emit('queue:process');
+        message.reply("✅ **Fase Preset Terminata.** Abilità sbloccate e coda processata.");
     }
 
-    // ===================== PRESET @UTENTE (ADMIN VIEW) =====================
+    // ===================== PRESET @UTENTE (FIXED) =====================
     else if (command === 'preset' && message.mentions.members.size > 0) {
         const targetUser = message.mentions.members.first();
         
-        // Helper locale per etichette
-        const getLabel = (cat) => {
-            const map = { 'KNOCK': 'Bussa', 'SHOP': 'Shop', 'PROTEZIONE': 'Protezione', 'LETALE': 'Letale', 'INFORMAZIONE': 'Info', 'COMUNICAZIONE': 'Comunicazione', 'POTENZIAMENTO': 'Potenziamento', 'TRASPORTO': 'Trasporto', 'CURA': 'Cura', 'VISITBLOCK': 'Visitblock', 'ROLEBLOCK': 'Roleblock', 'MANIPOLAZIONE': 'Manipolazione', 'ALTRO': 'Altro' };
-            return map[cat] || cat;
+        // Helper per visualizzare i dettagli corretti
+        const formatDetails = (p) => {
+            if (p.type === 'KNOCK') {
+                const ch = message.guild.channels.cache.get(p.details.targetChannelId);
+                const chName = ch ? ch.name : `ID: ${p.details.targetChannelId}`;
+                const mode = p.details.mode === 'mode_forced' ? '🧨' : (p.details.mode === 'mode_hidden' ? '🕵️' : '👋');
+                return `→ 🏠 ${formatName(chName)} ${mode}`;
+            }
+            if (p.type === 'SHOP') {
+                return `→ 🛒 ${p.details.itemName}`;
+            }
+            if (p.type === 'ABILITY') {
+                return `→ ✨ ${p.details.text || "..."}`;
+            }
+            return `→ ${JSON.stringify(p.details)}`;
         };
 
-        // Recupera TUTTI i tipi di preset dal DB
         const nightPresets = await db.preset.getUserNightPresets(targetUser.id);
         const dayPresets = await db.preset.getUserDayPresets(targetUser.id);
         const scheduledPresets = await db.preset.getUserScheduledPresets(targetUser.id);
 
         let desc = "";
-
         if (nightPresets.length > 0) {
-            desc += "\n🌙 **Preset Notturni (si attivano a fine !notte):**\n";
-            nightPresets.forEach(p => {
-                let det = p.type === 'ABILITY' ? p.details.text : (p.type === 'KNOCK' ? `Bussa a <#${p.details.targetChannelId}>` : (p.type === 'SHOP' ? p.details.itemName : p.type));
-                desc += `- [${getLabel(p.category)}] ${det}\n`;
-            });
+            desc += "\n🌙 **Notturni:**\n";
+            nightPresets.forEach(p => desc += `- ${formatDetails(p)}\n`);
         }
-        
         if (dayPresets.length > 0) {
-            desc += "\n☀️ **Preset Diurni (si attivano a fine !giorno):**\n";
-            dayPresets.forEach(p => {
-                let det = p.type === 'ABILITY' ? p.details.text : (p.type === 'KNOCK' ? `Bussa a <#${p.details.targetChannelId}>` : (p.type === 'SHOP' ? p.details.itemName : p.type));
-                desc += `- [${getLabel(p.category)}] ${det}\n`;
-            });
+            desc += "\n☀️ **Diurni:**\n";
+            dayPresets.forEach(p => desc += `- ${formatDetails(p)}\n`);
         }
-        
         if (scheduledPresets.length > 0) {
-            desc += "\n⏰ **Preset Timer (orario specifico):**\n";
-            scheduledPresets.forEach(p => {
-                let det = p.type === 'ABILITY' ? p.details.text : (p.type === 'KNOCK' ? `Bussa a <#${p.details.targetChannelId}>` : (p.type === 'SHOP' ? p.details.itemName : p.type));
-                desc += `- [${p.triggerTime}] [${getLabel(p.category)}] ${det}\n`;
-            });
+            desc += "\n⏰ **Timer:**\n";
+            scheduledPresets.forEach(p => desc += `- [${p.triggerTime}] ${formatDetails(p)}\n`);
         }
 
-        if (desc === "") desc = "Nessun preset attivo per questo utente.";
+        if (desc === "") desc = "Nessun preset attivo.";
 
         const embed = new EmbedBuilder()
             .setTitle(`📋 Preset di ${targetUser.displayName}`)
@@ -695,6 +663,7 @@ module.exports = async function handleAdminCommand(message, command, args, clien
     else if (command === 'cancella') {
         const subCommand = args[0]?.toLowerCase();
 
+        // !cancella knock @Utente
         if (subCommand === 'knock' && message.mentions.members.size > 0) {
             const targetUser = message.mentions.members.first();
             await Promise.all([
@@ -703,6 +672,7 @@ module.exports = async function handleAdminCommand(message, command, args, clien
             ]);
             message.reply(`✅ Knock pendenti e attivi rimossi per ${targetUser}.`);
         }
+        // !cancella knock tutti
         else if (subCommand === 'knock' && args[1]?.toLowerCase() === 'tutti') {
             await Promise.all([
                 db.housing.clearPendingKnocks(),
@@ -710,10 +680,12 @@ module.exports = async function handleAdminCommand(message, command, args, clien
             ]);
             message.reply("✅ **Tutti i knock pendenti e attivi sono stati rimossi!**");
         }
+        // !cancella casa
         else if (subCommand === 'casa') {
             await db.housing.clearAllHomes();
             message.reply("✅ **Tutte le proprietà delle case sono state rimosse!**");
         }
+        // Errore sintassi
         else {
             message.reply("❌ Uso:\n`!cancella knock @Utente` - Rimuove knock per utente specifico\n`!cancella knock tutti` - Rimuove tutti i knock\n`!cancella casa` - Rimuove tutte le proprietà");
         }
@@ -757,11 +729,12 @@ module.exports = async function handleAdminCommand(message, command, args, clien
         let alreadyHome = 0;
         let noHomeCount = 0;
         const noHomeList = [];
-        const processedNoHome = new Set();
+        const processedNoHome = new Set(); // Evita doppio processamento partner
 
         for (const [, member] of playersToProcess) {
             const homeId = allHomes[member.id];
             
+            // Nessuna casa o casa distrutta: aggiungi a lista morti (+ partner)
             if (!homeId || destroyed.includes(homeId)) {
                 if (processedNoHome.has(member.id)) continue;
 
@@ -773,6 +746,7 @@ module.exports = async function handleAdminCommand(message, command, args, clien
                 noHomeCount++;
                 processedNoHome.add(member.id);
 
+                // Marca anche il partner
                 let partnerId = null;
                 if (member.roles.cache.has(RUOLI.ALIVE)) {
                     partnerId = await db.meeting.findSponsor(member.id);
@@ -797,20 +771,24 @@ module.exports = async function handleAdminCommand(message, command, args, clien
             const homeChannel = message.guild.channels.cache.get(homeId);
             if (!homeChannel) continue;
 
+            // Trova dove si trova fisicamente
             const currentHouse = message.guild.channels.cache.find(c =>
                 c.parentId === HOUSING.CATEGORIA_CASE &&
                 c.type === ChannelType.GuildText &&
                 c.permissionOverwrites.cache.has(member.id)
             );
 
+            // Già a casa: salta
             if (currentHouse && currentHouse.id === homeId) {
                 alreadyHome++;
                 continue;
             }
 
+            // Sposta a casa
             if (currentHouse) {
                 await movePlayer(member, currentHouse, homeChannel, `🏠 ${member} è ritornato.`, false);
             } else {
+                // Non era in nessuna casa, aggiungi direttamente
                 await movePlayer(member, null, homeChannel, `🏠 ${member} è ritornato.`, false);
             }
             returnedCount++;
@@ -824,6 +802,7 @@ module.exports = async function handleAdminCommand(message, command, args, clien
             response += `\n☠️ Senza casa (aggiunti a lista morti): **${noHomeCount}**\n` +
                        noHomeList.map(m => `- ${m.displayName}`).join('\n');
 
+            // Notifica nel canale log admin
             const logChannel = message.guild.channels.cache.get(QUEUE.CANALE_LOG);
             if (logChannel) {
                 const logMsg = noHomeList.map(m => `⚠️ <@${m.id}> è rimasto senza casa.`).join('\n');
