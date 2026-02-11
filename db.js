@@ -3,7 +3,10 @@
 // NESSUN dbCache. NESSUN salvataggio completo.
 // Ogni funzione fa UNA query chirurgica.
 // ==========================================
-const { HousingModel, MeetingModel, AbilityModel, QueueModel, ModerationModel } = require('./database');
+const { 
+    HousingModel, MeetingModel, AbilityModel, QueueModel, ModerationModel,
+    PresetNightModel, PresetDayModel, PresetScheduledModel 
+} = require('./database');
 
 const H_ID = { id: 'main_housing' };
 const M_ID = { id: 'main_meeting' };
@@ -432,7 +435,6 @@ const meeting = {
 
     // --- SCRITTURE ATOMICHE ---
     async toggleAutoRole() {
-        // Leggi stato attuale (lean), poi scrivi l'opposto atomicamente
         const current = await meeting.getAutoRoleState();
         const newState = !current;
         await MeetingModel.updateOne(M_ID, { $set: { isAutoRoleActive: newState } });
@@ -463,7 +465,6 @@ const meeting = {
         });
     },
 
-    // Tabella: crea nuova tabella
     async createTable(limit, messageId) {
         const slots = Array(limit).fill(null).map(() => ({ player: null, sponsor: null }));
         return MeetingModel.updateOne(M_ID, {
@@ -471,31 +472,22 @@ const meeting = {
         });
     },
 
-    // Tabella: setta un utente in uno slot (con pulizia slot precedenti)
     async setSlot(slotIndex, type, userId) {
-        // 1. Leggi tabella (lean)
         const table = await meeting.getTable();
         if (table.limit === 0) return null;
 
-        // 2. Calcola modifiche
         const setOps = {};
-        // Pulisci l'utente da tutti gli slot
         table.slots.forEach((slot, i) => {
             if (slot.player === userId) setOps[`table.slots.${i}.player`] = null;
             if (slot.sponsor === userId) setOps[`table.slots.${i}.sponsor`] = null;
         });
-        // Se lo slot target è già occupato, abort
         if (table.slots[slotIndex]?.[type]) return 'OCCUPIED';
-        // Setta nello slot target
         setOps[`table.slots.${slotIndex}.${type}`] = userId;
 
-        // 3. Scrivi tutto in UNA operazione atomica
         await MeetingModel.updateOne(M_ID, { $set: setOps });
-        // Ritorna tabella aggiornata per il rendering
         return meeting.getTable();
     },
 
-    // Tabella: rimuovi utente
     async removeFromSlots(userId) {
         const table = await meeting.getTable();
         if (table.limit === 0) return null;
@@ -511,7 +503,6 @@ const meeting = {
         return meeting.getTable();
     },
 
-    // Assegna: salva gioco e resetta tabella
     async updateTableMessageId(messageId) {
         return MeetingModel.updateOne(M_ID, { $set: { 'table.messageId': messageId } });
     },
@@ -525,7 +516,6 @@ const meeting = {
         });
     },
 
-    // Riapri tabella da activeGameSlots (per nuovi sponsor)
     async reopenTableFromGame(messageId) {
         const doc = await MeetingModel.findOne(M_ID, { activeGameSlots: 1 }).lean();
         const slots = doc?.activeGameSlots || [];
@@ -535,7 +525,6 @@ const meeting = {
         return table;
     },
 
-    // Swap dati meeting tra 2 player (ATOMICO)
     async swapMeetingData(p1Id, p2Id) {
         const doc = await MeetingModel.findOne(M_ID, {
             meetingCounts: 1, letturaCounts: 1, activeGameSlots: 1
@@ -555,7 +544,6 @@ const meeting = {
             else unsetOps[`${key}.${p2Id}`] = '';
         });
 
-        // Swap player/sponsor in activeGameSlots
         if (doc.activeGameSlots) {
             doc.activeGameSlots.forEach((slot, i) => {
                 let newPlayer = slot.player;
@@ -603,24 +591,15 @@ const ability = {
 const moderation = {
     // --- VB (Visitblock) ---
     async isBlockedVB(userId) {
-        const doc = await ModerationModel.findOne(
-            { ...MOD_ID, 'blockedVB.userId': userId }, { _id: 1 }
-        ).lean();
+        const doc = await ModerationModel.findOne({ ...MOD_ID, 'blockedVB.userId': userId }, { _id: 1 }).lean();
         return !!doc;
     },
-
     async addBlockedVB(userId, userTag) {
-        return ModerationModel.updateOne(MOD_ID, {
-            $push: { blockedVB: { userId, userTag, timestamp: new Date() } }
-        });
+        return ModerationModel.updateOne(MOD_ID, { $push: { blockedVB: { userId, userTag, timestamp: new Date() } } });
     },
-
     async removeBlockedVB(userId) {
-        return ModerationModel.updateOne(MOD_ID, {
-            $pull: { blockedVB: { userId } }
-        });
+        return ModerationModel.updateOne(MOD_ID, { $pull: { blockedVB: { userId } } });
     },
-
     async getBlockedVB() {
         const doc = await ModerationModel.findOne(MOD_ID, { blockedVB: 1 }).lean();
         return doc?.blockedVB || [];
@@ -628,24 +607,15 @@ const moderation = {
 
     // --- RB (Roleblock) ---
     async isBlockedRB(userId) {
-        const doc = await ModerationModel.findOne(
-            { ...MOD_ID, 'blockedRB.userId': userId }, { _id: 1 }
-        ).lean();
+        const doc = await ModerationModel.findOne({ ...MOD_ID, 'blockedRB.userId': userId }, { _id: 1 }).lean();
         return !!doc;
     },
-
     async addBlockedRB(userId, userTag) {
-        return ModerationModel.updateOne(MOD_ID, {
-            $push: { blockedRB: { userId, userTag, timestamp: new Date() } }
-        });
+        return ModerationModel.updateOne(MOD_ID, { $push: { blockedRB: { userId, userTag, timestamp: new Date() } } });
     },
-
     async removeBlockedRB(userId) {
-        return ModerationModel.updateOne(MOD_ID, {
-            $pull: { blockedRB: { userId } }
-        });
+        return ModerationModel.updateOne(MOD_ID, { $pull: { blockedRB: { userId } } });
     },
-
     async getBlockedRB() {
         const doc = await ModerationModel.findOne(MOD_ID, { blockedRB: 1 }).lean();
         return doc?.blockedRB || [];
@@ -653,82 +623,122 @@ const moderation = {
 
     // --- Protezione ---
     async isProtected(userId) {
-        const doc = await ModerationModel.findOne(
-            { ...MOD_ID, 'protected.userId': userId }, { _id: 1 }
-        ).lean();
+        const doc = await ModerationModel.findOne({ ...MOD_ID, 'protected.userId': userId }, { _id: 1 }).lean();
         return !!doc;
     },
-
     async addProtected(userId, userTag) {
-        return ModerationModel.updateOne(MOD_ID, {
-            $push: { protected: { userId, userTag, timestamp: new Date() } }
-        });
+        return ModerationModel.updateOne(MOD_ID, { $push: { protected: { userId, userTag, timestamp: new Date() } } });
     },
-
     async removeProtected(userId) {
-        return ModerationModel.updateOne(MOD_ID, {
-            $pull: { protected: { userId } }
-        });
+        return ModerationModel.updateOne(MOD_ID, { $pull: { protected: { userId } } });
     },
-
     async getProtected() {
         const doc = await ModerationModel.findOne(MOD_ID, { protected: 1 }).lean();
         return doc?.protected || [];
     },
 
-    // --- Marked for Death (Lista Morti) ---
+    // --- Marked for Death ---
     async isMarkedForDeath(userId) {
-        const doc = await ModerationModel.findOne(
-            { ...MOD_ID, 'markedForDeath.userId': userId }, { _id: 1 }
-        ).lean();
+        const doc = await ModerationModel.findOne({ ...MOD_ID, 'markedForDeath.userId': userId }, { _id: 1 }).lean();
         return !!doc;
     },
-
     async addMarkedForDeath(userId, userTag) {
-        return ModerationModel.updateOne(MOD_ID, {
-            $push: { markedForDeath: { userId, userTag, timestamp: new Date() } }
-        });
+        return ModerationModel.updateOne(MOD_ID, { $push: { markedForDeath: { userId, userTag, timestamp: new Date() } } });
     },
-
     async removeMarkedForDeath(userId) {
-        return ModerationModel.updateOne(MOD_ID, {
-            $pull: { markedForDeath: { userId } }
-        });
+        return ModerationModel.updateOne(MOD_ID, { $pull: { markedForDeath: { userId } } });
     },
-
     async getMarkedForDeath() {
         const doc = await ModerationModel.findOne(MOD_ID, { markedForDeath: 1 }).lean();
         return doc?.markedForDeath || [];
     },
-
     async clearMarkedForDeath() {
         return ModerationModel.updateOne(MOD_ID, { $set: { markedForDeath: [] } });
     },
 
-    // --- Unprotectable (Non Proteggibili - Catene) ---
+    // --- Unprotectable ---
     async isUnprotectable(userId) {
-        const doc = await ModerationModel.findOne(
-            { ...MOD_ID, 'unprotectable.userId': userId }, { _id: 1 }
-        ).lean();
+        const doc = await ModerationModel.findOne({ ...MOD_ID, 'unprotectable.userId': userId }, { _id: 1 }).lean();
         return !!doc;
     },
-
     async addUnprotectable(userId, userTag) {
-        return ModerationModel.updateOne(MOD_ID, {
-            $push: { unprotectable: { userId, userTag, timestamp: new Date() } }
-        });
+        return ModerationModel.updateOne(MOD_ID, { $push: { unprotectable: { userId, userTag, timestamp: new Date() } } });
     },
-
     async removeUnprotectable(userId) {
-        return ModerationModel.updateOne(MOD_ID, {
-            $pull: { unprotectable: { userId } }
-        });
+        return ModerationModel.updateOne(MOD_ID, { $pull: { unprotectable: { userId } } });
     },
-
     async getUnprotectable() {
         const doc = await ModerationModel.findOne(MOD_ID, { unprotectable: 1 }).lean();
         return doc?.unprotectable || [];
     },
+
+    // --- 🔥 FASE PRESET (NUOVO) ---
+    async setPresetPhaseActive(active) {
+        return ModerationModel.updateOne(MOD_ID, { $set: { presetPhaseActive: active } });
+    },
+    async isPresetPhaseActive() {
+        const doc = await ModerationModel.findOne(MOD_ID, { presetPhaseActive: 1 }).lean();
+        return doc?.presetPhaseActive || false;
+    },
 };
 
-module.exports = { housing, queue, meeting, ability, moderation };
+// ==========================================
+// 📋 PRESET (PER PRESET SYSTEM)
+// ==========================================
+const preset = {
+    // --- NIGHT ---
+    async addNightPreset(userId, userName, type, category, details) {
+        return PresetNightModel.create({ userId, userName, type, category, details, timestamp: new Date() });
+    },
+    async getAllNightPresets() {
+        return PresetNightModel.find({}).sort({ timestamp: 1 }).lean();
+    },
+    async getUserNightPresets(userId) {
+        return PresetNightModel.find({ userId }).sort({ timestamp: 1 }).lean();
+    },
+    async removeNightPreset(id) {
+        return PresetNightModel.findByIdAndDelete(id);
+    },
+    async clearAllNightPresets() {
+        return PresetNightModel.deleteMany({});
+    },
+
+    // --- 🔥 DAY (NUOVO) ---
+    async addDayPreset(userId, userName, type, category, details) {
+        return PresetDayModel.create({ userId, userName, type, category, details, timestamp: new Date() });
+    },
+    async getAllDayPresets() {
+        return PresetDayModel.find({}).sort({ timestamp: 1 }).lean();
+    },
+    async getUserDayPresets(userId) {
+        return PresetDayModel.find({ userId }).sort({ timestamp: 1 }).lean();
+    },
+    async removeDayPreset(id) {
+        return PresetDayModel.findByIdAndDelete(id);
+    },
+    async clearAllDayPresets() {
+        return PresetDayModel.deleteMany({});
+    },
+
+    // --- SCHEDULED ---
+    async addScheduledPreset(userId, userName, type, category, details, triggerTime) {
+        return PresetScheduledModel.create({ userId, userName, type, category, details, timestamp: new Date(), triggerTime });
+    },
+    async getAllScheduledPresets() {
+        return PresetScheduledModel.find({}).sort({ triggerTime: 1 }).lean();
+    },
+    async getUserScheduledPresets(userId) {
+        return PresetScheduledModel.find({ userId }).sort({ triggerTime: 1 }).lean();
+    },
+    async removeScheduledPreset(id) {
+        return PresetScheduledModel.findByIdAndDelete(id);
+    },
+    async clearScheduledPresets(triggerTime) {
+        return PresetScheduledModel.deleteMany({ triggerTime });
+    },
+    async getScheduledPresetsAtTime(triggerTime) {
+        return PresetScheduledModel.find({ triggerTime }).sort({ timestamp: 1 }).lean();
+    },
+};
+
+module.exports = { housing, queue, meeting, ability, moderation, preset };
