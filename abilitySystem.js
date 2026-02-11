@@ -20,6 +20,12 @@ module.exports = function initAbilitySystem(client) {
         if (!message.member.roles.cache.has(RUOLI.ABILITA))
             return message.reply("⛔ Non possiedi l'abilità necessaria.");
 
+        // 🔥 CHECK BLOCCO FASE PRESET
+        const isPresetActive = await db.moderation.isPresetPhaseActive();
+        if (isPresetActive) {
+            return message.reply("⏳ **Ci sono dei preset in corso.** Attendi l'annuncio `!fine preset` per usare le abilità.");
+        }
+
         // Check Roleblock
         const isRB = await db.moderation.isBlockedRB(message.author.id);
         if (isRB) return message.reply("🚫 Sei in **Roleblock**! Non puoi usare !abilità.");
@@ -40,6 +46,12 @@ module.exports = function initAbilitySystem(client) {
         if (interaction.isButton() && interaction.customId === 'btn_open_ability') {
             if (!interaction.member.roles.cache.has(RUOLI.ABILITA))
                 return interaction.reply({ content: "⛔ Non hai il ruolo.", ephemeral: true });
+
+            // 🔥 CHECK BLOCCO FASE PRESET ANCHE SUL BOTTONE
+            const isPresetActive = await db.moderation.isPresetPhaseActive();
+            if (isPresetActive) {
+                return interaction.reply({ content: "⏳ **Preset in corso.** Attendi l'annuncio `!fine preset`.", ephemeral: true });
+            }
 
             const isRBBtn = await db.moderation.isBlockedRB(interaction.user.id);
             if (isRBBtn) return interaction.reply({ content: "🚫 Sei in **Roleblock**!", ephemeral: true });
@@ -83,4 +95,3 @@ module.exports = function initAbilitySystem(client) {
         }
     });
 };
-
