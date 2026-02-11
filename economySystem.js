@@ -998,8 +998,6 @@ const shopEffects = {
             if (batch1000.length < 1000) break;
         }
 
-        // NON inviare nessun messaggio nella casa — i visitatori successivi non devono sapere nulla
-        // Conferma solo nella chat privata dell'utente
         try {
             const guild = client.guilds.cache.first();
             if (guild) {
@@ -1031,7 +1029,6 @@ const shopEffects = {
         );
         if (!targetChannel) return;
 
-        // Invia la lettera con tag al destinatario
         await targetChannel.send({
             content: `📬 <@${details.targetUserId}> Hai ricevuto una lettera!`,
             embeds: [
@@ -1040,7 +1037,6 @@ const shopEffects = {
             ]
         });
 
-        // Conferma al mittente
         const responseChannel = client.channels.cache.get(details.responseChannelId);
         if (responseChannel) responseChannel.send(`✅ <@${userId}> La tua lettera è stata consegnata!`).catch(() => {});
     },
@@ -1054,7 +1050,6 @@ const shopEffects = {
         const isDay = mode === 'DAY';
         await db.housing.addExtraVisit(userId, 'base', 1, isDay);
 
-        // Sponsor
         const member = await guild.members.fetch(userId).catch(() => null);
         if (member) {
             const sponsor = await findPartner(member, guild);
@@ -1078,14 +1073,13 @@ const shopEffects = {
         const guild = client.guilds.cache.first();
         if (!guild) return;
 
-        // Canali specifici per R3 (DEAD) e R4 (SPONSOR_DEAD)
         const DEAD_CHANNELS = ['1460741481420558469', '1460741482876239944'];
         
         const member = await guild.members.fetch(userId).catch(() => null);
         if (!member) return;
 
-        const hasDeadRole = member.roles.cache.has('1460741405722022151'); // DEAD (R3)
-        const hasSponsorDeadRole = member.roles.cache.has('1469862321563238502'); // SPONSOR_DEAD (R4)
+        const hasDeadRole = member.roles.cache.has('1460741405722022151');
+        const hasSponsorDeadRole = member.roles.cache.has('1469862321563238502');
 
         if (!hasDeadRole && !hasSponsorDeadRole) {
             const responseChannel = client.channels.cache.get(details.responseChannelId);
@@ -1095,7 +1089,6 @@ const shopEffects = {
             return;
         }
 
-        // Controlla se siamo in modalità GIORNO
         const mode = await db.housing.getMode();
         if (mode !== 'DAY') {
             const responseChannel = client.channels.cache.get(details.responseChannelId);
@@ -1105,35 +1098,24 @@ const shopEffects = {
             return;
         }
 
-        // Trova il partner (sponsor dead)
         const partner = await findPartner(member, guild);
 
-        // Attiva permessi di scrittura nei canali morti per il giocatore
         for (const channelId of DEAD_CHANNELS) {
             const channel = guild.channels.cache.get(channelId);
             if (channel) {
                 await channel.permissionOverwrites.create(userId, { 
-                    SendMessages: true, 
-                    ViewChannel: true,
-                    AddReactions: true,
-                    CreatePublicThreads: false,
-                    CreatePrivateThreads: false 
+                    SendMessages: true, ViewChannel: true, AddReactions: true, CreatePublicThreads: false, CreatePrivateThreads: false 
                 });
                 await econDb.addTestamentoChannel(userId, channelId);
             }
         }
 
-        // Attiva permessi di scrittura anche per il partner (sponsor dead)
         if (partner) {
             for (const channelId of DEAD_CHANNELS) {
                 const channel = guild.channels.cache.get(channelId);
                 if (channel) {
                     await channel.permissionOverwrites.create(partner.id, { 
-                        SendMessages: true, 
-                        ViewChannel: true,
-                        AddReactions: true,
-                        CreatePublicThreads: false,
-                        CreatePrivateThreads: false 
+                        SendMessages: true, ViewChannel: true, AddReactions: true, CreatePublicThreads: false, CreatePrivateThreads: false 
                     });
                     await econDb.addTestamentoChannel(partner.id, channelId);
                 }
@@ -1143,14 +1125,12 @@ const shopEffects = {
         const responseChannel = client.channels.cache.get(details.responseChannelId);
         if (responseChannel) {
             let response = `📜 <@${userId}> Testamento attivato! Puoi scrivere nei canali diurni fino al comando !notte.`;
-            if (partner) {
-                response += `\n📜 Anche <@${partner.id}> (partner) ha ottenuto l'accesso ai canali diurni.`;
-            }
+            if (partner) response += `\n📜 Anche <@${partner.id}> (partner) ha ottenuto l'accesso.`;
             responseChannel.send(response).catch(() => {});
         }
     },
 
-    // ⛓️ CATENE: VB + RB su target + partner + nega protezione
+    // ⛓️ CATENE: VB + RB su target + partner
     async catene(client, userId, details) {
         const guild = client.guilds.cache.first();
         if (!guild) return;
@@ -1183,7 +1163,6 @@ const shopEffects = {
             }
         }
 
-        // Aggiungi alla lista di chi non può essere protetto
         const alreadyUnprotectable = await db.moderation.isUnprotectable(details.targetUserId);
         if (!alreadyUnprotectable) {
             await db.moderation.addUnprotectable(details.targetUserId, target.user.tag);
@@ -1206,40 +1185,85 @@ const shopEffects = {
         }
     },
 
-    // 🎆 FUOCHI: annuncio
+    // 🎆 FUOCHI: annuncio (CON FIX PRESET)
     async fuochi(client, userId, details) {
         const guild = client.guilds.cache.first();
         if (!guild) return;
+
+        let channel = client.channels.cache.get(details.channelId);
+
+        // SE MANCA IL CANALE (Preset), TROVALO ORA
+        if (!channel) {
+            const member = await guild.members.fetch(userId).catch(() => null);
+            if (member) {
+                // Cerca in quale casa si trova il giocatore
+                channel = guild.channels.cache.find(c =>
+                    c.parentId === HOUSING.CATEGORIA_CASE &&
+                    c.type === ChannelType.GuildText &&
+                    c.permissionOverwrites.cache.has(userId)
+                );
+            }
+        }
+
+        if (!channel) {
+            const responseChannel = client.channels.cache.get(details.responseChannelId);
+            if (responseChannel) responseChannel.send(`❌ <@${userId}> Impossibile lanciare i fuochi: non sei in nessuna casa.`).catch(() => {});
+            return;
+        }
 
         const annunciChannel = guild.channels.cache.get(HOUSING.CANALE_ANNUNCI);
         if (!annunciChannel) return;
 
         await annunciChannel.send({ embeds: [
             new EmbedBuilder().setColor('#FF6B6B').setTitle('🎆 FUOCHI D\'ARTIFICIO! 🎆')
-                .setDescription(`**Attenzione!** <@${userId}> è nella casa **${details.houseName}**!`)
+                .setDescription(`**Attenzione!** <@${userId}> è nella casa **${formatName(channel.name)}**!`)
                 .setImage('https://media.giphy.com/media/26tOZ42Mg6pbTUPHW/giphy.gif')
                 .setTimestamp()
         ]});
 
         const responseChannel = client.channels.cache.get(details.responseChannelId);
-        if (responseChannel) responseChannel.send(`🎆 <@${userId}> Fuochi lanciati! Annuncio pubblicato.`).catch(() => {});
+        if (responseChannel) responseChannel.send(`🎆 <@${userId}> Fuochi lanciati in **${channel.name}**! Annuncio pubblicato.`).catch(() => {});
     },
 
-    // ⛺ TENDA: trasferimento
+    // ⛺ TENDA: trasferimento (CON FIX PRESET)
     async tenda(client, userId, details) {
         const guild = client.guilds.cache.first();
         if (!guild) return;
 
-        const newHomeChannel = guild.channels.cache.get(details.targetChannelId);
-        if (!newHomeChannel) return;
+        let newHomeChannel = client.channels.cache.get(details.targetChannelId);
+
+        // SE MANCA IL CANALE (Preset), TROVA DOVE SI TROVA IL GIOCATORE ORA
+        if (!newHomeChannel) {
+            const member = await guild.members.fetch(userId).catch(() => null);
+            if (member) {
+                // La tenda si usa "dove sei ora"
+                newHomeChannel = guild.channels.cache.find(c =>
+                    c.parentId === HOUSING.CATEGORIA_CASE &&
+                    c.type === ChannelType.GuildText &&
+                    c.permissionOverwrites.cache.has(userId)
+                );
+            }
+        }
+
+        if (!newHomeChannel) {
+            const responseChannel = client.channels.cache.get(details.responseChannelId);
+            if (responseChannel) responseChannel.send(`❌ <@${userId}> Impossibile montare la tenda: non sei in nessuna casa.`).catch(() => {});
+            return;
+        }
 
         const member = await guild.members.fetch(userId).catch(() => null);
         if (!member) return;
 
         const ownerId = await db.housing.findOwner(newHomeChannel.id);
 
+        if (ownerId === userId) {
+            const responseChannel = client.channels.cache.get(details.responseChannelId);
+            if (responseChannel) responseChannel.send(`❌ <@${userId}> Sei già a casa tua!`).catch(() => {});
+            return;
+        }
+
+        // Se non c'è proprietario, trasferisci subito
         if (!ownerId) {
-            // Casa senza proprietario → trasferimento diretto
             const sponsors = await getSponsorsToMove(member, guild);
             await cleanOldHome(userId, guild);
             for (const s of sponsors) await cleanOldHome(s.id, guild);
@@ -1251,7 +1275,8 @@ const shopEffects = {
             const pinnedMsg = await newHomeChannel.send(`🔑 **${member}**, questa è la tua dimora privata.`);
             await pinnedMsg.pin();
 
-            newHomeChannel.send("⛺ Tenda montata! Trasferimento completato.").catch(() => {});
+            const responseChannel = client.channels.cache.get(details.responseChannelId);
+            if (responseChannel) responseChannel.send(`⛺ <@${userId}> Tenda montata! Trasferimento in **${newHomeChannel.name}** completato.`).catch(() => {});
             return;
         }
 
@@ -1271,6 +1296,7 @@ const shopEffects = {
             components: [row]
         });
 
+        // NOTA: Se usato via preset, il collector funziona lo stesso sul messaggio inviato
         const collector = requestMsg.createMessageComponentCollector({
             filter: i => i.user.id === owner.id, max: 1, time: 300000
         });
