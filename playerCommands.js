@@ -1,7 +1,3 @@
-{
-type: uploaded file
-fileName: playerCommands.js
-fullContent:
 // ==========================================
 // 👤 COMANDI GIOCATORE HOUSING
 // bussa, torna, trasferimento, chi, rimaste, cambio, rimuovi, preset
