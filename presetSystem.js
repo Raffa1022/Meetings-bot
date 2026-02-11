@@ -1,6 +1,6 @@
 // ==========================================
 // ⏰ PRESET SYSTEM - Azioni Programmate
-// Accumula azioni per fase notturna o timer
+// VERSIONE SEMPLIFICATA E ROBUSTA
 // ==========================================
 const {
     EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle,
@@ -14,22 +14,28 @@ const eventBus = require('./eventBus');
 const { formatName } = require('./helpers');
 
 // ==========================================
-// 📊 PRIORITY ORDER (dal più basso al più alto)
+// 🗄️ STORAGE TEMPORANEO PRESET IN CORSO
+// Tiene traccia dei preset mentre l'utente li sta creando
+// ==========================================
+const activePresetSessions = new Map(); // userId -> { presetType, triggerTime, ... }
+
+// ==========================================
+// 📊 PRIORITY ORDER
 // ==========================================
 const PRIORITY_ORDER = {
-    'SHOP': 1,           // Oggetti shop
-    'ROLEBLOCK': 2,      // Roleblock
-    'MANIPOLAZIONE': 3,  // Manipolazione
-    'VISITBLOCK': 4,     // Visitblock
-    'CURA': 5,           // Cura
-    'ALTRO': 6,          // Altro
-    'TRASPORTO': 7,      // Trasporto
-    'POTENZIAMENTO': 8,  // Potenziamento
-    'PROTEZIONE': 9,     // Protezione
-    'COMUNICAZIONE': 10, // Comunicazione
-    'LETALE': 11,        // Letale
-    'INFORMAZIONE': 12,  // Informazione
-    'KNOCK': 13,         // Bussa (massima priorità)
+    'SHOP': 1,
+    'ROLEBLOCK': 2,
+    'MANIPOLAZIONE': 3,
+    'VISITBLOCK': 4,
+    'CURA': 5,
+    'ALTRO': 6,
+    'TRASPORTO': 7,
+    'POTENZIAMENTO': 8,
+    'PROTEZIONE': 9,
+    'COMUNICAZIONE': 10,
+    'LETALE': 11,
+    'INFORMAZIONE': 12,
+    'KNOCK': 13,
 };
 
 // ==========================================
@@ -55,7 +61,6 @@ const CATEGORIES = [
 // 🗄️ PRESET DATABASE REPOSITORY
 // ==========================================
 const presetDb = {
-    // --- PRESETS_NIGHT ---
     async addNightPreset(userId, userName, type, category, details) {
         const preset = {
             userId,
@@ -89,7 +94,6 @@ const presetDb = {
         return PresetNightModel.deleteMany({});
     },
 
-    // --- PRESETS_SCHEDULED ---
     async addScheduledPreset(userId, userName, type, category, details, triggerTime) {
         const preset = {
             userId,
@@ -131,7 +135,7 @@ const presetDb = {
 };
 
 // ==========================================
-// 📊 DASHBOARD PRESET (Real-time Admin View)
+// 📊 DASHBOARD PRESET
 // ==========================================
 let dashboardChannelId = null;
 let clientRef = null;
@@ -145,7 +149,6 @@ async function updatePresetDashboard() {
     const nightPresets = await presetDb.getAllNightPresets();
     const scheduledPresets = await presetDb.getAllScheduledPresets();
 
-    // Raggruppa per categoria
     const grouped = {};
     
     for (const preset of nightPresets) {
@@ -160,7 +163,6 @@ async function updatePresetDashboard() {
         grouped[cat].push({ ...preset, presetType: 'SCHEDULED' });
     }
 
-    // Ordina categorie per priorità
     const sortedCategories = Object.keys(grouped).sort((a, b) => {
         return (PRIORITY_ORDER[a] || 999) - (PRIORITY_ORDER[b] || 999);
     });
@@ -207,7 +209,6 @@ async function updatePresetDashboard() {
         .setFooter({ text: 'Aggiornamento automatico in tempo reale' })
         .setTimestamp();
 
-    // Pulisci vecchi messaggi
     try {
         const messages = await channel.messages.fetch({ limit: 10 });
         const botMsgs = messages.filter(m => m.author.id === clientRef.user.id);
@@ -228,26 +229,22 @@ function getCategoryLabel(category) {
 }
 
 // ==========================================
-// 🎮 GESTIONE GIOCATORE - UI A STEP
+// 🎮 GESTIONE COMANDO PRESET
 // ==========================================
-async function handlePresetCommand(message, args, presetType) {
+async function handlePresetCommand(message, args, presetType, triggerTime = null) {
     const userId = message.author.id;
     const userName = message.member?.displayName || message.author.username;
 
-    // Estrai triggerTime dal messaggio se è scheduled
-    let triggerTime = null;
-    if (presetType === 'scheduled') {
-        const match = message.content.match(/\(trigger: (\d{2}:\d{2})\)/);
-        if (match) {
-            triggerTime = match[1];
-        } else {
-            return message.reply('⏰ **Errore interno nel recupero orario.**');
-        }
-    }
+    // Crea sessione preset per questo utente
+    activePresetSessions.set(userId, {
+        presetType: presetType,
+        triggerTime: triggerTime,
+        channelId: message.channel.id
+    });
 
     // Step 1: Scelta Categoria
     const categorySelect = new StringSelectMenuBuilder()
-        .setCustomId(`preset_category_${presetType}${triggerTime ? '_' + triggerTime : ''}`)
+        .setCustomId('preset_category')
         .setPlaceholder('Scegli la categoria dell\'azione...')
         .addOptions(CATEGORIES.map(cat => 
             new StringSelectMenuOptionBuilder()
@@ -265,7 +262,10 @@ async function handlePresetCommand(message, args, presetType) {
             .setEmoji('❌')
     );
 
-    const typeLabel = presetType === 'night' ? 'notturno' : `programmato (${triggerTime})`;
+    const typeLabel = presetType === 'night' 
+        ? 'notturno' 
+        : `programmato (${triggerTime})`;
+    
     await message.reply({
         content: `⏰ **Creazione preset ${typeLabel}**\nStep 1: Seleziona la categoria dell'azione:`,
         components: [row, closeRow]
@@ -281,34 +281,45 @@ function registerPresetInteractions(client) {
     client.on('interactionCreate', async interaction => {
         if (!interaction.isStringSelectMenu() && !interaction.isButton() && !interaction.isModalSubmit()) return;
 
+        const userId = interaction.user.id;
+        const session = activePresetSessions.get(userId);
+
         // ===================== CHIUDI PRESET =====================
         if (interaction.customId === 'preset_close') {
-            await interaction.update({ content: '❌ Operazione annullata.', components: [] });
+            activePresetSessions.delete(userId);
+            await interaction.update({ 
+                content: '❌ Operazione annullata.', 
+                components: [] 
+            });
             setTimeout(() => interaction.message.delete().catch(() => {}), 2000);
             return;
         }
 
         // ===================== SELEZIONE CATEGORIA =====================
-        if (interaction.customId.startsWith('preset_category_')) {
-            const parts = interaction.customId.split('_');
-            const presetType = parts[2];
-            const triggerTime = parts[3] || null;
+        if (interaction.customId === 'preset_category') {
+            if (!session) {
+                return interaction.reply({ 
+                    content: '❌ Sessione scaduta. Ricomincia con !preset', 
+                    ephemeral: true 
+                });
+            }
+
             const category = interaction.values[0];
 
-            // CASO 1: BUSSA → Mostra select modalità e case
+            // CASO 1: BUSSA
             if (category === 'KNOCK') {
-                const houses = await getAvailableHouses(interaction.guild, interaction.user.id);
+                const houses = await getAvailableHouses(interaction.guild, userId);
                 
                 if (houses.length === 0) {
+                    activePresetSessions.delete(userId);
                     return interaction.update({
                         content: '❌ Nessuna casa disponibile per bussare.',
                         components: []
                     });
                 }
 
-                // Mostra select modalità visita
                 const modeSelect = new StringSelectMenuBuilder()
-                    .setCustomId(`preset_knock_mode_${presetType}${triggerTime ? '_' + triggerTime : ''}`)
+                    .setCustomId('preset_knock_mode')
                     .setPlaceholder('Scegli la modalità di visita...')
                     .addOptions(
                         new StringSelectMenuOptionBuilder().setLabel('Visita Normale').setValue('mode_normal').setEmoji('👋'),
@@ -318,7 +329,7 @@ function registerPresetInteractions(client) {
 
                 const backRow = new ActionRowBuilder().addComponents(
                     new ButtonBuilder()
-                        .setCustomId(`preset_back_category_${presetType}${triggerTime ? '_' + triggerTime : ''}`)
+                        .setCustomId('preset_back_category')
                         .setLabel('Indietro')
                         .setStyle(ButtonStyle.Secondary)
                         .setEmoji('◀️')
@@ -329,29 +340,30 @@ function registerPresetInteractions(client) {
                     components: [new ActionRowBuilder().addComponents(modeSelect), backRow]
                 });
             }
-            // CASO 2: SHOP → Mostra select inventario
+            // CASO 2: SHOP
             else if (category === 'SHOP') {
-                const items = await getUserShopItems(interaction.user.id);
+                const items = await getUserShopItems(userId);
 
                 if (items.length === 0) {
+                    activePresetSessions.delete(userId);
                     return interaction.update({
                         content: '❌ Non hai oggetti nel tuo inventario.',
                         components: []
                     });
                 }
 
-                // Filtra scopa dall'inventario
                 const filteredItems = items.filter(item => item.id !== 'scopa');
 
                 if (filteredItems.length === 0) {
+                    activePresetSessions.delete(userId);
                     return interaction.update({
-                        content: '❌ Non hai oggetti utilizzabili nel preset (la scopa non può essere usata nei preset).',
+                        content: '❌ Non hai oggetti utilizzabili nel preset (la scopa non può essere usata).',
                         components: []
                     });
                 }
 
                 const itemSelect = new StringSelectMenuBuilder()
-                    .setCustomId(`preset_shop_item_${presetType}${triggerTime ? '_' + triggerTime : ''}`)
+                    .setCustomId('preset_shop_item')
                     .setPlaceholder('Scegli l\'oggetto da usare...')
                     .addOptions(filteredItems.map(item => 
                         new StringSelectMenuOptionBuilder()
@@ -362,7 +374,7 @@ function registerPresetInteractions(client) {
 
                 const backRow = new ActionRowBuilder().addComponents(
                     new ButtonBuilder()
-                        .setCustomId(`preset_back_category_${presetType}${triggerTime ? '_' + triggerTime : ''}`)
+                        .setCustomId('preset_back_category')
                         .setLabel('Indietro')
                         .setStyle(ButtonStyle.Secondary)
                         .setEmoji('◀️')
@@ -373,10 +385,10 @@ function registerPresetInteractions(client) {
                     components: [new ActionRowBuilder().addComponents(itemSelect), backRow]
                 });
             }
-            // CASO 3: Altre categorie → Mostra modale
+            // CASO 3: Altre categorie
             else {
                 const modal = new ModalBuilder()
-                    .setCustomId(`preset_modal_${category}_${presetType}${triggerTime ? '_' + triggerTime : ''}`)
+                    .setCustomId(`preset_modal_${category}`)
                     .setTitle(`Preset ${getCategoryLabel(category)}`);
 
                 const targetInput = new TextInputBuilder()
@@ -403,13 +415,16 @@ function registerPresetInteractions(client) {
         }
 
         // ===================== TORNA INDIETRO CATEGORIA =====================
-        if (interaction.customId.startsWith('preset_back_category_')) {
-            const parts = interaction.customId.split('_');
-            const presetType = parts[3];
-            const triggerTime = parts[4] || null;
-            
+        if (interaction.customId === 'preset_back_category') {
+            if (!session) {
+                return interaction.reply({ 
+                    content: '❌ Sessione scaduta. Ricomincia con !preset', 
+                    ephemeral: true 
+                });
+            }
+
             const categorySelect = new StringSelectMenuBuilder()
-                .setCustomId(`preset_category_${presetType}${triggerTime ? '_' + triggerTime : ''}`)
+                .setCustomId('preset_category')
                 .setPlaceholder('Scegli la categoria dell\'azione...')
                 .addOptions(CATEGORIES.map(cat => 
                     new StringSelectMenuOptionBuilder()
@@ -434,23 +449,29 @@ function registerPresetInteractions(client) {
         }
 
         // ===================== SELEZIONE MODALITÀ KNOCK =====================
-        if (interaction.customId.startsWith('preset_knock_mode_')) {
-            const parts = interaction.customId.split('_');
-            const presetType = parts[3];
-            const triggerTime = parts[4] || null;
-            const mode = interaction.values[0];
+        if (interaction.customId === 'preset_knock_mode') {
+            if (!session) {
+                return interaction.reply({ 
+                    content: '❌ Sessione scaduta. Ricomincia con !preset', 
+                    ephemeral: true 
+                });
+            }
 
-            const houses = await getAvailableHouses(interaction.guild, interaction.user.id);
+            const mode = interaction.values[0];
+            session.knockMode = mode; // Salva nella sessione
+
+            const houses = await getAvailableHouses(interaction.guild, userId);
 
             if (houses.length === 0) {
+                activePresetSessions.delete(userId);
                 return interaction.update({
-                    content: '❌ Nessuna casa disponibile per bussare.',
+                    content: '❌ Nessuna casa disponibile.',
                     components: []
                 });
             }
 
             const houseSelect = new StringSelectMenuBuilder()
-                .setCustomId(`preset_house_${presetType}_${mode}${triggerTime ? '_' + triggerTime : ''}`)
+                .setCustomId('preset_house')
                 .setPlaceholder('Scegli la casa dove bussare...')
                 .addOptions(houses.slice(0, 25).map(house => 
                     new StringSelectMenuOptionBuilder()
@@ -461,7 +482,7 @@ function registerPresetInteractions(client) {
 
             const backRow = new ActionRowBuilder().addComponents(
                 new ButtonBuilder()
-                    .setCustomId(`preset_back_knock_mode_${presetType}${triggerTime ? '_' + triggerTime : ''}`)
+                    .setCustomId('preset_back_knock_mode')
                     .setLabel('Indietro')
                     .setStyle(ButtonStyle.Secondary)
                     .setEmoji('◀️')
@@ -473,14 +494,17 @@ function registerPresetInteractions(client) {
             });
         }
 
-        // ===================== TORNA INDIETRO A MODALITÀ KNOCK =====================
-        if (interaction.customId.startsWith('preset_back_knock_mode_')) {
-            const parts = interaction.customId.split('_');
-            const presetType = parts[4];
-            const triggerTime = parts[5] || null;
+        // ===================== TORNA A MODALITÀ KNOCK =====================
+        if (interaction.customId === 'preset_back_knock_mode') {
+            if (!session) {
+                return interaction.reply({ 
+                    content: '❌ Sessione scaduta. Ricomincia con !preset', 
+                    ephemeral: true 
+                });
+            }
 
             const modeSelect = new StringSelectMenuBuilder()
-                .setCustomId(`preset_knock_mode_${presetType}${triggerTime ? '_' + triggerTime : ''}`)
+                .setCustomId('preset_knock_mode')
                 .setPlaceholder('Scegli la modalità di visita...')
                 .addOptions(
                     new StringSelectMenuOptionBuilder().setLabel('Visita Normale').setValue('mode_normal').setEmoji('👋'),
@@ -490,7 +514,7 @@ function registerPresetInteractions(client) {
 
             const backRow = new ActionRowBuilder().addComponents(
                 new ButtonBuilder()
-                    .setCustomId(`preset_back_category_${presetType}${triggerTime ? '_' + triggerTime : ''}`)
+                    .setCustomId('preset_back_category')
                     .setLabel('Indietro')
                     .setStyle(ButtonStyle.Secondary)
                     .setEmoji('◀️')
@@ -502,56 +526,72 @@ function registerPresetInteractions(client) {
             });
         }
 
-        // ===================== SELEZIONE CASA (BUSSA) =====================
-        if (interaction.customId.startsWith('preset_house_')) {
-            const parts = interaction.customId.split('_');
-            const presetType = parts[2];
-            const mode = parts[3];
-            const triggerTime = parts[4] || null;
-            const targetChannelId = interaction.values[0];
-            const userId = interaction.user.id;
-            const userName = interaction.member?.displayName || interaction.user.username;
-
-            // NON consumare visite qui! Le visite vengono consumate quando il preset viene eseguito
-            const details = {
-                targetChannelId,
-                mode,
-                fromChannelId: interaction.channel.id
-            };
-
-            if (presetType === 'night') {
-                await presetDb.addNightPreset(userId, userName, 'KNOCK', 'KNOCK', details);
-                await interaction.update({
-                    content: `✅ **Preset notturno salvato!** Bussata programmata per la fase notturna.\n*Le visite verranno consumate all'esecuzione del preset.*`,
-                    components: []
-                });
-            } else {
-                await presetDb.addScheduledPreset(userId, userName, 'KNOCK', 'KNOCK', details, triggerTime);
-                await interaction.update({
-                    content: `✅ **Preset programmato salvato!** Bussata eseguita alle ${triggerTime}.\n*Le visite verranno consumate all'esecuzione del preset.*`,
-                    components: []
+        // ===================== SELEZIONE CASA =====================
+        if (interaction.customId === 'preset_house') {
+            if (!session) {
+                return interaction.reply({ 
+                    content: '❌ Sessione scaduta. Ricomincia con !preset', 
+                    ephemeral: true 
                 });
             }
 
-            setTimeout(() => interaction.message.delete().catch(() => {}), 5000);
-            await updatePresetDashboard();
+            const targetChannelId = interaction.values[0];
+            const userName = interaction.member?.displayName || interaction.user.username;
+
+            const details = {
+                targetChannelId,
+                mode: session.knockMode,
+                fromChannelId: session.channelId
+            };
+
+            try {
+                if (session.presetType === 'night') {
+                    await presetDb.addNightPreset(userId, userName, 'KNOCK', 'KNOCK', details);
+                    await interaction.update({
+                        content: `✅ **Preset notturno salvato!**\nBussata programmata per la fase notturna.\n*Le visite verranno consumate all'esecuzione.*`,
+                        components: []
+                    });
+                } else {
+                    await presetDb.addScheduledPreset(userId, userName, 'KNOCK', 'KNOCK', details, session.triggerTime);
+                    await interaction.update({
+                        content: `✅ **Preset programmato salvato!**\nBussata eseguita alle ${session.triggerTime}.\n*Le visite verranno consumate all'esecuzione.*`,
+                        components: []
+                    });
+                }
+
+                activePresetSessions.delete(userId);
+                await updatePresetDashboard();
+                
+                setTimeout(() => {
+                    interaction.message.delete().catch(() => {});
+                }, 5000);
+            } catch (error) {
+                console.error('Errore salvataggio preset KNOCK:', error);
+                await interaction.followUp({
+                    content: '❌ Errore nel salvataggio del preset.',
+                    ephemeral: true
+                });
+            }
         }
 
         // ===================== SELEZIONE SHOP ITEM =====================
-        if (interaction.customId.startsWith('preset_shop_item_')) {
-            const parts = interaction.customId.split('_');
-            const presetType = parts[3];
-            const triggerTime = parts[4] || null;
+        if (interaction.customId === 'preset_shop_item') {
+            if (!session) {
+                return interaction.reply({ 
+                    content: '❌ Sessione scaduta. Ricomincia con !preset', 
+                    ephemeral: true 
+                });
+            }
+
             const itemId = interaction.values[0];
 
-            // Verifica se l'oggetto richiede target
-            const itemsRequiringTarget = ['catene'];
-            
-            if (itemsRequiringTarget.includes(itemId)) {
+            // Oggetti che richiedono target
+            if (itemId === 'catene') {
                 const guild = interaction.guild;
                 const aliveRole = guild.roles.cache.get(RUOLI.ALIVE);
                 
                 if (!aliveRole) {
+                    activePresetSessions.delete(userId);
                     return interaction.update({
                         content: '❌ Ruolo giocatori non trovato.',
                         components: []
@@ -559,21 +599,25 @@ function registerPresetInteractions(client) {
                 }
 
                 const aliveMembers = aliveRole.members
-                    .filter(m => m.id !== interaction.user.id && !m.user.bot)
+                    .filter(m => m.id !== userId && !m.user.bot)
                     .map(m => ({
                         id: m.id,
                         name: m.displayName || m.user.username
                     }));
 
                 if (aliveMembers.length === 0) {
+                    activePresetSessions.delete(userId);
                     return interaction.update({
                         content: '❌ Nessun giocatore disponibile come target.',
                         components: []
                     });
                 }
 
+                // Salva itemId nella sessione
+                session.shopItemId = itemId;
+
                 const playerSelect = new StringSelectMenuBuilder()
-                    .setCustomId(`preset_item_target_${itemId}_${presetType}${triggerTime ? '_' + triggerTime : ''}`)
+                    .setCustomId('preset_item_target')
                     .setPlaceholder(`Scegli il target per ${itemId}...`)
                     .addOptions(aliveMembers.slice(0, 25).map(player => 
                         new StringSelectMenuOptionBuilder()
@@ -584,7 +628,7 @@ function registerPresetInteractions(client) {
 
                 const backRow = new ActionRowBuilder().addComponents(
                     new ButtonBuilder()
-                        .setCustomId(`preset_back_category_${presetType}${triggerTime ? '_' + triggerTime : ''}`)
+                        .setCustomId('preset_back_category')
                         .setLabel('Indietro')
                         .setStyle(ButtonStyle.Secondary)
                         .setEmoji('◀️')
@@ -595,111 +639,139 @@ function registerPresetInteractions(client) {
                     components: [new ActionRowBuilder().addComponents(playerSelect), backRow]
                 });
             } else {
-                // Oggetti che non richiedono target
-                const userId = interaction.user.id;
+                // Oggetti senza target
                 const userName = interaction.member?.displayName || interaction.user.username;
                 const { SHOP_ITEMS } = require('./economySystem');
                 const item = SHOP_ITEMS.find(i => i.id === itemId);
 
-                // Verifica e rimuovi oggetto dall'inventario
                 const econDb = require('./economySystem').econDb;
                 const hasItem = await econDb.hasItem(userId, itemId, 1);
                 
                 if (!hasItem) {
+                    activePresetSessions.delete(userId);
                     return interaction.update({
                         content: '❌ Non possiedi questo oggetto nell\'inventario.',
                         components: []
                     });
                 }
 
-                await econDb.removeItem(userId, itemId, 1);
+                try {
+                    await econDb.removeItem(userId, itemId, 1);
 
-                const details = {
-                    subType: itemId,
-                    itemName: item?.name || itemId,
-                    responseChannelId: interaction.channel.id
-                };
+                    const details = {
+                        subType: itemId,
+                        itemName: item?.name || itemId,
+                        responseChannelId: session.channelId
+                    };
 
-                if (presetType === 'night') {
-                    await presetDb.addNightPreset(userId, userName, 'SHOP', 'SHOP', details);
-                    await interaction.update({
-                        content: `✅ **Preset notturno salvato!** Oggetto "${item?.name}" programmato per la fase notturna e rimosso dall'inventario.`,
-                        components: []
-                    });
-                } else {
-                    await presetDb.addScheduledPreset(userId, userName, 'SHOP', 'SHOP', details, triggerTime);
-                    await interaction.update({
-                        content: `✅ **Preset programmato salvato!** Oggetto "${item?.name}" eseguito alle ${triggerTime} e rimosso dall'inventario.`,
-                        components: []
+                    if (session.presetType === 'night') {
+                        await presetDb.addNightPreset(userId, userName, 'SHOP', 'SHOP', details);
+                        await interaction.update({
+                            content: `✅ **Preset notturno salvato!**\nOggetto "${item?.name}" programmato per la fase notturna.\nRimosso dall'inventario.`,
+                            components: []
+                        });
+                    } else {
+                        await presetDb.addScheduledPreset(userId, userName, 'SHOP', 'SHOP', details, session.triggerTime);
+                        await interaction.update({
+                            content: `✅ **Preset programmato salvato!**\nOggetto "${item?.name}" eseguito alle ${session.triggerTime}.\nRimosso dall'inventario.`,
+                            components: []
+                        });
+                    }
+
+                    activePresetSessions.delete(userId);
+                    await updatePresetDashboard();
+                    
+                    setTimeout(() => {
+                        interaction.message.delete().catch(() => {});
+                    }, 5000);
+                } catch (error) {
+                    console.error('Errore salvataggio preset SHOP:', error);
+                    await interaction.followUp({
+                        content: '❌ Errore nel salvataggio del preset.',
+                        ephemeral: true
                     });
                 }
-
-                setTimeout(() => interaction.message.delete().catch(() => {}), 5000);
-                await updatePresetDashboard();
             }
         }
 
         // ===================== SELEZIONE TARGET ITEM =====================
-        if (interaction.customId.startsWith('preset_item_target_')) {
-            const parts = interaction.customId.split('_');
-            const itemId = parts[3];
-            const presetType = parts[4];
-            const triggerTime = parts[5] || null;
+        if (interaction.customId === 'preset_item_target') {
+            if (!session) {
+                return interaction.reply({ 
+                    content: '❌ Sessione scaduta. Ricomincia con !preset', 
+                    ephemeral: true 
+                });
+            }
+
             const targetUserId = interaction.values[0];
-            const userId = interaction.user.id;
             const userName = interaction.member?.displayName || interaction.user.username;
+            const itemId = session.shopItemId;
             const { SHOP_ITEMS } = require('./economySystem');
             const item = SHOP_ITEMS.find(i => i.id === itemId);
 
-            // Verifica e rimuovi oggetto dall'inventario
             const econDb = require('./economySystem').econDb;
             const hasItem = await econDb.hasItem(userId, itemId, 1);
             
             if (!hasItem) {
+                activePresetSessions.delete(userId);
                 return interaction.update({
                     content: '❌ Non possiedi questo oggetto nell\'inventario.',
                     components: []
                 });
             }
 
-            await econDb.removeItem(userId, itemId, 1);
+            try {
+                await econDb.removeItem(userId, itemId, 1);
 
-            const details = {
-                subType: itemId,
-                itemName: item?.name || itemId,
-                targetUserId,
-                responseChannelId: interaction.channel.id
-            };
+                const details = {
+                    subType: itemId,
+                    itemName: item?.name || itemId,
+                    targetUserId,
+                    responseChannelId: session.channelId
+                };
 
-            if (presetType === 'night') {
-                await presetDb.addNightPreset(userId, userName, 'SHOP', 'SHOP', details);
-                await interaction.update({
-                    content: `✅ **Preset notturno salvato!** ${item?.name} su <@${targetUserId}> programmato per la fase notturna e rimosso dall'inventario.`,
-                    components: []
+                if (session.presetType === 'night') {
+                    await presetDb.addNightPreset(userId, userName, 'SHOP', 'SHOP', details);
+                    await interaction.update({
+                        content: `✅ **Preset notturno salvato!**\n${item?.name} su <@${targetUserId}> programmato per la fase notturna.\nRimosso dall'inventario.`,
+                        components: []
+                    });
+                } else {
+                    await presetDb.addScheduledPreset(userId, userName, 'SHOP', 'SHOP', details, session.triggerTime);
+                    await interaction.update({
+                        content: `✅ **Preset programmato salvato!**\n${item?.name} su <@${targetUserId}> eseguito alle ${session.triggerTime}.\nRimosso dall'inventario.`,
+                        components: []
+                    });
+                }
+
+                activePresetSessions.delete(userId);
+                await updatePresetDashboard();
+                
+                setTimeout(() => {
+                    interaction.message.delete().catch(() => {});
+                }, 5000);
+            } catch (error) {
+                console.error('Errore salvataggio preset SHOP con target:', error);
+                await interaction.followUp({
+                    content: '❌ Errore nel salvataggio del preset.',
+                    ephemeral: true
                 });
-            } else {
-                await presetDb.addScheduledPreset(userId, userName, 'SHOP', 'SHOP', details, triggerTime);
-                await interaction.update({
-                    content: `✅ **Preset programmato salvato!** ${item?.name} su <@${targetUserId}> eseguito alle ${triggerTime} e rimosso dall'inventario.`,
-                    components: []
+            }
+        }
+
+        // ===================== SUBMIT MODALE =====================
+        if (interaction.customId.startsWith('preset_modal_')) {
+            const category = interaction.customId.split('_')[2];
+            
+            if (!session) {
+                return interaction.reply({ 
+                    content: '❌ Sessione scaduta. Ricomincia con !preset', 
+                    ephemeral: true 
                 });
             }
 
-            setTimeout(() => interaction.message.delete().catch(() => {}), 5000);
-            await updatePresetDashboard();
-        }
-
-        // ===================== SUBMIT MODALE (Altre categorie) =====================
-        if (interaction.customId.startsWith('preset_modal_')) {
-            const parts = interaction.customId.split('_');
-            const category = parts[2];
-            const presetType = parts[3];
-            const triggerTime = parts[4] || null;
-
             const target = interaction.fields.getTextInputValue('target');
             const description = interaction.fields.getTextInputValue('description');
-
-            const userId = interaction.user.id;
             const userName = interaction.member?.displayName || interaction.user.username;
 
             const details = {
@@ -707,21 +779,30 @@ function registerPresetInteractions(client) {
                 text: description
             };
 
-            if (presetType === 'night') {
-                await presetDb.addNightPreset(userId, userName, 'ABILITY', category, details);
-                await interaction.reply({
-                    content: `✅ **Preset notturno salvato!** Abilità categoria ${getCategoryLabel(category)} programmata per la fase notturna.`,
-                    ephemeral: true
-                });
-            } else {
-                await presetDb.addScheduledPreset(userId, userName, 'ABILITY', category, details, triggerTime);
-                await interaction.reply({
-                    content: `✅ **Preset programmato salvato!** Abilità categoria ${getCategoryLabel(category)} eseguita alle ${triggerTime}.`,
+            try {
+                if (session.presetType === 'night') {
+                    await presetDb.addNightPreset(userId, userName, 'ABILITY', category, details);
+                    await interaction.reply({
+                        content: `✅ **Preset notturno salvato!**\nAbilità categoria ${getCategoryLabel(category)} programmata per la fase notturna.`,
+                        ephemeral: true
+                    });
+                } else {
+                    await presetDb.addScheduledPreset(userId, userName, 'ABILITY', category, details, session.triggerTime);
+                    await interaction.reply({
+                        content: `✅ **Preset programmato salvato!**\nAbilità categoria ${getCategoryLabel(category)} eseguita alle ${session.triggerTime}.`,
+                        ephemeral: true
+                    });
+                }
+
+                activePresetSessions.delete(userId);
+                await updatePresetDashboard();
+            } catch (error) {
+                console.error('Errore salvataggio preset ABILITY:', error);
+                await interaction.followUp({
+                    content: '❌ Errore nel salvataggio del preset.',
                     ephemeral: true
                 });
             }
-
-            await updatePresetDashboard();
         }
 
         // ===================== LISTA PRESET =====================
@@ -729,22 +810,30 @@ function registerPresetInteractions(client) {
             const presetId = interaction.values[0];
             const [type, id] = presetId.split('_');
 
-            if (type === 'night') {
-                await presetDb.removeNightPreset(id);
-                await interaction.update({
-                    content: '✅ Preset notturno rimosso!',
-                    components: []
-                });
-            } else {
-                await presetDb.removeScheduledPreset(id);
-                await interaction.update({
-                    content: '✅ Preset programmato rimosso!',
-                    components: []
+            try {
+                if (type === 'night') {
+                    await presetDb.removeNightPreset(id);
+                    await interaction.update({
+                        content: '✅ Preset notturno rimosso!',
+                        components: []
+                    });
+                } else {
+                    await presetDb.removeScheduledPreset(id);
+                    await interaction.update({
+                        content: '✅ Preset programmato rimosso!',
+                        components: []
+                    });
+                }
+
+                await updatePresetDashboard();
+                setTimeout(() => interaction.message.delete().catch(() => {}), 3000);
+            } catch (error) {
+                console.error('Errore rimozione preset:', error);
+                await interaction.followUp({
+                    content: '❌ Errore nella rimozione del preset.',
+                    ephemeral: true
                 });
             }
-
-            setTimeout(() => interaction.message.delete().catch(() => {}), 3000);
-            await updatePresetDashboard();
         }
     });
 }
@@ -798,7 +887,6 @@ async function resolveNightPhase() {
         return;
     }
 
-    // Ordina: prima per priorità, poi per timestamp
     const sorted = nightPresets.sort((a, b) => {
         const priorityA = PRIORITY_ORDER[a.category] || 999;
         const priorityB = PRIORITY_ORDER[b.category] || 999;
@@ -810,7 +898,6 @@ async function resolveNightPhase() {
         return new Date(a.timestamp) - new Date(b.timestamp);
     });
 
-    // Trasforma e inserisci in coda
     for (const preset of sorted) {
         const queueItem = mapPresetToQueue(preset);
         if (queueItem) {
@@ -819,7 +906,6 @@ async function resolveNightPhase() {
         }
     }
 
-    // Svuota i preset notturni
     await presetDb.clearAllNightPresets();
     console.log('⏰ [Preset] Preset notturni svuotati.');
     
@@ -835,7 +921,6 @@ async function resolveScheduledPhase(triggerTime) {
         return;
     }
 
-    // Ordina: prima per priorità, poi per timestamp
     const sorted = scheduledPresets.sort((a, b) => {
         const priorityA = PRIORITY_ORDER[a.category] || 999;
         const priorityB = PRIORITY_ORDER[b.category] || 999;
@@ -847,7 +932,6 @@ async function resolveScheduledPhase(triggerTime) {
         return new Date(a.timestamp) - new Date(b.timestamp);
     });
 
-    // Trasforma e inserisci in coda
     for (const preset of sorted) {
         const queueItem = mapPresetToQueue(preset);
         if (queueItem) {
@@ -856,7 +940,6 @@ async function resolveScheduledPhase(triggerTime) {
         }
     }
 
-    // Svuota i preset con quel trigger time
     await presetDb.clearScheduledPresets(triggerTime);
     console.log(`⏰ [Preset] Preset programmati per ${triggerTime} svuotati.`);
     
@@ -965,14 +1048,11 @@ async function showUserPresets(message) {
 }
 
 // ==========================================
-// ⏰ TIMER AUTOMATICO PRESET INTERMEDI
+// ⏰ TIMER AUTOMATICO
 // ==========================================
 function startPresetTimer() {
-    // Controlla ogni minuto se ci sono preset da eseguire
     setInterval(async () => {
         const now = new Date();
-        
-        // Converti ora italiana (UTC+1 o UTC+2 in estate)
         const italianTime = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Rome' }));
         const hours = String(italianTime.getHours()).padStart(2, '0');
         const minutes = String(italianTime.getMinutes()).padStart(2, '0');
@@ -980,20 +1060,19 @@ function startPresetTimer() {
 
         console.log(`⏰ [Preset Timer] Controllo preset per ${currentTime}...`);
 
-        // Controlla se ci sono preset schedulati per questo orario
         const scheduledPresets = await presetDb.getScheduledPresetsAtTime(currentTime);
         
         if (scheduledPresets.length > 0) {
             console.log(`⏰ [Preset Timer] Trovati ${scheduledPresets.length} preset per ${currentTime}. Esecuzione...`);
             await resolveScheduledPhase(currentTime);
         }
-    }, 60000); // Controlla ogni 60 secondi
+    }, 60000);
 
     console.log('⏰ [Preset Timer] Sistema timer automatico avviato (controllo ogni minuto)');
 }
 
 // ==========================================
-// 🚀 INIT & EXPORT
+// 🚀 EXPORT
 // ==========================================
 module.exports = {
     registerPresetInteractions,
