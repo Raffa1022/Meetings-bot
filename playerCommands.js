@@ -1,7 +1,10 @@
-
+{
+type: uploaded file
+fileName: playerCommands.js
+fullContent:
 // ==========================================
 // 👤 COMANDI GIOCATORE HOUSING
-// bussa, torna, trasferimento, chi, rimaste, cambio, rimuovi
+// bussa, torna, trasferimento, chi, rimaste, cambio, rimuovi, preset
 // ==========================================
 const {
     ActionRowBuilder, StringSelectMenuBuilder, StringSelectMenuOptionBuilder,
@@ -46,14 +49,12 @@ module.exports = function registerPlayerCommands(client) {
             const homeChannel = message.guild.channels.cache.get(homeId);
             if (!homeChannel) return message.channel.send("❌ Errore casa.");
 
-            // Trova dove è fisicamente (casa con permissionOverwrites personalizzati)
             const currentHouse = message.guild.channels.cache.find(c =>
                 c.parentId === HOUSING.CATEGORIA_CASE &&
                 c.type === ChannelType.GuildText &&
                 c.permissionOverwrites.cache.has(message.author.id)
             );
 
-            // FIX: Controllo più rigoroso - se non è in nessuna casa O è già nella propria casa
             if (!currentHouse) {
                 return message.channel.send("🏠 Non sei in nessuna casa! Non puoi usare !torna.");
             }
@@ -62,20 +63,17 @@ module.exports = function registerPlayerCommands(client) {
                 return message.channel.send("🏠 Sei già nella tua casa! Non puoi usare !torna.");
             }
 
-            // Controllo bussata attiva in attesa di risposta
             const activeKnock = await db.housing.getActiveKnock(message.author.id);
             if (activeKnock) {
                 return message.channel.send("⚠️ Hai una bussata in attesa di risposta! Non puoi usare !torna finché non viene risolta.");
             }
 
-            // Controllo coda: utente ha già azione pendente?
             const myPending = await db.queue.getUserPending(message.author.id);
             if (myPending) {
                 const t = myPending.type === 'KNOCK' ? 'bussa' : 'torna';
                 return message.channel.send(`⚠️ Hai già un'azione "${t}" in corso! Usa \`!rimuovi\` per annullarla.`);
             }
 
-            // Controllo: altri nella stessa chat hanno azioni in corso?
             const others = message.channel.members.filter(m => !m.user.bot && m.id !== message.author.id);
             for (const [memberId, member] of others) {
                 const otherPending = await db.queue.getUserPending(memberId);
@@ -84,7 +82,6 @@ module.exports = function registerPlayerCommands(client) {
                 }
             }
 
-            // Aggiungi alla coda tramite EventBus
             eventBus.emit('queue:add', {
                 type: 'RETURN',
                 userId: message.author.id,
@@ -102,17 +99,14 @@ module.exports = function registerPlayerCommands(client) {
             if (message.member.roles.cache.has(RUOLI.SPONSOR) || message.member.roles.cache.has(RUOLI.SPONSOR_DEAD))
                 return message.channel.send("⛔ Gli sponsor non possono usare il comando !bussa.");
 
-            // Check Visitblock
             const isVBBussa = await db.moderation.isBlockedVB(message.author.id);
             if (isVBBussa) return message.channel.send("🚫 Sei in **Visitblock**! Non puoi usare !bussa.");
 
-            // Controllo bussata attiva in attesa di risposta
             const activeKnock = await db.housing.getActiveKnock(message.author.id);
             if (activeKnock) {
                 return message.channel.send("⚠️ Hai già una bussata in attesa di risposta! Non puoi bussare di nuovo finché non viene risolta.");
             }
 
-            // Controllo coda
             const myPending = await db.queue.getUserPending(message.author.id);
             if (myPending) {
                 await db.housing.removePendingKnock(message.author.id);
@@ -120,7 +114,6 @@ module.exports = function registerPlayerCommands(client) {
                 return message.channel.send(`⚠️ Hai già un'azione "${t}" in corso! Usa \`!rimuovi\` per annullarla.`);
             }
 
-            // Controllo altri nella chat
             const others = message.channel.members.filter(m => !m.user.bot && m.id !== message.author.id);
             for (const [memberId, member] of others) {
                 const otherPending = await db.queue.getUserPending(memberId);
@@ -129,7 +122,6 @@ module.exports = function registerPlayerCommands(client) {
                 }
             }
 
-            // Controllo pending knock
             const isPending = await db.housing.isPendingKnock(message.author.id);
             if (isPending) return message.channel.send(`${message.author}, stai già bussando!`);
 
@@ -164,21 +156,19 @@ module.exports = function registerPlayerCommands(client) {
 
         // ===================== TRASFERIMENTO =====================
         else if (command === 'trasferimento') {
-            // ===== ADMIN: !trasferimento si/no =====
             if (isAdmin(message.member)) {
                 const toggle = args[0]?.toLowerCase();
                 if (toggle === 'si' || toggle === 'sì' || toggle === 'yes') {
                     trasferimentiEnabled = true;
-                    return message.reply("✅ **Trasferimenti ABILITATI.** I giocatori possono usare !trasferimento nelle case.");
+                    return message.reply("✅ **Trasferimenti ABILITATI.**");
                 } else if (toggle === 'no') {
                     trasferimentiEnabled = false;
-                    return message.reply("🚫 **Trasferimenti DISABILITATI.** I giocatori possono trasferirsi solo con la Tenda.");
+                    return message.reply("🚫 **Trasferimenti DISABILITATI.**");
                 }
             }
 
-            // ===== BLOCCO se disabilitati =====
             if (!trasferimentiEnabled && !isAdmin(message.member)) {
-                return message.reply("🚫 **I trasferimenti sono disabilitati.** Puoi trasferirti solo utilizzando una **Tenda** (acquistabile nel mercato).");
+                return message.reply("🚫 **I trasferimenti sono disabilitati.**");
             }
 
             if (message.channel.parentId !== HOUSING.CATEGORIA_CASE) return message.delete().catch(() => {});
@@ -191,19 +181,16 @@ module.exports = function registerPlayerCommands(client) {
             const ownerId = await db.housing.findOwner(newHomeChannel.id);
 
             if (ownerId === message.author.id)
-                return message.reply("❌ Sei già a casa tua, non puoi trasferirti qui!");
+                return message.reply("❌ Sei già a casa tua!");
 
             if (!ownerId) {
-                // Casa senza proprietario - trasferisci giocatore + sponsor
                 const sponsors = await getSponsorsToMove(message.member, message.guild);
                 await cleanOldHome(message.author.id, message.guild);
-                for (const s of sponsors) {
-                    await cleanOldHome(s.id, message.guild);
-                }
+                for (const s of sponsors) await cleanOldHome(s.id, message.guild);
+                
                 await db.housing.setHome(message.author.id, newHomeChannel.id);
-                for (const s of sponsors) {
-                    await db.housing.setHome(s.id, newHomeChannel.id);
-                }
+                for (const s of sponsors) await db.housing.setHome(s.id, newHomeChannel.id);
+                
                 await newHomeChannel.permissionOverwrites.edit(message.author.id, { ViewChannel: true, SendMessages: true });
                 const pinnedMsg = await newHomeChannel.send(`🔑 **${message.author}**, questa è la tua dimora privata.`);
                 await pinnedMsg.pin();
@@ -246,13 +233,9 @@ module.exports = function registerPlayerCommands(client) {
                     await i.update({ content: "✅ Accettato!", embeds: [], components: [] });
                     const sponsors = await getSponsorsToMove(message.member, message.guild);
                     await cleanOldHome(message.author.id, message.guild);
-                    for (const s of sponsors) {
-                        await cleanOldHome(s.id, message.guild);
-                    }
+                    for (const s of sponsors) await cleanOldHome(s.id, message.guild);
                     await db.housing.setHome(message.author.id, newHomeChannel.id);
-                    for (const s of sponsors) {
-                        await db.housing.setHome(s.id, newHomeChannel.id);
-                    }
+                    for (const s of sponsors) await db.housing.setHome(s.id, newHomeChannel.id);
                     await newHomeChannel.permissionOverwrites.edit(message.author.id, { ViewChannel: true, SendMessages: true });
                     const newKeyMsg = await newHomeChannel.send(`🔑 ${message.author}, dimora assegnata (Comproprietario).`);
                     await newKeyMsg.pin();
@@ -260,7 +243,6 @@ module.exports = function registerPlayerCommands(client) {
                     await i.update({ content: "❌ Rifiutato.", embeds: [], components: [] });
                 }
             });
-            collector.on('end', () => {}); // Cleanup
         }
 
         // ===================== CHI =====================
@@ -278,14 +260,11 @@ module.exports = function registerPlayerCommands(client) {
                 return sendTemp(message.channel, "⛔ Devi essere in una casa o (se admin) specificare una casa valida.");
 
             const allHomes = await db.housing.getAllHomes();
-            
-            // FIX: Filtra solo i giocatori ALIVE fisicamente presenti nella casa (escludendo sponsor)
             const ownerIds = [];
             for (const userId of Object.keys(allHomes)) {
                 if (allHomes[userId] !== targetChannel.id) continue;
                 try {
                     const member = await message.guild.members.fetch(userId);
-                    // Solo ALIVE con permessi fisici nella casa (esclude sponsor)
                     if (member.roles.cache.has(RUOLI.ALIVE) && 
                         !member.roles.cache.has(RUOLI.SPONSOR) &&
                         targetChannel.permissionOverwrites.cache.has(userId)) {
@@ -295,7 +274,6 @@ module.exports = function registerPlayerCommands(client) {
             }
             
             const ownerMention = ownerIds.length > 0 ? ownerIds.map(id => `<@${id}>`).join(', ') : "Nessuno";
-
             const players = targetChannel.members.filter(m =>
                 !m.user.bot && m.roles.cache.has(RUOLI.ALIVE) &&
                 targetChannel.permissionOverwrites.cache.has(m.id)
@@ -317,7 +295,6 @@ module.exports = function registerPlayerCommands(client) {
             if (message.channel.parentId !== HOUSING.CATEGORIA_CHAT_PRIVATE)
                 return sendTemp(message.channel, "⛔ Solo chat private!");
 
-            // FIX: Permetti uso anche a DEAD e DEAD_SPONSOR
             if (!message.member.roles.cache.hasAny(...RUOLI_PERMESSI, RUOLI.DEAD, RUOLI.SPONSOR_DEAD)) return;
 
             const info = await db.housing.getVisitInfo(message.author.id);
@@ -380,7 +357,6 @@ module.exports = function registerPlayerCommands(client) {
         else if (command === 'cambio') {
             if (message.channel.parentId !== HOUSING.CATEGORIA_CHAT_PRIVATE) return;
 
-            // FIX: Supporta anche DEAD (R3) e DEAD_SPONSOR (R4)
             const R1 = RUOLI.ALIVE, R2 = RUOLI.SPONSOR, R3 = RUOLI.DEAD, R4 = RUOLI.SPONSOR_DEAD;
             const admin = isAdmin(message.member);
             const hasR1 = message.member.roles.cache.has(R1);
@@ -392,12 +368,10 @@ module.exports = function registerPlayerCommands(client) {
 
             const members = message.channel.members.filter(m => !m.user.bot);
             
-            // Cerca coppia ALIVE/SPONSOR
             let player1 = members.find(m => m.roles.cache.has(R1));
             let player2 = members.find(m => m.roles.cache.has(R2));
             let usingDeadRoles = false;
             
-            // Se non trova coppia ALIVE/SPONSOR, cerca coppia DEAD/DEAD_SPONSOR
             if (!player1 || !player2) {
                 player1 = members.find(m => m.roles.cache.has(R3));
                 player2 = members.find(m => m.roles.cache.has(R4));
@@ -412,7 +386,6 @@ module.exports = function registerPlayerCommands(client) {
 
             const performSwap = async () => {
                 try {
-                    // Cancella azioni pendenti di player1 (che diventerà sponsor)
                     const pendingCmds = await db.queue.getUserPending(player1.id);
                     if (pendingCmds) {
                         await db.queue.deleteUserPendingActions(player1.id);
@@ -420,10 +393,8 @@ module.exports = function registerPlayerCommands(client) {
                         await message.channel.send(`⚠️ I comandi pendenti di ${player1} sono stati cancellati prima dello scambio.`);
                     }
 
-                    // Importa econDb per lo swap economia
                     const { econDb } = require('./economySystem');
 
-                    // Swap housing + meeting + economia + ruoli in parallelo
                     const role1 = usingDeadRoles ? R3 : R1;
                     const role2 = usingDeadRoles ? R4 : R2;
                     
@@ -442,7 +413,6 @@ module.exports = function registerPlayerCommands(client) {
                 }
             };
 
-            // Se è lo sponsor a richiedere → serve accettazione
             if ((message.member.id === player2.id) && !admin) {
                 const reqMsg = await message.channel.send(
                     `🔄 **${player2}** ha richiesto lo scambio identità.\n${player1}, reagisci con ✅ per accettare o ❌ per rifiutare.`
@@ -465,18 +435,15 @@ module.exports = function registerPlayerCommands(client) {
                     await performSwap();
                     setTimeout(() => reqMsg.delete().catch(() => {}), 15000);
                 });
-                collector.on('end', () => {});
                 return;
             }
 
-            // Player1 o admin → scambio immediato
             message.channel.send("🔄 **Inizio procedura di scambio identità...**");
             await performSwap();
         }
 
         // ===================== CASE =====================
         else if (command === 'case') {
-            // FIX: Permetti anche ad admin (ovunque) e SPONSOR_DEAD
             const canUse = message.member.roles.cache.hasAny(RUOLI.ALIVE, RUOLI.SPONSOR, RUOLI.DEAD, RUOLI.SPONSOR_DEAD) || isAdmin(message.member);
             if (!canUse) return message.reply("⛔ Non hai i permessi.");
 
@@ -499,34 +466,44 @@ module.exports = function registerPlayerCommands(client) {
             message.reply({ embeds: [embed] });
         }
 
-        // ===================== PRESET NOTTURNO =====================
+        // ===================== PRESET (NUOVO SISTEMA) =====================
         else if (command === 'preset') {
-            const subcommand = args[0]?.toLowerCase();
+            const { showAdminDashboard, handlePresetCommand, showUserPresets } = require('./presetSystem');
 
-            // Check ruolo
+            // --- ADMIN: Visualizza lista completa (Dashboard) ---
+            if (isAdmin(message.member) && args.length === 0) {
+                return showAdminDashboard(message);
+            }
+
+            // --- GIOCATORE / ADMIN (Funzioni utente) ---
+            const subcommand = args[0]?.toLowerCase();
             const canUse = message.member.roles.cache.hasAny(RUOLI.ALIVE, RUOLI.SPONSOR, RUOLI.DEAD, RUOLI.SPONSOR_DEAD) || isAdmin(message.member);
+
             if (!canUse) return message.reply("⛔ Non hai i permessi per usare i preset.");
 
+            // 1. Preset Notturno
             if (subcommand === 'notturno') {
-                const { handlePresetCommand } = require('./presetSystem');
                 await handlePresetCommand(message, args.slice(1), 'night');
             }
-            else if (subcommand === 'intermedio') {
-                const timeArg = args[0];
+            // 2. Preset Timer (Sostituisce Intermedio)
+            else if (subcommand === 'timer') {
+                const timeArg = args[1]; // "!preset timer 15:30" -> args[1] è l'orario
                 if (!timeArg || !/^\d{2}:\d{2}$/.test(timeArg)) {
-                    return message.reply("❌ Specifica l'orario nel formato HH:MM\nEsempio: `!preset intermedio 15:30`");
+                    return message.reply("❌ Specifica l'orario nel formato HH:MM\nEsempio: `!preset timer 03:40`");
                 }
-
-                const { handlePresetCommand } = require('./presetSystem');
-                await handlePresetCommand(message, args.slice(1), 'scheduled', timeArg);
+                await handlePresetCommand(message, args.slice(2), 'scheduled', timeArg);
             }
+            // 3. Lista Personale (per cancellare)
             else if (subcommand === 'list') {
-                const { showUserPresets } = require('./presetSystem');
                 await showUserPresets(message);
             }
+            // Help
             else {
-                message.reply("❌ Uso:\n`!preset notturno` - Crea preset per fase notturna\n`!preset intermedio HH:MM` - Crea preset programmato\n`!preset list` - Visualizza i tuoi preset");
+                message.reply({
+                    content: "📋 **Comandi Preset:**\n`!preset notturno` - Imposta un'azione per la fine della notte\n`!preset timer HH:MM` - Imposta un'azione per un orario specifico (es. 03:40)\n`!preset list` - Visualizza e gestisci le tue azioni programmate"
+                });
             }
         }
     });
 };
+}
