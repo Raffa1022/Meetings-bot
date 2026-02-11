@@ -481,7 +481,11 @@ module.exports = function registerPlayerCommands(client) {
             if (subcommand === 'notturno') {
                 await handlePresetCommand(message, args.slice(1), 'night');
             }
-            // 2. Preset Timer (Sostituisce Intermedio)
+            // 2. Preset Diurno
+            else if (subcommand === 'diurno') {
+                await handlePresetCommand(message, args.slice(1), 'day');
+            }
+            // 3. Preset Timer (Sostituisce Intermedio)
             else if (subcommand === 'timer') {
                 const timeArg = args[1]; // "!preset timer 15:30" -> args[1] è l'orario
                 if (!timeArg || !/^\d{2}:\d{2}$/.test(timeArg)) {
@@ -489,14 +493,14 @@ module.exports = function registerPlayerCommands(client) {
                 }
                 await handlePresetCommand(message, args.slice(2), 'scheduled', timeArg);
             }
-            // 3. Lista Personale (per cancellare)
+            // 4. Lista Personale (per cancellare)
             else if (subcommand === 'list') {
                 await showUserPresets(message);
             }
             // Help
             else {
                 message.reply({
-                    content: "📋 **Comandi Preset:**\n`!preset notturno` - Imposta un'azione per la fine della notte\n`!preset timer HH:MM` - Imposta un'azione per un orario specifico (es. 03:40)\n`!preset list` - Visualizza e gestisci le tue azioni programmate"
+                    content: "📋 **Comandi Preset:**\n`!preset notturno` - Imposta un'azione per la notte\n`!preset diurno` - Imposta un'azione per il giorno\n`!preset timer HH:MM` - Imposta un'azione per un orario specifico (es. 03:40)\n`!preset list` - Visualizza e gestisci le tue azioni programmate"
                 });
             }
         }
