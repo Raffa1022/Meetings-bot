@@ -114,6 +114,33 @@ function isVisitingOtherHouse(guild, userId, homeId) {
     );
 }
 
+/**
+ * Rileva la fase corrente (NOTTE X / GIORNO X) dal canale annunci
+ */
+async function detectCurrentPhase(guild) {
+    try {
+        const annunciChannel = guild.channels.cache.get(HOUSING.CANALE_ANNUNCI);
+        if (!annunciChannel) return null;
+        
+        // Cerca gli ultimi 50 messaggi per trovare l'ultimo INIZIO NOTTE o INIZIO GIORNO
+        const messages = await annunciChannel.messages.fetch({ limit: 50 });
+        
+        for (const [, msg] of messages) {
+            // Cerca pattern tipo "NOTTE 1 HA INIZIO" o "GIORNO 2"
+            const notteMatch = msg.content.match(/NOTTE (\d+)/i);
+            if (notteMatch) return `NOTTE ${notteMatch[1]}`;
+            
+            const giornoMatch = msg.content.match(/GIORNO (\d+)/i);
+            if (giornoMatch) return `GIORNO ${giornoMatch[1]}`;
+        }
+        
+        return null;
+    } catch (error) {
+        console.error('Errore detectCurrentPhase:', error);
+        return null;
+    }
+}
+
 module.exports = {
     formatName,
     getOccupants,
@@ -121,5 +148,6 @@ module.exports = {
     isAdmin,
     sendTemp,
     isVisitingOtherHouse,
+    detectCurrentPhase,
 };
 
