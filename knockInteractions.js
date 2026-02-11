@@ -223,9 +223,20 @@ function buildCloseRow() {
 }
 
 function getSortedHouses(guild) {
-    return guild.channels.cache
-        .filter(c => c.parentId === HOUSING.CATEGORIA_CASE && c.type === ChannelType.GuildText)
-        .sort((a, b) => a.rawPosition - b.rawPosition);
+    // Ordino le case per numero estratto dal nome, così rimangono sempre fisse nelle loro posizioni
+    const houses = guild.channels.cache
+        .filter(c => c.parentId === HOUSING.CATEGORIA_CASE && c.type === ChannelType.GuildText);
+    
+    return new Map(
+        Array.from(houses.values())
+            .map(ch => {
+                const match = ch.name.match(/casa-(\d+)/);
+                const number = match ? parseInt(match[1]) : 999999;
+                return { ch, number };
+            })
+            .sort((a, b) => a.number - b.number)
+            .map(({ ch }) => [ch.id, ch])
+    );
 }
 
 function buildPageSelect(guild, mode) {
