@@ -1,6 +1,6 @@
 // ==========================================
 // ⏰ PRESET SYSTEM - Azioni Programmate
-// ADMIN DASHBOARD + TIMER + NOTTE
+// DIURNO + NOTTURNO + TIMER + FIX LETTERA
 // ==========================================
 const {
     EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle,
@@ -14,7 +14,7 @@ const eventBus = require('./eventBus');
 const { formatName } = require('./helpers');
 
 // 🔥 LISTA OGGETTI LOCALE
-// SCOPA ESCLUSA ESPLICITAMENTE
+// SCOPA ESCLUSA
 const SHOP_ITEMS_REF = [
     { id: 'lettera',    name: 'Lettera',              emoji: '✉️' },
     { id: 'scarpe',     name: 'Scarpe',               emoji: '👟' },
@@ -22,16 +22,12 @@ const SHOP_ITEMS_REF = [
     { id: 'catene',     name: 'Catene',               emoji: '⛓️' }, 
     { id: 'fuochi',     name: 'Fuochi d\'artificio',  emoji: '🎆' },
     { id: 'tenda',      name: 'Tenda',                emoji: '⛺' },
-    // Scopa rimossa volutamente
 ];
 
-// ==========================================
-// 🗄️ STORAGE TEMPORANEO PRESET IN CORSO
-// ==========================================
-const activePresetSessions = new Map(); // userId -> { presetType, triggerTime, ... }
+const activePresetSessions = new Map(); // userId -> session data
 
 // ==========================================
-// 📊 PRIORITY ORDER (Gerarchia Visualizzazione)
+// 📊 PRIORITY ORDER
 // ==========================================
 const PRIORITY_ORDER = {
     'SHOP': 1,
@@ -49,9 +45,6 @@ const PRIORITY_ORDER = {
     'KNOCK': 13,
 };
 
-// ==========================================
-// 📋 CATEGORIE DISPONIBILI
-// ==========================================
 const CATEGORIES = [
     { label: 'Bussa', value: 'KNOCK', emoji: '✊' },
     { label: 'Oggetti Shop', value: 'SHOP', emoji: '🛒' },
@@ -69,63 +62,74 @@ const CATEGORIES = [
 ];
 
 // ==========================================
-// 🗄️ PRESET DATABASE REPOSITORY
+// 🗄️ PRESET DATABASE REPOSITORY (EXTENDED)
 // ==========================================
 const presetDb = {
+    // --- NIGHT ---
     async addNightPreset(userId, userName, type, category, details) {
         const { PresetNightModel } = require('./database');
-        return PresetNightModel.create({
-            userId, userName, type, category, details, timestamp: new Date()
-        });
+        return PresetNightModel.create({ userId, userName, type, category, details, timestamp: new Date() });
     },
-
     async getAllNightPresets() {
         const { PresetNightModel } = require('./database');
         return PresetNightModel.find({}).sort({ timestamp: 1 }).lean();
     },
-
     async getUserNightPresets(userId) {
         const { PresetNightModel } = require('./database');
         return PresetNightModel.find({ userId }).sort({ timestamp: 1 }).lean();
     },
-
-    async removeNightPreset(presetId) {
+    async removeNightPreset(id) {
         const { PresetNightModel } = require('./database');
-        return PresetNightModel.findByIdAndDelete(presetId);
+        return PresetNightModel.findByIdAndDelete(id);
     },
-
     async clearAllNightPresets() {
         const { PresetNightModel } = require('./database');
         return PresetNightModel.deleteMany({});
     },
 
-    async addScheduledPreset(userId, userName, type, category, details, triggerTime) {
-        const { PresetScheduledModel } = require('./database');
-        return PresetScheduledModel.create({
-            userId, userName, type, category, details, timestamp: new Date(), triggerTime
-        });
+    // --- DAY (NUOVO) ---
+    async addDayPreset(userId, userName, type, category, details) {
+        const { PresetDayModel } = require('./database');
+        return PresetDayModel.create({ userId, userName, type, category, details, timestamp: new Date() });
+    },
+    async getAllDayPresets() {
+        const { PresetDayModel } = require('./database');
+        return PresetDayModel.find({}).sort({ timestamp: 1 }).lean();
+    },
+    async getUserDayPresets(userId) {
+        const { PresetDayModel } = require('./database');
+        return PresetDayModel.find({ userId }).sort({ timestamp: 1 }).lean();
+    },
+    async removeDayPreset(id) {
+        const { PresetDayModel } = require('./database');
+        return PresetDayModel.findByIdAndDelete(id);
+    },
+    async clearAllDayPresets() {
+        const { PresetDayModel } = require('./database');
+        return PresetDayModel.deleteMany({});
     },
 
+    // --- SCHEDULED ---
+    async addScheduledPreset(userId, userName, type, category, details, triggerTime) {
+        const { PresetScheduledModel } = require('./database');
+        return PresetScheduledModel.create({ userId, userName, type, category, details, timestamp: new Date(), triggerTime });
+    },
     async getAllScheduledPresets() {
         const { PresetScheduledModel } = require('./database');
         return PresetScheduledModel.find({}).sort({ triggerTime: 1 }).lean();
     },
-
     async getUserScheduledPresets(userId) {
         const { PresetScheduledModel } = require('./database');
         return PresetScheduledModel.find({ userId }).sort({ triggerTime: 1 }).lean();
     },
-
-    async removeScheduledPreset(presetId) {
+    async removeScheduledPreset(id) {
         const { PresetScheduledModel } = require('./database');
-        return PresetScheduledModel.findByIdAndDelete(presetId);
+        return PresetScheduledModel.findByIdAndDelete(id);
     },
-
     async clearScheduledPresets(triggerTime) {
         const { PresetScheduledModel } = require('./database');
         return PresetScheduledModel.deleteMany({ triggerTime });
     },
-
     async getScheduledPresetsAtTime(triggerTime) {
         const { PresetScheduledModel } = require('./database');
         return PresetScheduledModel.find({ triggerTime }).sort({ timestamp: 1 }).lean();
@@ -133,23 +137,20 @@ const presetDb = {
 };
 
 // ==========================================
-// 📊 DASHBOARD ADMIN (NUOVO COMANDO !preset)
+// 📊 DASHBOARD ADMIN
 // ==========================================
 async function showAdminDashboard(message) {
     const nightPresets = await presetDb.getAllNightPresets();
+    const dayPresets = await presetDb.getAllDayPresets();
     const scheduledPresets = await presetDb.getAllScheduledPresets();
 
-    // Combina tutto per visualizzazione gerarchica
     const allPresets = [];
-    
     nightPresets.forEach(p => allPresets.push({ ...p, source: '🌙 NOTTE' }));
+    dayPresets.forEach(p => allPresets.push({ ...p, source: '☀️ GIORNO' }));
     scheduledPresets.forEach(p => allPresets.push({ ...p, source: `⏰ ${p.triggerTime}` }));
 
-    if (allPresets.length === 0) {
-        return message.channel.send("✅ **Nessun preset (Notturno o Timer) in attesa.**");
-    }
+    if (allPresets.length === 0) return message.channel.send("✅ **Nessun preset in attesa.**");
 
-    // Raggruppa per Categoria (Gerarchia)
     const grouped = {};
     for (const p of allPresets) {
         const cat = p.category || 'ALTRO';
@@ -157,29 +158,19 @@ async function showAdminDashboard(message) {
         grouped[cat].push(p);
     }
 
-    // Ordina Categorie per Priorità
-    const sortedCategories = Object.keys(grouped).sort((a, b) => {
-        return (PRIORITY_ORDER[a] || 999) - (PRIORITY_ORDER[b] || 999);
-    });
+    const sortedCategories = Object.keys(grouped).sort((a, b) => (PRIORITY_ORDER[a] || 999) - (PRIORITY_ORDER[b] || 999));
 
     let description = '';
-    
     for (const cat of sortedCategories) {
-        const icon = getCategoryIcon(cat);
-        const catLabel = getCategoryLabel(cat);
-        description += `\n**${icon} ${catLabel}**\n`;
-
-        // Ordina interni per orario (se timer) o timestamp
-        grouped[cat].sort((a, b) => {
-            if (a.triggerTime && b.triggerTime) return a.triggerTime.localeCompare(b.triggerTime);
-            return new Date(a.timestamp) - new Date(b.timestamp);
-        });
+        const icon = CATEGORIES.find(c => c.value === cat)?.emoji || '❓';
+        description += `\n**${icon} ${cat}**\n`;
+        
+        grouped[cat].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
 
         for (const p of grouped[cat]) {
             let details = '';
             if (p.type === 'KNOCK') {
-                 // Recupera nome canale se possibile, altrimenti ID
-                 const chName = message.guild.channels.cache.get(p.details.targetChannelId)?.name || p.details.targetChannelId;
+                 const chName = message.guild.channels.cache.get(p.details.targetChannelId)?.name || 'Casa ???';
                  const mode = p.details.mode === 'mode_forced' ? '🧨' : (p.details.mode === 'mode_hidden' ? '🕵️' : '👋');
                  details = `→ 🏠 ${formatName(chName)} ${mode}`;
             } else if (p.type === 'SHOP') {
@@ -187,76 +178,54 @@ async function showAdminDashboard(message) {
             } else if (p.type === 'ABILITY') {
                 details = `→ ${p.details.target ? `su ${p.details.target}` : 'generico'}`;
             }
-
             description += `\`[${p.source}]\` **${p.userName}** ${details}\n`;
         }
     }
 
     const embed = new EmbedBuilder()
-        .setTitle('📋 Dashboard Preset Globale (Admin)')
+        .setTitle('📋 Dashboard Preset Globale')
         .setColor('Gold')
         .setDescription(description.substring(0, 4096))
-        .setFooter({ text: 'Mostra tutti i preset Notturni e Timer attivi' })
         .setTimestamp();
 
     await message.channel.send({ embeds: [embed] });
 }
 
-function getCategoryIcon(category) {
-    const cat = CATEGORIES.find(c => c.value === category);
-    return cat ? cat.emoji : '❓';
-}
-
-function getCategoryLabel(category) {
-    const cat = CATEGORIES.find(c => c.value === category);
-    return cat ? cat.label : category;
-}
-
 // ==========================================
-// 🎮 GESTIONE COMANDO PRESET (UTENTE)
+// 🎮 GESTIONE COMANDO PRESET
 // ==========================================
 async function handlePresetCommand(message, args, presetType, triggerTime = null) {
     const userId = message.author.id;
     const userName = message.member?.displayName || message.author.username;
     
     activePresetSessions.set(userId, {
-        presetType: presetType,
-        triggerTime: triggerTime,
-        channelId: message.channel.id,
-        userName: userName
+        presetType, triggerTime, channelId: message.channel.id, userName
     });
 
     const categorySelect = new StringSelectMenuBuilder()
         .setCustomId('preset_category')
-        .setPlaceholder('Scegli la categoria dell\'azione...')
+        .setPlaceholder('Scegli la categoria...')
         .addOptions(CATEGORIES.map(cat => 
-            new StringSelectMenuOptionBuilder()
-                .setLabel(cat.label)
-                .setValue(cat.value)
-                .setEmoji(cat.emoji)
+            new StringSelectMenuOptionBuilder().setLabel(cat.label).setValue(cat.value).setEmoji(cat.emoji)
         ));
 
-    const row = new ActionRowBuilder().addComponents(categorySelect);
     const closeRow = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-            .setCustomId('preset_close')
-            .setLabel('Annulla')
-            .setStyle(ButtonStyle.Danger)
-            .setEmoji('❌')
+        new ButtonBuilder().setCustomId('preset_close').setLabel('Annulla').setStyle(ButtonStyle.Danger).setEmoji('❌')
     );
 
-    const typeLabel = presetType === 'night' 
-        ? '🌙 Notturno' 
-        : `⏰ Timer (Esecuzione alle **${triggerTime}**)`;
-    
+    let label = '❓';
+    if (presetType === 'night') label = '🌙 Notturno';
+    if (presetType === 'day') label = '☀️ Diurno';
+    if (presetType === 'scheduled') label = `⏰ Timer (${triggerTime})`;
+
     await message.reply({
-        content: `**Creazione Preset ${typeLabel}**\nSeleziona la categoria dell'azione:`,
-        components: [row, closeRow]
+        content: `**Creazione Preset ${label}**\nSeleziona la categoria dell'azione:`,
+        components: [new ActionRowBuilder().addComponents(categorySelect), closeRow]
     });
 }
 
 // ==========================================
-// 🔧 INTERACTION HANDLERS (LOGICA CORE)
+// 🔧 INTERACTION HANDLERS
 // ==========================================
 function registerPresetInteractions(client) {
     client.on('interactionCreate', async interaction => {
@@ -266,11 +235,10 @@ function registerPresetInteractions(client) {
         const userId = interaction.user.id;
         const session = activePresetSessions.get(userId);
 
-        // CHIUDI
+        // CLOSE
         if (interaction.customId === 'preset_close') {
             activePresetSessions.delete(userId);
-            await interaction.update({ content: '❌ Operazione annullata.', components: [] });
-            setTimeout(() => interaction.message.delete().catch(() => {}), 2000);
+            await interaction.update({ content: '❌ Annullato.', components: [] });
             return;
         }
 
@@ -284,14 +252,9 @@ function registerPresetInteractions(client) {
                 .addOptions(CATEGORIES.map(cat => 
                     new StringSelectMenuOptionBuilder().setLabel(cat.label).setValue(cat.value).setEmoji(cat.emoji)
                 ));
-
-            const closeRow = new ActionRowBuilder().addComponents(
-                new ButtonBuilder().setCustomId('preset_close').setLabel('Annulla').setStyle(ButtonStyle.Danger).setEmoji('❌')
-            );
-
             await interaction.update({
                 content: '**Seleziona la categoria dell\'azione:**',
-                components: [new ActionRowBuilder().addComponents(categorySelect), closeRow]
+                components: [new ActionRowBuilder().addComponents(categorySelect)]
             });
             return;
         }
@@ -299,311 +262,246 @@ function registerPresetInteractions(client) {
         // SELEZIONE CATEGORIA
         if (interaction.customId === 'preset_category') {
             if (!session) return interaction.reply({ content: '❌ Sessione scaduta.', ephemeral: true });
-
             const category = interaction.values[0];
             session.category = category;
 
-            // CASO 1: BUSSA
+            // 1. KNOCK
             if (category === 'KNOCK') {
                 const modeSelect = new StringSelectMenuBuilder()
                     .setCustomId('preset_knock_mode')
-                    .setPlaceholder('Scegli la modalità di visita...')
+                    .setPlaceholder('Scegli la modalità...')
                     .addOptions(
                         new StringSelectMenuOptionBuilder().setLabel('Visita Normale').setValue('mode_normal').setEmoji('👋'),
                         new StringSelectMenuOptionBuilder().setLabel('Visita Forzata').setValue('mode_forced').setEmoji('🧨'),
                         new StringSelectMenuOptionBuilder().setLabel('Visita Nascosta').setValue('mode_hidden').setEmoji('🕵️')
                     );
-
-                const backRow = new ActionRowBuilder().addComponents(
-                    new ButtonBuilder().setCustomId('preset_back_category').setLabel('Indietro').setStyle(ButtonStyle.Secondary).setEmoji('◀️')
-                );
-
                 await interaction.update({
-                    content: '🎭 **Step 2: Scegli la modalità di visita:**',
-                    components: [new ActionRowBuilder().addComponents(modeSelect), backRow]
+                    content: '🎭 **Step 2: Modalità visita:**',
+                    components: [new ActionRowBuilder().addComponents(modeSelect)]
                 });
             }
-            // CASO 2: SHOP (INVENTARIO)
+            // 2. SHOP
             else if (category === 'SHOP') {
                 const { econDb } = require('./economySystem');
                 const inventory = await econDb.getInventory(userId);
-                
-                // Filtra oggetti validi (NO SCOPA)
-                const validItems = SHOP_ITEMS_REF.filter(item => 
-                    inventory[item.id] && inventory[item.id] > 0
-                );
+                const validItems = SHOP_ITEMS_REF.filter(item => inventory[item.id] > 0);
 
                 if (validItems.length === 0) {
-                    return interaction.update({
-                        content: '❌ **Inventario vuoto o nessun oggetto utilizzabile via preset.** (La Scopa non è utilizzabile qui).',
-                        components: []
-                    });
+                    return interaction.update({ content: '❌ Inventario vuoto (NO Scopa).', components: [] });
                 }
 
                 const itemSelect = new StringSelectMenuBuilder()
                     .setCustomId('preset_shop_item')
-                    .setPlaceholder('Seleziona l\'oggetto da usare...')
+                    .setPlaceholder('Seleziona oggetto...')
                     .addOptions(validItems.map(item => 
-                        new StringSelectMenuOptionBuilder()
-                            .setLabel(`${item.name} (x${inventory[item.id]})`)
-                            .setValue(item.id)
-                            .setEmoji(item.emoji)
+                        new StringSelectMenuOptionBuilder().setLabel(item.name).setValue(item.id).setEmoji(item.emoji)
                     ));
-
-                const backRow = new ActionRowBuilder().addComponents(
-                    new ButtonBuilder().setCustomId('preset_back_category').setLabel('Indietro').setStyle(ButtonStyle.Secondary).setEmoji('◀️')
-                );
-
                 await interaction.update({
-                    content: '🛒 **Step 2: Seleziona l\'oggetto:**',
-                    components: [new ActionRowBuilder().addComponents(itemSelect), backRow]
+                    content: '🛒 **Step 2: Oggetto:**',
+                    components: [new ActionRowBuilder().addComponents(itemSelect)]
                 });
             }
-            // CASO 3: ALTRO (Text)
+            // 3. GENERICO (Modal)
             else {
-                const modal = new ModalBuilder()
-                    .setCustomId(`preset_modal_${category}`)
-                    .setTitle(`Preset ${getCategoryLabel(category)}`);
-
-                const targetInput = new TextInputBuilder()
-                    .setCustomId('target')
-                    .setLabel('Target (Nome giocatore, opzionale)')
-                    .setStyle(TextInputStyle.Short)
-                    .setRequired(false)
-                    .setPlaceholder('Es: Mario');
-
-                const descInput = new TextInputBuilder()
-                    .setCustomId('description')
-                    .setLabel('Dettagli Azione')
-                    .setStyle(TextInputStyle.Paragraph)
-                    .setRequired(true)
-                    .setPlaceholder('Descrivi cosa vuoi fare...');
-
+                const modal = new ModalBuilder().setCustomId(`preset_modal_${category}`).setTitle(`Preset ${category}`);
                 modal.addComponents(
-                    new ActionRowBuilder().addComponents(targetInput),
-                    new ActionRowBuilder().addComponents(descInput)
+                    new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('target').setLabel('Target (Opzionale)').setStyle(TextInputStyle.Short).setRequired(false)),
+                    new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('description').setLabel('Dettagli').setStyle(TextInputStyle.Paragraph).setRequired(true))
                 );
-
                 await interaction.showModal(modal);
             }
         }
 
-        // KNOCK: MODE -> CASA
+        // KNOCK: MODE -> HOUSE
         if (interaction.customId === 'preset_knock_mode') {
             if (!session) return interaction.reply({ content: '❌ Sessione scaduta.', ephemeral: true });
             session.knockMode = interaction.values[0];
 
             const houses = await getAvailableHouses(interaction.guild, userId);
-            if (houses.length === 0) {
-                return interaction.update({ content: '❌ Nessuna casa disponibile.', components: [] });
-            }
+            if (houses.length === 0) return interaction.update({ content: '❌ Nessuna casa.', components: [] });
 
             const houseSelect = new StringSelectMenuBuilder()
                 .setCustomId('preset_house')
-                .setPlaceholder('Scegli la casa...')
-                .addOptions(houses.slice(0, 25).map(house => 
-                    new StringSelectMenuOptionBuilder().setLabel(formatName(house.name)).setValue(house.id).setEmoji('🏠')
+                .setPlaceholder('Scegli casa...')
+                .addOptions(houses.slice(0, 25).map(h => 
+                    new StringSelectMenuOptionBuilder().setLabel(formatName(h.name)).setValue(h.id).setEmoji('🏠')
                 ));
-
-            const backRow = new ActionRowBuilder().addComponents(
-                new ButtonBuilder().setCustomId('preset_back_category').setLabel('Ricomincia').setStyle(ButtonStyle.Secondary).setEmoji('↩️')
-            );
-
             await interaction.update({
-                content: `🏠 **Step 3: Dove vuoi bussare?**`,
-                components: [new ActionRowBuilder().addComponents(houseSelect), backRow]
+                content: `🏠 **Step 3: Dove?**`,
+                components: [new ActionRowBuilder().addComponents(houseSelect)]
             });
         }
 
         // KNOCK: SAVE
         if (interaction.customId === 'preset_house') {
             if (!session) return interaction.reply({ content: '❌ Sessione scaduta.', ephemeral: true });
-            const targetChannelId = interaction.values[0];
-
-            // NOTA: La visita verrà scalata nel momento in cui il preset viene ESEGUITO (spostato in Queue)
-            // Questo vale sia per Timer che per Notte.
-
-            const details = {
-                targetChannelId,
-                mode: session.knockMode,
-                fromChannelId: session.channelId
-            };
+            const details = { targetChannelId: interaction.values[0], mode: session.knockMode, fromChannelId: session.channelId };
             await savePreset(interaction, session, 'KNOCK', 'KNOCK', details, session.userName);
         }
 
-        // SHOP: ITEM
+        // SHOP: ITEM SELECT (Gestione Lettera/Fuochi/Tenda)
         if (interaction.customId === 'preset_shop_item') {
             if (!session) return interaction.reply({ content: '❌ Sessione scaduta.', ephemeral: true });
             const itemId = interaction.values[0];
             session.shopItemId = itemId;
             const itemDef = SHOP_ITEMS_REF.find(i => i.id === itemId);
-            const itemsWithTarget = ['catene', 'lettera']; 
 
-            if (itemsWithTarget.includes(itemId)) {
+            // CASO A: LETTERA / TESTAMENTO -> MODAL TESTO
+            if (itemId === 'lettera' || itemId === 'testamento') {
+                const modal = new ModalBuilder()
+                    .setCustomId(`preset_shop_text_${itemId}`)
+                    .setTitle(`Scrivi ${itemDef.name}`);
+                
+                // Se lettera, chiedi anche target? No, Lettera usa StringSelectMenu per target in economy. 
+                // Ma qui siamo in un modal. Per semplicità in preset lettera, chiediamo Target nel testo O mettiamo uno step intermedio.
+                // FIX: Economy usa SelectMenu per target lettera. Qui dobbiamo replicare.
+                
+                // Se è TESTAMENTO -> Solo testo (permessi canali morti)
+                if (itemId === 'testamento') {
+                     // In realtà testamento non ha testo, attiva solo i permessi. Ma se l'utente vuole scrivere "lascio tutto a X"?
+                     // EconomySystem: useTestamento NON chiede testo. Attiva e basta.
+                     // Quindi procediamo al save diretto.
+                } else {
+                    // LETTERA: Serve target e testo.
+                    // Apriamo prima un menu per il target, POI il modal per il testo.
+                    const aliveMembers = await getAlivePlayers(interaction.guild, userId);
+                    const playerSelect = new StringSelectMenuBuilder()
+                        .setCustomId('preset_lettera_target')
+                        .setPlaceholder('Destinatario lettera...')
+                        .addOptions(aliveMembers.slice(0, 25).map(p => 
+                            new StringSelectMenuOptionBuilder().setLabel(p.name).setValue(p.id).setEmoji('👤')
+                        ));
+                    
+                    return interaction.update({
+                        content: `✉️ **Step 3: A chi invii la lettera?**`,
+                        components: [new ActionRowBuilder().addComponents(playerSelect)]
+                    });
+                }
+            }
+
+            // CASO B: CATENE (Target OBBLIGATORIO)
+            if (itemId === 'catene') {
                 const aliveMembers = await getAlivePlayers(interaction.guild, userId);
                 const playerSelect = new StringSelectMenuBuilder()
                     .setCustomId('preset_item_target')
-                    .setPlaceholder(`Scegli il target...`)
+                    .setPlaceholder('Chi vuoi incatenare?')
                     .addOptions(aliveMembers.slice(0, 25).map(p => 
-                        new StringSelectMenuOptionBuilder().setLabel(p.name).setValue(p.id).setEmoji('👤')
+                        new StringSelectMenuOptionBuilder().setLabel(p.name).setValue(p.id).setEmoji('⛓️')
                     ));
-
-                await interaction.update({
-                    content: `🎯 **Step 3: Target per ${itemDef.name}:**`,
+                return interaction.update({
+                    content: `⛓️ **Step 3: Target Catene:**`,
                     components: [new ActionRowBuilder().addComponents(playerSelect)]
                 });
-            } else {
-                // Rimuovi subito dall'inventario
-                const { econDb } = require('./economySystem');
-                await econDb.removeItem(userId, itemId, 1);
-                const details = { subType: itemId, itemName: itemDef.name, responseChannelId: session.channelId };
-                await savePreset(interaction, session, 'SHOP', 'SHOP', details, session.userName, 
-                    `✅ Oggetto **${itemDef.name}** programmato e rimosso dall'inventario.`);
             }
+
+            // CASO C: FUOCHI / TENDA / SCARPE / TESTAMENTO -> SAVE DIRETTO
+            // Fuochi/Tenda ora sono autolocalizzanti (EconomySystem fix)
+            const { econDb } = require('./economySystem');
+            await econDb.removeItem(userId, itemId, 1);
+            const details = { subType: itemId, itemName: itemDef.name, responseChannelId: session.channelId };
+            await savePreset(interaction, session, 'SHOP', 'SHOP', details, session.userName, 
+                `✅ Oggetto **${itemDef.name}** salvato.`);
         }
 
-        // SHOP: SAVE WITH TARGET
+        // LETTERA: TARGET SELEZIONATO -> APRI MODAL TESTO
+        if (interaction.customId === 'preset_lettera_target') {
+            if (!session) return interaction.reply({ content: '❌ Sessione scaduta.', ephemeral: true });
+            session.letteraTarget = interaction.values[0];
+
+            const modal = new ModalBuilder()
+                .setCustomId('preset_lettera_content')
+                .setTitle('Scrivi il contenuto');
+            
+            modal.addComponents(new ActionRowBuilder().addComponents(
+                new TextInputBuilder().setCustomId('content').setLabel('Messaggio (max 10 parole)').setStyle(TextInputStyle.Paragraph).setRequired(true)
+            ));
+            
+            await interaction.showModal(modal);
+        }
+
+        // LETTERA: CONTENUTO SALVATO
+        if (interaction.customId === 'preset_lettera_content') {
+            if (!session) return interaction.reply({ content: '❌ Sessione scaduta.', ephemeral: true });
+            const content = interaction.fields.getTextInputValue('content');
+            
+            if (content.trim().split(/\s+/).length > 10) 
+                return interaction.reply({ content: "❌ Massimo 10 parole!", ephemeral: true });
+
+            const { econDb } = require('./economySystem');
+            await econDb.removeItem(interaction.user.id, 'lettera', 1);
+
+            const details = { 
+                subType: 'lettera', 
+                itemName: 'Lettera', 
+                targetUserId: session.letteraTarget, 
+                content: content,
+                responseChannelId: session.channelId 
+            };
+            await savePreset(interaction, session, 'SHOP', 'SHOP', details, session.userName, "✅ Lettera salvata in coda.");
+        }
+
+        // CATENE: SAVE
         if (interaction.customId === 'preset_item_target') {
             if (!session) return interaction.reply({ content: '❌ Sessione scaduta.', ephemeral: true });
             const targetUserId = interaction.values[0];
-            const itemId = session.shopItemId;
-            const itemDef = SHOP_ITEMS_REF.find(i => i.id === itemId);
             const { econDb } = require('./economySystem');
-            await econDb.removeItem(userId, itemId, 1);
+            await econDb.removeItem(interaction.user.id, session.shopItemId, 1);
 
-            const details = { subType: itemId, itemName: itemDef.name, targetUserId, responseChannelId: session.channelId };
-            await savePreset(interaction, session, 'SHOP', 'SHOP', details, session.userName,
-                `✅ Oggetto **${itemDef.name}** su <@${targetUserId}> programmato e rimosso dall'inventario.`);
+            const details = { subType: session.shopItemId, itemName: 'Catene', targetUserId, responseChannelId: session.channelId };
+            await savePreset(interaction, session, 'SHOP', 'SHOP', details, session.userName);
         }
 
-        // ABILITY: MODAL
+        // ABILITY: SAVE
         if (interaction.customId.startsWith('preset_modal_')) {
             const category = interaction.customId.split('_')[2];
-            if (!session) return interaction.reply({ content: '❌ Sessione scaduta.', ephemeral: true });
-
             const target = interaction.fields.getTextInputValue('target');
             const desc = interaction.fields.getTextInputValue('description');
-
-            const details = { target: target || null, text: desc };
-            await savePreset(interaction, session, 'ABILITY', category, details, session.userName);
+            await savePreset(interaction, session, 'ABILITY', category, { target, text: desc }, session.userName);
         }
 
-        // LISTA: RIMUOVI
+        // REMOVE PRESET (LIST)
         if (interaction.customId === 'preset_list_select') {
-            const presetId = interaction.values[0];
-            const [type, id] = presetId.split('_');
-
-            try {
-                if (type === 'night') await presetDb.removeNightPreset(id);
-                else await presetDb.removeScheduledPreset(id);
-
-                await interaction.update({ content: '✅ Preset rimosso.', components: [] });
-                setTimeout(() => interaction.message.delete().catch(() => {}), 3000);
-            } catch (error) {
-                console.error(error);
-                await interaction.reply({ content: '❌ Errore.', ephemeral: true });
-            }
+            const [type, id] = interaction.values[0].split('_');
+            if (type === 'night') await presetDb.removeNightPreset(id);
+            else if (type === 'day') await presetDb.removeDayPreset(id);
+            else await presetDb.removeScheduledPreset(id);
+            await interaction.update({ content: '✅ Preset rimosso.', components: [] });
         }
     });
 }
 
 // ==========================================
-// 💾 SALVATAGGIO
+// 💾 SAVE PRESET
 // ==========================================
-async function savePreset(interaction, session, type, category, details, userName, customMsg = null) {
-    try {
-        if (session.presetType === 'night') {
-            await presetDb.addNightPreset(interaction.user.id, userName, type, category, details);
-        } else {
-            // Salva nel DB Scheduled con l'orario trigger
-            await presetDb.addScheduledPreset(interaction.user.id, userName, type, category, details, session.triggerTime);
-        }
-
-        activePresetSessions.delete(interaction.user.id);
-        
-        const msg = customMsg || `✅ **Preset Salvato!**\nTipo: ${session.presetType === 'night' ? 'Notturna' : 'Timer (' + session.triggerTime + ')'}\nCategoria: ${getCategoryLabel(category)}`;
-        
-        if (interaction.isModalSubmit()) await interaction.reply({ content: msg, ephemeral: true });
-        else await interaction.update({ content: msg, components: [] });
-
-    } catch (error) {
-        console.error('Errore SavePreset:', error);
-        if (interaction.deferred || interaction.replied) await interaction.followUp({ content: '❌ Errore.', ephemeral: true });
-        else await interaction.reply({ content: '❌ Errore.', ephemeral: true });
+async function savePreset(interaction, session, type, category, details, userName, customMsg) {
+    if (session.presetType === 'night') {
+        await presetDb.addNightPreset(interaction.user.id, userName, type, category, details);
+    } else if (session.presetType === 'day') {
+        await presetDb.addDayPreset(interaction.user.id, userName, type, category, details);
+    } else {
+        await presetDb.addScheduledPreset(interaction.user.id, userName, type, category, details, session.triggerTime);
     }
+    activePresetSessions.delete(interaction.user.id);
+    const msg = customMsg || `✅ **Preset Salvato!** (${category})`;
+    if (interaction.isModalSubmit()) await interaction.reply({ content: msg, ephemeral: true });
+    else await interaction.update({ content: msg, components: [] });
 }
 
 // ==========================================
-// 🎯 HELPER PER CASE E GIOCATORI
+// 🚀 RESOLVE PHASES (Transfer to Queue)
 // ==========================================
-async function getAvailableHouses(guild, userId) {
-    const myHomeId = await db.housing.getHome(userId);
-    const destroyed = await db.housing.getDestroyedHouses();
-
-    return guild.channels.cache
-        .filter(ch => {
-            if (ch.parentId !== HOUSING.CATEGORIA_CASE) return false;
-            if (ch.type !== ChannelType.GuildText) return false;
-            if (ch.id === myHomeId) return false;
-            if (destroyed.includes(ch.id)) return false;
-            const ow = ch.permissionOverwrites.cache.get(userId);
-            if (ow && ow.deny.has(PermissionsBitField.Flags.ViewChannel)) return false;
-            return true;
-        })
-        .sort((a, b) => a.rawPosition - b.rawPosition)
-        .map(ch => ({ id: ch.id, name: ch.name }));
-}
-
-async function getAlivePlayers(guild, excludeId) {
-    const aliveRole = guild.roles.cache.get(RUOLI.ALIVE);
-    if (!aliveRole) return [];
-    const markedForDeath = await db.moderation.getMarkedForDeath();
-    const deadIds = markedForDeath.map(m => m.userId);
-
-    return aliveRole.members
-        .filter(m => m.id !== excludeId && !m.user.bot && !deadIds.includes(m.id))
-        .map(m => ({ id: m.id, name: m.displayName || m.user.username }));
-}
-
-// ==========================================
-// 🚀 TRASFERIMENTO IN QUEUE (ESECUZIONE)
-// ==========================================
-function mapPresetToQueue(preset) {
-    if (preset.type === 'KNOCK') {
-        return {
-            type: 'KNOCK',
-            userId: preset.userId,
-            details: preset.details
-        };
-    }
-    if (preset.type === 'SHOP') {
-        return {
-            type: 'SHOP',
-            userId: preset.userId,
-            details: preset.details
-        };
-    }
-    if (preset.type === 'ABILITY') {
-        return {
-            type: 'ABILITY',
-            userId: preset.userId,
-            details: {
-                text: `[${getCategoryLabel(preset.category)}] ${preset.details.text}` + (preset.details.target ? ` (Target: ${preset.details.target})` : ''),
-                category: preset.category
-            }
-        };
-    }
-    return null;
-}
-
-// Risoluzione Notte (!notte)
 async function resolveNightPhase() {
     console.log('🌙 [Preset] Risoluzione NOTTURNA...');
     const presets = await presetDb.getAllNightPresets();
     await processAndClearPresets(presets, 'Night');
 }
 
-// Risoluzione Timer (Automatico)
+async function resolveDayPhase() {
+    console.log('☀️ [Preset] Risoluzione DIURNA...');
+    const presets = await presetDb.getAllDayPresets();
+    await processAndClearPresets(presets, 'Day');
+}
+
 async function resolveScheduledPhase(triggerTime) {
     console.log(`⏰ [Preset] Risoluzione TIMER (${triggerTime})...`);
     const presets = await presetDb.getScheduledPresetsAtTime(triggerTime);
@@ -616,7 +514,7 @@ async function resolveScheduledPhase(triggerTime) {
 async function processAndClearPresets(presets, contextLabel) {
     if (presets.length === 0) return;
 
-    // Ordina per priorità
+    // Ordina per priorità e timestamp
     const sorted = presets.sort((a, b) => {
         const pA = PRIORITY_ORDER[a.category] || 999;
         const pB = PRIORITY_ORDER[b.category] || 999;
@@ -624,45 +522,45 @@ async function processAndClearPresets(presets, contextLabel) {
         return new Date(a.timestamp) - new Date(b.timestamp);
     });
 
+    // FIX ORDINE INVERTITO: Aggiungiamo un delay incrementale
+    let delayCounter = 0;
+
     for (const preset of sorted) {
-        // --- LOGICA DEDUZIONE VISITE ---
+        // Logica deduzione visite (Knock)
         if (preset.type === 'KNOCK') {
             const info = await db.housing.getVisitInfo(preset.userId);
-            let canProceed = false;
-
-            if (preset.details.mode === 'mode_forced') {
-                if (info.forced > 0) {
-                    await db.housing.decrementForced(preset.userId);
-                    canProceed = true;
-                }
-            } else if (preset.details.mode === 'mode_hidden') {
-                if (info.hidden > 0) {
-                    await db.housing.decrementHidden(preset.userId);
-                    canProceed = true;
-                }
-            } else {
-                if (info.used < info.totalLimit) {
-                    await db.housing.incrementVisit(preset.userId);
-                    canProceed = true;
-                }
+            let ok = false;
+            if (preset.details.mode === 'mode_forced' && info.forced > 0) {
+                await db.housing.decrementForced(preset.userId); ok = true;
+            } else if (preset.details.mode === 'mode_hidden' && info.hidden > 0) {
+                await db.housing.decrementHidden(preset.userId); ok = true;
+            } else if (info.used < info.totalLimit) {
+                await db.housing.incrementVisit(preset.userId); ok = true;
             }
-
-            if (!canProceed) {
-                console.log(`🚫 [Preset] Salto KNOCK di ${preset.userName}: visite finite.`);
-                continue; // Non aggiunge alla coda
-            }
+            if (!ok) continue; // Skip se visite finite
         }
 
-        const queueItem = mapPresetToQueue(preset);
-        if (queueItem) {
+        // Mappa oggetto per coda
+        const queueItem = {
+            type: preset.type,
+            userId: preset.userId,
+            details: preset.type === 'ABILITY' ? { 
+                text: `[${CATEGORIES.find(c=>c.value===preset.category)?.label}] ${preset.details.text}` + (preset.details.target ? ` (Target: ${preset.details.target})` : ''),
+                category: preset.category 
+            } : preset.details
+        };
+
+        // Aggiungi con delay per mantenere ordine in DB (ms precision)
+        setTimeout(() => {
             eventBus.emit('queue:add', queueItem);
-            console.log(`➡️ [Preset -> Queue] Spostato ${preset.type} di ${preset.userName}`);
-        }
+        }, delayCounter * 50); // 50ms di gap tra uno e l'altro
+        
+        delayCounter++;
     }
 
-    if (contextLabel === 'Night') {
-        await presetDb.clearAllNightPresets();
-    }
+    // Pulisci DB
+    if (contextLabel === 'Night') await presetDb.clearAllNightPresets();
+    else if (contextLabel === 'Day') await presetDb.clearAllDayPresets();
 }
 
 // ==========================================
@@ -670,73 +568,63 @@ async function processAndClearPresets(presets, contextLabel) {
 // ==========================================
 async function showUserPresets(message) {
     const userId = message.author.id;
-    const night = await presetDb.getUserNightPresets(userId);
-    const scheduled = await presetDb.getUserScheduledPresets(userId);
+    const n = await presetDb.getUserNightPresets(userId);
+    const d = await presetDb.getUserDayPresets(userId);
+    const s = await presetDb.getUserScheduledPresets(userId);
 
-    if (night.length === 0 && scheduled.length === 0) {
-        return message.reply('📋 Non hai preset attivi.');
-    }
+    if (n.length === 0 && d.length === 0 && s.length === 0) return message.reply('📋 Nessun preset.');
 
     const options = [];
-
-    // Notturni
-    for (const p of night) {
-        let label = `🌙 ${getCategoryLabel(p.category)}`;
-        if (p.type === 'SHOP') label += ` (${p.details.itemName})`;
-        options.push(new StringSelectMenuOptionBuilder()
-            .setLabel(label.substring(0, 100))
-            .setValue(`night_${p._id}`)
-            .setDescription('Notturno - Clicca per rimuovere')
-        );
-    }
-
-    // Timer
-    for (const p of scheduled) {
-        let label = `⏰ ${p.triggerTime} - ${getCategoryLabel(p.category)}`;
-        if (p.type === 'SHOP') label += ` (${p.details.itemName})`;
-        options.push(new StringSelectMenuOptionBuilder()
-            .setLabel(label.substring(0, 100))
-            .setValue(`scheduled_${p._id}`)
-            .setDescription(`Timer ${p.triggerTime} - Clicca per rimuovere`)
-        );
-    }
+    n.forEach(p => options.push({ label: `🌙 ${p.category}`, value: `night_${p._id}`, desc: 'Notturno' }));
+    d.forEach(p => options.push({ label: `☀️ ${p.category}`, value: `day_${p._id}`, desc: 'Diurno' }));
+    s.forEach(p => options.push({ label: `⏰ ${p.triggerTime} ${p.category}`, value: `scheduled_${p._id}`, desc: 'Timer' }));
 
     const select = new StringSelectMenuBuilder()
         .setCustomId('preset_list_select')
-        .setPlaceholder('Seleziona un preset da rimuovere...')
-        .addOptions(options.slice(0, 25));
+        .setPlaceholder('Rimuovi...')
+        .addOptions(options.slice(0, 25).map(o => 
+            new StringSelectMenuOptionBuilder().setLabel(o.label).setValue(o.value).setDescription(o.desc)
+        ));
 
-    await message.reply({
-        content: '📋 **I tuoi preset attivi:**\nSeleziona per eliminare:',
-        components: [new ActionRowBuilder().addComponents(select)]
-    });
+    await message.reply({ content: '📋 **I tuoi preset:**', components: [new ActionRowBuilder().addComponents(select)] });
 }
 
 // ==========================================
-// ⏰ TIMER
+// 🎯 HELPERS & EXPORT
 // ==========================================
+async function getAvailableHouses(guild, userId) {
+    const myHomeId = await db.housing.getHome(userId);
+    const destroyed = await db.housing.getDestroyedHouses();
+    return guild.channels.cache.filter(ch => 
+        ch.parentId === HOUSING.CATEGORIA_CASE && ch.type === ChannelType.GuildText && 
+        ch.id !== myHomeId && !destroyed.includes(ch.id) &&
+        !ch.permissionOverwrites.cache.get(userId)?.deny.has(PermissionsBitField.Flags.ViewChannel)
+    ).map(ch => ({ id: ch.id, name: ch.name }));
+}
+
+async function getAlivePlayers(guild, excludeId) {
+    const aliveRole = guild.roles.cache.get(RUOLI.ALIVE);
+    if (!aliveRole) return [];
+    const deadIds = (await db.moderation.getMarkedForDeath()).map(m => m.userId);
+    return aliveRole.members.filter(m => m.id !== excludeId && !m.user.bot && !deadIds.includes(m.id))
+        .map(m => ({ id: m.id, name: m.displayName }));
+}
+
 function startPresetTimer() {
     setInterval(async () => {
-        const now = new Date();
-        const options = { timeZone: 'Europe/Rome', hour: '2-digit', minute: '2-digit', hour12: false };
-        const currentTime = now.toLocaleTimeString('it-IT', options).slice(0, 5); // "HH:MM"
-
-        const scheduledPresets = await presetDb.getScheduledPresetsAtTime(currentTime);
-        
-        if (scheduledPresets.length > 0) {
-            await resolveScheduledPhase(currentTime);
-        }
-    }, 60000); // Check ogni minuto
-
-    console.log('⏰ [Preset] Timer avviato (Europe/Rome).');
+        const time = new Date().toLocaleTimeString('it-IT', { timeZone: 'Europe/Rome', hour: '2-digit', minute: '2-digit' });
+        await resolveScheduledPhase(time);
+    }, 60000);
 }
 
 module.exports = {
     registerPresetInteractions,
     handlePresetCommand,
     resolveNightPhase,
+    resolveDayPhase,
     resolveScheduledPhase,
     showUserPresets,
     showAdminDashboard,
     startPresetTimer,
+    db: presetDb // Export per adminCommands
 };
