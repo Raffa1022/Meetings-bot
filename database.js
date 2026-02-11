@@ -62,7 +62,6 @@ const queueSchema = new mongoose.Schema({
     timestamp: { type: Date, default: Date.now, index: true }
 }, { versionKey: false });
 
-// Index composto per query frequenti sulla coda
 queueSchema.index({ status: 1, timestamp: 1 });
 queueSchema.index({ userId: 1, status: 1, type: 1 });
 
@@ -71,11 +70,12 @@ queueSchema.index({ userId: 1, status: 1, type: 1 });
 // ==========================================
 const moderationSchema = new mongoose.Schema({
     id: { type: String, default: 'main_moderation', index: true },
-    blockedVB: { type: Array, default: [] },       // [{ userId, userTag, timestamp }]
-    blockedRB: { type: Array, default: [] },       // [{ userId, userTag, timestamp }]
-    protected: { type: Array, default: [] },       // [{ userId, userTag, timestamp }]
-    unprotectable: { type: Array, default: [] },   // [{ userId, userTag, timestamp }] - Non può essere protetto (catene)
-    markedForDeath: { type: Array, default: [] }   // [{ userId, userTag, timestamp }] - Lista morti
+    blockedVB: { type: Array, default: [] },       
+    blockedRB: { type: Array, default: [] },       
+    protected: { type: Array, default: [] },       
+    unprotectable: { type: Array, default: [] },   
+    markedForDeath: { type: Array, default: [] },
+    presetPhaseActive: { type: Boolean, default: false } // 🔒 BLOCCO ABILITÀ (Nuovo)
 }, { minimize: false, versionKey: false });
 
 // ==========================================
@@ -84,8 +84,20 @@ const moderationSchema = new mongoose.Schema({
 const presetNightSchema = new mongoose.Schema({
     userId: { type: String, required: true, index: true },
     userName: { type: String, required: true },
-    type: { type: String, required: true },        // ABILITY, KNOCK, SHOP
-    category: { type: String, required: true },    // PROTEZIONE, LETALE, KNOCK, SHOP, etc.
+    type: { type: String, required: true },
+    category: { type: String, required: true },
+    details: { type: Object, default: {} },
+    timestamp: { type: Date, default: Date.now, index: true }
+}, { versionKey: false });
+
+// ==========================================
+// 📊 SCHEMA PRESET DIURNO (Nuovo)
+// ==========================================
+const presetDaySchema = new mongoose.Schema({
+    userId: { type: String, required: true, index: true },
+    userName: { type: String, required: true },
+    type: { type: String, required: true },
+    category: { type: String, required: true },
     details: { type: Object, default: {} },
     timestamp: { type: Date, default: Date.now, index: true }
 }, { versionKey: false });
@@ -96,11 +108,11 @@ const presetNightSchema = new mongoose.Schema({
 const presetScheduledSchema = new mongoose.Schema({
     userId: { type: String, required: true, index: true },
     userName: { type: String, required: true },
-    type: { type: String, required: true },        // ABILITY, KNOCK, SHOP
-    category: { type: String, required: true },    // PROTEZIONE, LETALE, KNOCK, SHOP, etc.
+    type: { type: String, required: true }, 
+    category: { type: String, required: true },
     details: { type: Object, default: {} },
     timestamp: { type: Date, default: Date.now },
-    triggerTime: { type: String, required: true, index: true }  // HH:MM
+    triggerTime: { type: String, required: true, index: true } 
 }, { versionKey: false });
 
 // ==========================================
@@ -112,6 +124,7 @@ const AbilityModel = mongoose.model('AbilityData', abilitySchema);
 const QueueModel = mongoose.model('QueueData', queueSchema);
 const ModerationModel = mongoose.model('ModerationData', moderationSchema);
 const PresetNightModel = mongoose.model('PresetNightData', presetNightSchema);
+const PresetDayModel = mongoose.model('PresetDayData', presetDaySchema); // Nuovo
 const PresetScheduledModel = mongoose.model('PresetScheduledData', presetScheduledSchema);
 
 // ==========================================
@@ -126,7 +139,6 @@ async function connectDB() {
     });
     console.log('✅ MongoDB connesso (pool: 5)');
 
-    // Assicura che i documenti singleton esistano
     await Promise.all([
         HousingModel.findOneAndUpdate(
             { id: 'main_housing' }, { $setOnInsert: { id: 'main_housing' } },
@@ -137,7 +149,7 @@ async function connectDB() {
             { upsert: true, new: true }
         ),
         ModerationModel.findOneAndUpdate(
-            { id: 'main_moderation' }, { $setOnInsert: { id: 'main_moderation' } },
+            { id: 'main_moderation' }, { $setOnInsert: { id: 'main_moderation', presetPhaseActive: false } },
             { upsert: true, new: true }
         ),
     ]);
@@ -152,5 +164,6 @@ module.exports = {
     QueueModel,
     ModerationModel,
     PresetNightModel,
+    PresetDayModel, // Export
     PresetScheduledModel,
 };
