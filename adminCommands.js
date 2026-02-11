@@ -2,7 +2,7 @@
 // 👮 COMANDI ADMIN HOUSING
 // assegnacasa, visite, aggiunta, resetvisite, sblocca,
 // notte, giorno, distruzione, ricostruzione, pubblico,
-// sposta, dove, multipla, ritirata, ram, ritorno
+// sposta, dove, multipla, ritirata, ram, ritorno, preset
 // ==========================================
 const { PermissionsBitField, ChannelType, EmbedBuilder } = require('discord.js');
 const mongoose = require('mongoose');
@@ -10,6 +10,7 @@ const { HOUSING, RUOLI, RUOLI_PUBBLICI, RUOLI_PERMESSI, GIF, QUEUE } = require('
 const db = require('./db');
 const { movePlayer } = require('./playerMovement');
 const { isAdmin, formatName } = require('./helpers');
+const { resolveNightPhase, resolveDayPhase } = require('./presetSystem');
 
 module.exports = async function handleAdminCommand(message, command, args, client) {
     if (!isAdmin(message.member)) return message.reply("⛔ Non sei admin.");
@@ -106,10 +107,11 @@ module.exports = async function handleAdminCommand(message, command, args, clien
             await Promise.all([
                 db.housing.setMode('NIGHT'),
                 db.housing.applyLimitsForMode('NIGHT'),
+                // ATTIVA BLOCCO PRESET
+                db.moderation.setPresetPhaseActive(true)
             ]);
 
-            // 🔥 ESEGUI PRESET NOTTURNI (prima di tutto)
-            const { resolveNightPhase } = require('./presetSystem');
+            // 🔥 ESEGUI PRESET NOTTURNI
             await resolveNightPhase();
 
             // Rimuovi permessi testamento dai canali morti
@@ -168,7 +170,7 @@ module.exports = async function handleAdminCommand(message, command, args, clien
                 }
             }
             
-            message.reply(`✅ **Notte ${numero} avviata.** Preset notturni eseguiti.`);
+            message.reply(`✅ **Notte ${numero} avviata.** Preset notturni eseguiti. Abilità bloccate fino a \`!fine preset\`.`);
         } catch (error) {
             console.error('❌ Errore comando !notte:', error);
             return message.reply("❌ Errore durante l'esecuzione del comando.");
@@ -196,7 +198,12 @@ module.exports = async function handleAdminCommand(message, command, args, clien
             await Promise.all([
                 db.housing.setMode('DAY'),
                 db.housing.applyLimitsForMode('DAY'),
+                // ATTIVA BLOCCO PRESET ANCHE DI GIORNO PER I PRESET DIURNI
+                db.moderation.setPresetPhaseActive(true)
             ]);
+            
+            // 🔥 ESEGUI PRESET DIURNI
+            await resolveDayPhase();
 
             const annunciChannel = message.guild.channels.cache.get(HOUSING.CANALE_ANNUNCI);
             if (annunciChannel) {
@@ -272,11 +279,73 @@ module.exports = async function handleAdminCommand(message, command, args, clien
                 }
             }
             
-            message.reply(`✅ **Giorno ${numero} avviato.**`);
+            message.reply(`✅ **Giorno ${numero} avviato.** Preset diurni eseguiti. Abilità bloccate fino a \`!fine preset\`.`);
         } catch (error) {
             console.error('❌ Errore comando !giorno:', error);
             return message.reply("❌ Errore durante l'esecuzione del comando.");
         }
+    }
+
+    // ===================== FINE PRESET =====================
+    else if (command === 'fine' && args[0]?.toLowerCase() === 'preset') {
+        await db.moderation.setPresetPhaseActive(false);
+
+        const annunciChannel = message.guild.channels.cache.get(HOUSING.CANALE_ANNUNCI);
+        if (annunciChannel) {
+            await annunciChannel.send(
+                `📢 <@&${RUOLI.ALIVE}> <@&${RUOLI.SPONSOR}>\n✅ **I PRESET SONO STATI TUTTI EFFETTUATI!**\nOra è possibile utilizzare le abilità.`
+            );
+        }
+        message.reply("✅ **Fase Preset Terminata.** Abilità sbloccate.");
+    }
+
+    // ===================== PRESET @UTENTE (ADMIN VIEW) =====================
+    else if (command === 'preset' && message.mentions.members.size > 0) {
+        const targetUser = message.mentions.members.first();
+        
+        // Helper locale per etichette
+        const getLabel = (cat) => {
+            const map = { 'KNOCK': 'Bussa', 'SHOP': 'Shop', 'PROTEZIONE': 'Protezione', 'LETALE': 'Letale', 'INFORMAZIONE': 'Info', 'COMUNICAZIONE': 'Comunicazione', 'POTENZIAMENTO': 'Potenziamento', 'TRASPORTO': 'Trasporto', 'CURA': 'Cura', 'VISITBLOCK': 'Visitblock', 'ROLEBLOCK': 'Roleblock', 'MANIPOLAZIONE': 'Manipolazione', 'ALTRO': 'Altro' };
+            return map[cat] || cat;
+        };
+
+        const nightPresets = await db.preset.getUserNightPresets(targetUser.id);
+        const dayPresets = await db.preset.getUserDayPresets(targetUser.id);
+        const scheduledPresets = await db.preset.getUserScheduledPresets(targetUser.id);
+
+        let desc = "";
+
+        if (nightPresets.length > 0) {
+            desc += "\n🌙 **Notturni:**\n";
+            nightPresets.forEach(p => {
+                let det = p.type === 'ABILITY' ? p.details.text : (p.type === 'SHOP' ? p.details.itemName : p.type);
+                desc += `- [${getLabel(p.category)}] ${det}\n`;
+            });
+        }
+        if (dayPresets.length > 0) {
+            desc += "\n☀️ **Diurni:**\n";
+            dayPresets.forEach(p => {
+                let det = p.type === 'ABILITY' ? p.details.text : (p.type === 'SHOP' ? p.details.itemName : p.type);
+                desc += `- [${getLabel(p.category)}] ${det}\n`;
+            });
+        }
+        if (scheduledPresets.length > 0) {
+            desc += "\n⏰ **Timer:**\n";
+            scheduledPresets.forEach(p => {
+                let det = p.type === 'ABILITY' ? p.details.text : (p.type === 'SHOP' ? p.details.itemName : p.type);
+                desc += `- [${p.triggerTime}] [${getLabel(p.category)}] ${det}\n`;
+            });
+        }
+
+        if (desc === "") desc = "Nessun preset attivo.";
+
+        const embed = new EmbedBuilder()
+            .setTitle(`📋 Preset di ${targetUser.displayName}`)
+            .setColor('Blue')
+            .setDescription(desc)
+            .setTimestamp();
+        
+        message.reply({ embeds: [embed] });
     }
 
     // ===================== DISTRUZIONE =====================
@@ -300,7 +369,6 @@ module.exports = async function handleAdminCommand(message, command, args, clien
             if (keyMsg) await keyMsg.delete();
         } catch {}
 
-        // FIX: Trova occupanti fisici con guild.members.fetch (cache limitata a 50 non basta)
         const membersInside = [];
         for (const [id, overwrite] of targetChannel.permissionOverwrites.cache) {
             if (overwrite.type !== 1) continue; // Solo Member, non Role
@@ -315,7 +383,6 @@ module.exports = async function handleAdminCommand(message, command, args, clien
         const destroyed = await db.housing.getDestroyedHouses();
 
         // FIX: Ordina - PLAYER (ALIVE/DEAD) prima, SPONSOR dopo
-        // Così il player decide la destinazione e trascina lo sponsor
         membersInside.sort((a, b) => {
             const aIsPlayer = a.roles.cache.has(RUOLI.ALIVE) || a.roles.cache.has(RUOLI.DEAD) ? 0 : 1;
             const bIsPlayer = b.roles.cache.has(RUOLI.ALIVE) || b.roles.cache.has(RUOLI.DEAD) ? 0 : 1;
