@@ -207,7 +207,15 @@ async function executeHousingAction(queueItem) {
             }
         });
         
-        // Timeout handling... (come codice precedente)
+        // Auto-apertura dopo 5 minuti (300000ms) se nessuno risponde
+        collector.on('end', async (collected, reason) => {
+            if (reason === 'time' && collected.size === 0) {
+                // Nessuno ha risposto - apro automaticamente
+                await db.housing.clearActiveKnock(member.id);
+                await msg.reply("⏱️ Tempo scaduto - Apertura automatica.");
+                await enterHouse(member, fromCh, targetCh, `👋 ${member} è entrato (auto-apertura).`, false, true);
+            }
+        });
     }
 }
 
