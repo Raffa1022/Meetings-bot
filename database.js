@@ -18,7 +18,8 @@ const housingSchema = new mongoose.Schema({
     forcedVisits: { type: Object, default: {} },
     hiddenVisits: { type: Object, default: {} },
     playerModes: { type: Object, default: {} },
-    destroyedHouses: { type: Array, default: [] },
+    destroyedHouses: { type: Array, default: [] }, // Manteniamo per compatibilità legacy
+    destroyedHousesData: { type: Object, default: {} }, // { channelId: { phase: 'NOTTE 1' | 'GIORNO 1', timestamp: Date } }
     multiplaHistory: { type: Object, default: {} },
     lastReset: { type: String, default: '' },
     pendingKnocks: { type: Array, default: [] },
