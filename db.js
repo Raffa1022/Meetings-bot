@@ -37,6 +37,11 @@ const housing = {
         return doc?.destroyedHouses || [];
     },
 
+    async getDestroyedHousesData() {
+        const doc = await HousingModel.findOne(H_ID, { destroyedHousesData: 1 }).lean();
+        return doc?.destroyedHousesData || {};
+    },
+
     async getPlayerMode(userId) {
         const doc = await HousingModel.findOne(H_ID, { [`playerModes.${userId}`]: 1 }).lean();
         return doc?.playerModes?.[userId] || null;
@@ -206,12 +211,29 @@ const housing = {
         return doc?.activeKnocks?.[userId] || null;
     },
 
-    async addDestroyedHouse(channelId) {
-        return HousingModel.updateOne(H_ID, { $addToSet: { destroyedHouses: channelId } });
+    async addDestroyedHouse(channelId, phase = null) {
+        const updates = {
+            $addToSet: { destroyedHouses: channelId }
+        };
+        
+        // Se viene specificata la fase, salvo anche i metadati
+        if (phase) {
+            updates.$set = {
+                [`destroyedHousesData.${channelId}`]: {
+                    phase,
+                    timestamp: new Date()
+                }
+            };
+        }
+        
+        return HousingModel.updateOne(H_ID, updates);
     },
 
     async removeDestroyedHouse(channelId) {
-        return HousingModel.updateOne(H_ID, { $pull: { destroyedHouses: channelId } });
+        return HousingModel.updateOne(H_ID, {
+            $pull: { destroyedHouses: channelId },
+            $unset: { [`destroyedHousesData.${channelId}`]: '' }
+        });
     },
 
     async setLastReset(date) {
