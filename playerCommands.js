@@ -502,4 +502,3 @@ module.exports = function registerPlayerCommands(client) {
         }
     });
 };
-}
