@@ -107,18 +107,17 @@ module.exports = async function handleAdminCommand(message, command, args, clien
             await Promise.all([
                 db.housing.setMode('NIGHT'),
                 db.housing.applyLimitsForMode('NIGHT'),
-                // ATTIVA BLOCCO PRESET
+                // 🔥 ATTIVA BLOCCO PRESET (Nessuna abilità finché non si fa !fine preset)
                 db.moderation.setPresetPhaseActive(true)
             ]);
 
-            // 🔥 ESEGUI PRESET NOTTURNI
+            // 🔥 ESEGUI PRESET NOTTURNI (Salvato nel PresetNightModel)
             await resolveNightPhase();
 
             // Rimuovi permessi testamento dai canali morti
             const DEAD_CHANNELS = ['1460741481420558469', '1460741482876239944'];
             const { econDb } = require('./economySystem');
             
-            // Ottieni tutti gli utenti con testamento attivo
             const allMembers = await message.guild.members.fetch();
             for (const [, member] of allMembers) {
                 const testamentoChannels = await econDb.getTestamentoChannels(member.id);
@@ -155,7 +154,7 @@ module.exports = async function handleAdminCommand(message, command, args, clien
                 await Promise.all(ops);
             }
             
-            // 💰 Dai 100 monete a tutti i giocatori con ruolo ALIVE
+            // 💰 Dai 100 monete
             const aliveMembers = message.guild.members.cache.filter(m => 
                 !m.user.bot && m.roles.cache.has(RUOLI.ALIVE)
             );
@@ -163,8 +162,6 @@ module.exports = async function handleAdminCommand(message, command, args, clien
             
             if (aliveUserIds.length > 0) {
                 await econDb.bulkAddBalance(aliveUserIds, 100);
-                
-                // Tag il ruolo @Alive invece dei singoli utenti
                 if (annunciChannel) {
                     await annunciChannel.send(`🪙 <@&${RUOLI.ALIVE}> avete ricevuto il vostro collect giornaliero di **100 monete**!`);
                 }
@@ -198,11 +195,11 @@ module.exports = async function handleAdminCommand(message, command, args, clien
             await Promise.all([
                 db.housing.setMode('DAY'),
                 db.housing.applyLimitsForMode('DAY'),
-                // ATTIVA BLOCCO PRESET ANCHE DI GIORNO PER I PRESET DIURNI
+                // 🔥 ATTIVA BLOCCO PRESET (Nessuna abilità finché non si fa !fine preset)
                 db.moderation.setPresetPhaseActive(true)
             ]);
             
-            // 🔥 ESEGUI PRESET DIURNI
+            // 🔥 ESEGUI PRESET DIURNI (Salvato nel PresetDayModel)
             await resolveDayPhase();
 
             const annunciChannel = message.guild.channels.cache.get(HOUSING.CANALE_ANNUNCI);
@@ -226,12 +223,10 @@ module.exports = async function handleAdminCommand(message, command, args, clien
                     if (HOUSING.CANALI_BLOCCO_PARZIALE.includes(channel.id)) {
                         ops.push(channel.permissionOverwrites.edit(RUOLI.ALIVE, { SendMessages: true }).catch(() => {}));
                     } else {
-                        // Canali normali: permetti ALIVE e SPONSOR
                         [RUOLI.ALIVE, RUOLI.SPONSOR].forEach(r => {
                             if (r) ops.push(channel.permissionOverwrites.edit(r, { SendMessages: true }).catch(() => {}));
                         });
                         
-                        // Blocca DEAD e SPONSOR_DEAD nei canali normali (possono solo vedere)
                         if (!DEAD_CHANNELS.includes(channel.id)) {
                             [RUOLI.DEAD, RUOLI.SPONSOR_DEAD].forEach(r => {
                                 if (r) ops.push(channel.permissionOverwrites.edit(r, { 
@@ -244,7 +239,6 @@ module.exports = async function handleAdminCommand(message, command, args, clien
                         }
                     }
                     
-                    // Nei canali DEAD_CHANNELS: blocca DEAD e SPONSOR_DEAD di default (sbloccati solo con testamento)
                     if (DEAD_CHANNELS.includes(channel.id)) {
                         [RUOLI.DEAD, RUOLI.SPONSOR_DEAD].forEach(r => {
                             if (r) ops.push(channel.permissionOverwrites.edit(r, { 
@@ -264,7 +258,6 @@ module.exports = async function handleAdminCommand(message, command, args, clien
                 await Promise.all(ops);
             }
             
-            // 💰 Dai 100 monete a tutti i giocatori con ruolo ALIVE
             const aliveMembers = message.guild.members.cache.filter(m => 
                 !m.user.bot && m.roles.cache.has(RUOLI.ALIVE)
             );
@@ -272,8 +265,6 @@ module.exports = async function handleAdminCommand(message, command, args, clien
             
             if (aliveUserIds.length > 0) {
                 await econDb.bulkAddBalance(aliveUserIds, 100);
-                
-                // Tag il ruolo @Alive invece dei singoli utenti
                 if (annunciChannel) {
                     await annunciChannel.send(`🪙 <@&${RUOLI.ALIVE}> avete ricevuto il vostro collect giornaliero di **100 monete**!`);
                 }
@@ -288,15 +279,23 @@ module.exports = async function handleAdminCommand(message, command, args, clien
 
     // ===================== FINE PRESET =====================
     else if (command === 'fine' && args[0]?.toLowerCase() === 'preset') {
+        // 1. Disattiva il blocco
         await db.moderation.setPresetPhaseActive(false);
 
+        // 2. Annuncio ufficiale nel canale annunci
         const annunciChannel = message.guild.channels.cache.get(HOUSING.CANALE_ANNUNCI);
         if (annunciChannel) {
             await annunciChannel.send(
-                `📢 <@&${RUOLI.ALIVE}> <@&${RUOLI.SPONSOR}>\n✅ **I PRESET SONO STATI TUTTI EFFETTUATI!**\nOra è possibile utilizzare le abilità.`
+                `<@&${RUOLI.ALIVE}> <@&${RUOLI.SPONSOR}>\n✅ **Tutti i preset sono stati effettuati!**\nDa ora in poi potrete nuovamente utilizzare il comando \`!abilità\`.`
             );
         }
-        message.reply("✅ **Fase Preset Terminata.** Abilità sbloccate.");
+        
+        // 3. Risposta conferma admin
+        message.reply("✅ **Fase Preset Terminata.** Abilità sbloccate e annuncio inviato.");
+        
+        // 4. Trigger coda process per sbloccare le abilità in attesa
+        const eventBus = require('./eventBus');
+        eventBus.emit('queue:process');
     }
 
     // ===================== PRESET @UTENTE (ADMIN VIEW) =====================
@@ -309,6 +308,7 @@ module.exports = async function handleAdminCommand(message, command, args, clien
             return map[cat] || cat;
         };
 
+        // Recupera TUTTI i tipi di preset dal DB
         const nightPresets = await db.preset.getUserNightPresets(targetUser.id);
         const dayPresets = await db.preset.getUserDayPresets(targetUser.id);
         const scheduledPresets = await db.preset.getUserScheduledPresets(targetUser.id);
@@ -316,28 +316,30 @@ module.exports = async function handleAdminCommand(message, command, args, clien
         let desc = "";
 
         if (nightPresets.length > 0) {
-            desc += "\n🌙 **Notturni:**\n";
+            desc += "\n🌙 **Preset Notturni (si attivano a fine !notte):**\n";
             nightPresets.forEach(p => {
-                let det = p.type === 'ABILITY' ? p.details.text : (p.type === 'SHOP' ? p.details.itemName : p.type);
+                let det = p.type === 'ABILITY' ? p.details.text : (p.type === 'KNOCK' ? `Bussa a <#${p.details.targetChannelId}>` : (p.type === 'SHOP' ? p.details.itemName : p.type));
                 desc += `- [${getLabel(p.category)}] ${det}\n`;
             });
         }
+        
         if (dayPresets.length > 0) {
-            desc += "\n☀️ **Diurni:**\n";
+            desc += "\n☀️ **Preset Diurni (si attivano a fine !giorno):**\n";
             dayPresets.forEach(p => {
-                let det = p.type === 'ABILITY' ? p.details.text : (p.type === 'SHOP' ? p.details.itemName : p.type);
+                let det = p.type === 'ABILITY' ? p.details.text : (p.type === 'KNOCK' ? `Bussa a <#${p.details.targetChannelId}>` : (p.type === 'SHOP' ? p.details.itemName : p.type));
                 desc += `- [${getLabel(p.category)}] ${det}\n`;
             });
         }
+        
         if (scheduledPresets.length > 0) {
-            desc += "\n⏰ **Timer:**\n";
+            desc += "\n⏰ **Preset Timer (orario specifico):**\n";
             scheduledPresets.forEach(p => {
-                let det = p.type === 'ABILITY' ? p.details.text : (p.type === 'SHOP' ? p.details.itemName : p.type);
+                let det = p.type === 'ABILITY' ? p.details.text : (p.type === 'KNOCK' ? `Bussa a <#${p.details.targetChannelId}>` : (p.type === 'SHOP' ? p.details.itemName : p.type));
                 desc += `- [${p.triggerTime}] [${getLabel(p.category)}] ${det}\n`;
             });
         }
 
-        if (desc === "") desc = "Nessun preset attivo.";
+        if (desc === "") desc = "Nessun preset attivo per questo utente.";
 
         const embed = new EmbedBuilder()
             .setTitle(`📋 Preset di ${targetUser.displayName}`)
@@ -356,13 +358,11 @@ module.exports = async function handleAdminCommand(message, command, args, clien
 
         await db.housing.addDestroyedHouse(targetChannel.id);
 
-        // Rimuovi ruoli pubblici
         const removeRoles = RUOLI_PUBBLICI.map(r =>
             r ? targetChannel.permissionOverwrites.delete(r).catch(() => {}) : Promise.resolve()
         );
         await Promise.all(removeRoles);
 
-        // Rimuovi pin proprietario
         try {
             const pinned = await targetChannel.messages.fetchPinned();
             const keyMsg = pinned.find(m => m.content.includes("questa è la tua dimora privata"));
@@ -371,7 +371,7 @@ module.exports = async function handleAdminCommand(message, command, args, clien
 
         const membersInside = [];
         for (const [id, overwrite] of targetChannel.permissionOverwrites.cache) {
-            if (overwrite.type !== 1) continue; // Solo Member, non Role
+            if (overwrite.type !== 1) continue;
             try {
                 const m = await message.guild.members.fetch(id);
                 if (m && !m.user.bot && m.id !== message.member.id) membersInside.push(m);
@@ -382,7 +382,6 @@ module.exports = async function handleAdminCommand(message, command, args, clien
         const ownerId = Object.keys(allHomes).find(k => allHomes[k] === targetChannel.id);
         const destroyed = await db.housing.getDestroyedHouses();
 
-        // FIX: Ordina - PLAYER (ALIVE/DEAD) prima, SPONSOR dopo
         membersInside.sort((a, b) => {
             const aIsPlayer = a.roles.cache.has(RUOLI.ALIVE) || a.roles.cache.has(RUOLI.DEAD) ? 0 : 1;
             const bIsPlayer = b.roles.cache.has(RUOLI.ALIVE) || b.roles.cache.has(RUOLI.DEAD) ? 0 : 1;
@@ -400,8 +399,6 @@ module.exports = async function handleAdminCommand(message, command, args, clien
             await targetChannel.permissionOverwrites.delete(member.id).catch(() => {});
 
             const isOwner = ownerId === member.id;
-
-            // FIX: Trova il partner - cerca in membersInside, poi guild-wide
             let partner = null;
             if (member.roles.cache.has(RUOLI.ALIVE)) {
                 const sponsorId = await db.meeting.findSponsor(member.id);
@@ -441,11 +438,9 @@ module.exports = async function handleAdminCommand(message, command, args, clien
                 }
             }
 
-            // Helper: sposta il partner nella stessa destinazione
             const movePartnerToo = async (destination) => {
                 if (!partner) return;
                 await targetChannel.permissionOverwrites.delete(partner.id).catch(() => {});
-                // Rimuovi partner da qualsiasi altra casa dove si trova
                 const partnerOldHouse = message.guild.channels.cache.find(c =>
                     c.parentId === HOUSING.CATEGORIA_CASE && c.type === ChannelType.GuildText &&
                     c.id !== targetChannel.id && c.id !== destination.id &&
@@ -458,8 +453,6 @@ module.exports = async function handleAdminCommand(message, command, args, clien
                 movedPlayers.add(partner.id);
             };
 
-            // FIX: Se è SPONSOR solo (il player non è nella casa),
-            // usa la home del PLAYER come destinazione preferita
             let playerHomeForSponsor = null;
             if ((member.roles.cache.has(RUOLI.SPONSOR) || member.roles.cache.has(RUOLI.SPONSOR_DEAD)) && partner) {
                 const partnerHomeId = allHomes[partner.id];
@@ -468,9 +461,7 @@ module.exports = async function handleAdminCommand(message, command, args, clien
                 }
             }
 
-            // --- Decidi destinazione ---
             if (isOwner) {
-                // Proprietario della casa distrutta → casa random
                 const randomHouse = message.guild.channels.cache
                     .filter(c => c.parentId === HOUSING.CATEGORIA_CASE && c.id !== targetChannel.id && !destroyed.includes(c.id))
                     .random();
@@ -480,12 +471,10 @@ module.exports = async function handleAdminCommand(message, command, args, clien
                     await movePartnerToo(randomHouse);
                 }
             } else {
-                // FIX: Cerca home - per SPONSOR usa home del player partner
                 let homeId = allHomes[member.id];
                 if (!homeId && playerHomeForSponsor) {
                     homeId = playerHomeForSponsor.id;
                 }
-                // Se è un player (ALIVE/DEAD), cerca anche la home del partner (sponsor)
                 if (!homeId && partner) {
                     const partnerHomeId = allHomes[partner.id];
                     if (partnerHomeId && partnerHomeId !== targetChannel.id && !destroyed.includes(partnerHomeId)) {
@@ -706,7 +695,6 @@ module.exports = async function handleAdminCommand(message, command, args, clien
     else if (command === 'cancella') {
         const subCommand = args[0]?.toLowerCase();
 
-        // !cancella knock @Utente
         if (subCommand === 'knock' && message.mentions.members.size > 0) {
             const targetUser = message.mentions.members.first();
             await Promise.all([
@@ -715,7 +703,6 @@ module.exports = async function handleAdminCommand(message, command, args, clien
             ]);
             message.reply(`✅ Knock pendenti e attivi rimossi per ${targetUser}.`);
         }
-        // !cancella knock tutti
         else if (subCommand === 'knock' && args[1]?.toLowerCase() === 'tutti') {
             await Promise.all([
                 db.housing.clearPendingKnocks(),
@@ -723,12 +710,10 @@ module.exports = async function handleAdminCommand(message, command, args, clien
             ]);
             message.reply("✅ **Tutti i knock pendenti e attivi sono stati rimossi!**");
         }
-        // !cancella casa
         else if (subCommand === 'casa') {
             await db.housing.clearAllHomes();
             message.reply("✅ **Tutte le proprietà delle case sono state rimosse!**");
         }
-        // Errore sintassi
         else {
             message.reply("❌ Uso:\n`!cancella knock @Utente` - Rimuove knock per utente specifico\n`!cancella knock tutti` - Rimuove tutti i knock\n`!cancella casa` - Rimuove tutte le proprietà");
         }
@@ -772,12 +757,11 @@ module.exports = async function handleAdminCommand(message, command, args, clien
         let alreadyHome = 0;
         let noHomeCount = 0;
         const noHomeList = [];
-        const processedNoHome = new Set(); // Evita doppio processamento partner
+        const processedNoHome = new Set();
 
         for (const [, member] of playersToProcess) {
             const homeId = allHomes[member.id];
             
-            // Nessuna casa o casa distrutta: aggiungi a lista morti (+ partner)
             if (!homeId || destroyed.includes(homeId)) {
                 if (processedNoHome.has(member.id)) continue;
 
@@ -789,7 +773,6 @@ module.exports = async function handleAdminCommand(message, command, args, clien
                 noHomeCount++;
                 processedNoHome.add(member.id);
 
-                // Marca anche il partner
                 let partnerId = null;
                 if (member.roles.cache.has(RUOLI.ALIVE)) {
                     partnerId = await db.meeting.findSponsor(member.id);
@@ -814,24 +797,20 @@ module.exports = async function handleAdminCommand(message, command, args, clien
             const homeChannel = message.guild.channels.cache.get(homeId);
             if (!homeChannel) continue;
 
-            // Trova dove si trova fisicamente
             const currentHouse = message.guild.channels.cache.find(c =>
                 c.parentId === HOUSING.CATEGORIA_CASE &&
                 c.type === ChannelType.GuildText &&
                 c.permissionOverwrites.cache.has(member.id)
             );
 
-            // Già a casa: salta
             if (currentHouse && currentHouse.id === homeId) {
                 alreadyHome++;
                 continue;
             }
 
-            // Sposta a casa
             if (currentHouse) {
                 await movePlayer(member, currentHouse, homeChannel, `🏠 ${member} è ritornato.`, false);
             } else {
-                // Non era in nessuna casa, aggiungi direttamente
                 await movePlayer(member, null, homeChannel, `🏠 ${member} è ritornato.`, false);
             }
             returnedCount++;
@@ -845,7 +824,6 @@ module.exports = async function handleAdminCommand(message, command, args, clien
             response += `\n☠️ Senza casa (aggiunti a lista morti): **${noHomeCount}**\n` +
                        noHomeList.map(m => `- ${m.displayName}`).join('\n');
 
-            // Notifica nel canale log admin
             const logChannel = message.guild.channels.cache.get(QUEUE.CANALE_LOG);
             if (logChannel) {
                 const logMsg = noHomeList.map(m => `⚠️ <@${m.id}> è rimasto senza casa.`).join('\n');
