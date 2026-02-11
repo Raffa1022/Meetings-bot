@@ -188,7 +188,8 @@ async function executeHousingAction(queueItem) {
             return;
         }
 
-        const msg = await targetCh.send(`🔔 **TOC TOC!** Qualcuno bussa.\n✅ Apri | ❌ Rifiuta`);
+        // ✅ Aggiungo mention ai ruoli ALIVE e SPONSOR
+        const msg = await targetCh.send(`🔔 <@&${RUOLI.ALIVE}> <@&${RUOLI.SPONSOR}> **TOC TOC!** Qualcuno bussa.\n✅ Apri | ❌ Rifiuta`);
         await Promise.all([msg.react('✅'), msg.react('❌')]);
         await db.housing.setActiveKnock(member.id, targetChannelId);
 
