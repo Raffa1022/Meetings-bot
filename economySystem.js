@@ -1037,7 +1037,15 @@ const shopEffects = {
             ]
         });
 
-        const responseChannel = client.channels.cache.get(details.responseChannelId);
+        // Response channel: usa quello specificato o cerca la chat privata del sender
+        let responseChannel = details.responseChannelId ? client.channels.cache.get(details.responseChannelId) : null;
+        if (!responseChannel) {
+            // Trova la chat privata dell'utente che ha inviato
+            responseChannel = catPriv?.children.cache.find(ch =>
+                ch.type === ChannelType.GuildText &&
+                ch.permissionOverwrites.cache.some(p => p.id === userId && p.allow.has(PermissionsBitField.Flags.ViewChannel))
+            );
+        }
         if (responseChannel) responseChannel.send(`✅ <@${userId}> La tua lettera è stata consegnata!`).catch(() => {});
     },
 
@@ -1057,7 +1065,17 @@ const shopEffects = {
         }
 
         const info = await db.housing.getVisitInfo(userId);
-        const responseChannel = client.channels.cache.get(details.responseChannelId);
+        
+        // Response channel: usa quello specificato o cerca la chat privata dell'utente
+        let responseChannel = details.responseChannelId ? client.channels.cache.get(details.responseChannelId) : null;
+        if (!responseChannel) {
+            const catPriv = guild.channels.cache.get(HOUSING.CATEGORIA_CHAT_PRIVATE);
+            responseChannel = catPriv?.children.cache.find(ch =>
+                ch.type === ChannelType.GuildText &&
+                ch.permissionOverwrites.cache.some(p => p.id === userId && p.allow.has(PermissionsBitField.Flags.ViewChannel))
+            );
+        }
+        
         if (responseChannel) {
             responseChannel.send({ embeds: [
                 new EmbedBuilder().setColor('#00FF00').setTitle('👟 Scarpe Usate')
@@ -1081,8 +1099,18 @@ const shopEffects = {
         const hasDeadRole = member.roles.cache.has('1460741405722022151');
         const hasSponsorDeadRole = member.roles.cache.has('1469862321563238502');
 
+        // Response channel helper
+        const getResponseChannel = () => {
+            if (details.responseChannelId) return client.channels.cache.get(details.responseChannelId);
+            const catPriv = guild.channels.cache.get(HOUSING.CATEGORIA_CHAT_PRIVATE);
+            return catPriv?.children.cache.find(ch =>
+                ch.type === ChannelType.GuildText &&
+                ch.permissionOverwrites.cache.some(p => p.id === userId && p.allow.has(PermissionsBitField.Flags.ViewChannel))
+            );
+        };
+
         if (!hasDeadRole && !hasSponsorDeadRole) {
-            const responseChannel = client.channels.cache.get(details.responseChannelId);
+            const responseChannel = getResponseChannel();
             if (responseChannel) {
                 responseChannel.send(`❌ <@${userId}> Il testamento può essere usato solo da giocatori morti.`).catch(() => {});
             }
@@ -1091,7 +1119,7 @@ const shopEffects = {
 
         const mode = await db.housing.getMode();
         if (mode !== 'DAY') {
-            const responseChannel = client.channels.cache.get(details.responseChannelId);
+            const responseChannel = getResponseChannel();
             if (responseChannel) {
                 responseChannel.send(`❌ <@${userId}> Il testamento può essere usato solo durante la fase GIORNO!`).catch(() => {});
             }
@@ -1122,7 +1150,7 @@ const shopEffects = {
             }
         }
 
-        const responseChannel = client.channels.cache.get(details.responseChannelId);
+        const responseChannel = getResponseChannel();
         if (responseChannel) {
             let response = `📜 <@${userId}> Testamento attivato! Puoi scrivere nei canali diurni fino al comando !notte.`;
             if (partner) response += `\n📜 Anche <@${partner.id}> (partner) ha ottenuto l'accesso.`;
@@ -1176,7 +1204,16 @@ const shopEffects = {
             }
         }
 
-        const responseChannel = client.channels.cache.get(details.responseChannelId);
+        // Response channel: usa quello specificato o cerca la chat privata dell'utente
+        let responseChannel = details.responseChannelId ? client.channels.cache.get(details.responseChannelId) : null;
+        if (!responseChannel) {
+            const catPriv = guild.channels.cache.get(HOUSING.CATEGORIA_CHAT_PRIVATE);
+            responseChannel = catPriv?.children.cache.find(ch =>
+                ch.type === ChannelType.GuildText &&
+                ch.permissionOverwrites.cache.some(p => p.id === userId && p.allow.has(PermissionsBitField.Flags.ViewChannel))
+            );
+        }
+        
         if (responseChannel) {
             responseChannel.send({ embeds: [
                 new EmbedBuilder().setColor('#2C3E50').setTitle('⛓️ Catene Applicate!')
@@ -1205,8 +1242,18 @@ const shopEffects = {
             }
         }
 
+        // Response channel helper
+        const getResponseChannel = () => {
+            if (details.responseChannelId) return client.channels.cache.get(details.responseChannelId);
+            const catPriv = guild.channels.cache.get(HOUSING.CATEGORIA_CHAT_PRIVATE);
+            return catPriv?.children.cache.find(ch =>
+                ch.type === ChannelType.GuildText &&
+                ch.permissionOverwrites.cache.some(p => p.id === userId && p.allow.has(PermissionsBitField.Flags.ViewChannel))
+            );
+        };
+
         if (!channel) {
-            const responseChannel = client.channels.cache.get(details.responseChannelId);
+            const responseChannel = getResponseChannel();
             if (responseChannel) responseChannel.send(`❌ <@${userId}> Impossibile lanciare i fuochi: non sei in nessuna casa.`).catch(() => {});
             return;
         }
@@ -1221,7 +1268,7 @@ const shopEffects = {
                 .setTimestamp()
         ]});
 
-        const responseChannel = client.channels.cache.get(details.responseChannelId);
+        const responseChannel = getResponseChannel();
         if (responseChannel) responseChannel.send(`🎆 <@${userId}> Fuochi lanciati in **${channel.name}**! Annuncio pubblicato.`).catch(() => {});
     },
 
@@ -1245,8 +1292,18 @@ const shopEffects = {
             }
         }
 
+        // Response channel helper
+        const getResponseChannel = () => {
+            if (details.responseChannelId) return client.channels.cache.get(details.responseChannelId);
+            const catPriv = guild.channels.cache.get(HOUSING.CATEGORIA_CHAT_PRIVATE);
+            return catPriv?.children.cache.find(ch =>
+                ch.type === ChannelType.GuildText &&
+                ch.permissionOverwrites.cache.some(p => p.id === userId && p.allow.has(PermissionsBitField.Flags.ViewChannel))
+            );
+        };
+
         if (!newHomeChannel) {
-            const responseChannel = client.channels.cache.get(details.responseChannelId);
+            const responseChannel = getResponseChannel();
             if (responseChannel) responseChannel.send(`❌ <@${userId}> Impossibile montare la tenda: non sei in nessuna casa.`).catch(() => {});
             return;
         }
@@ -1257,7 +1314,7 @@ const shopEffects = {
         const ownerId = await db.housing.findOwner(newHomeChannel.id);
 
         if (ownerId === userId) {
-            const responseChannel = client.channels.cache.get(details.responseChannelId);
+            const responseChannel = getResponseChannel();
             if (responseChannel) responseChannel.send(`❌ <@${userId}> Sei già a casa tua!`).catch(() => {});
             return;
         }
@@ -1275,7 +1332,7 @@ const shopEffects = {
             const pinnedMsg = await newHomeChannel.send(`🔑 **${member}**, questa è la tua dimora privata.`);
             await pinnedMsg.pin();
 
-            const responseChannel = client.channels.cache.get(details.responseChannelId);
+            const responseChannel = getResponseChannel();
             if (responseChannel) responseChannel.send(`⛺ <@${userId}> Tenda montata! Trasferimento in **${newHomeChannel.name}** completato.`).catch(() => {});
             return;
         }
