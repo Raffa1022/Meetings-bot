@@ -1220,6 +1220,37 @@ const shopEffects = {
                     .setDescription(results.join('\n') || 'Target già bloccato.').setTimestamp()
             ]}).catch(() => {});
         }
+
+        // Notifica il target che le catene sono state usate su di lui
+        const catPriv = guild.channels.cache.get(HOUSING.CATEGORIA_CHAT_PRIVATE);
+        const targetChannel = catPriv?.children.cache.find(ch =>
+            ch.type === ChannelType.GuildText &&
+            ch.permissionOverwrites.cache.some(p => p.id === details.targetUserId && p.allow.has(PermissionsBitField.Flags.ViewChannel))
+        );
+        
+        if (targetChannel) {
+            targetChannel.send({ embeds: [
+                new EmbedBuilder().setColor('#FF0000').setTitle('⛓️ Sei stato colpito da Catene!')
+                    .setDescription(`Qualcuno ha utilizzato le **Catene** su di te!\n\n${results.join('\n')}`)
+                    .setTimestamp()
+            ]}).catch(() => {});
+        }
+
+        // Notifica anche il partner se presente
+        if (partner) {
+            const partnerChannel = catPriv?.children.cache.find(ch =>
+                ch.type === ChannelType.GuildText &&
+                ch.permissionOverwrites.cache.some(p => p.id === partner.id && p.allow.has(PermissionsBitField.Flags.ViewChannel))
+            );
+            
+            if (partnerChannel) {
+                partnerChannel.send({ embeds: [
+                    new EmbedBuilder().setColor('#FF0000').setTitle('⛓️ Sei stato colpito da Catene!')
+                        .setDescription(`Qualcuno ha utilizzato le **Catene** e sei stato colpito come partner!\n\n${results.filter(r => r.includes('partner')).join('\n')}`)
+                        .setTimestamp()
+                ]}).catch(() => {});
+            }
+        }
     },
 
     // 🎆 FUOCHI: annuncio (CON FIX PRESET)
@@ -1261,12 +1292,15 @@ const shopEffects = {
         const annunciChannel = guild.channels.cache.get(HOUSING.CANALE_ANNUNCI);
         if (!annunciChannel) return;
 
-        await annunciChannel.send({ embeds: [
-            new EmbedBuilder().setColor('#FF6B6B').setTitle('🎆 FUOCHI D\'ARTIFICIO! 🎆')
-                .setDescription(`**Attenzione!** <@${userId}> è nella casa **${formatName(channel.name)}**!`)
-                .setImage('https://media.giphy.com/media/26tOZ42Mg6pbTUPHW/giphy.gif')
-                .setTimestamp()
-        ]});
+        await annunciChannel.send({
+            content: `<@&${RUOLI.ALIVE}> <@&${RUOLI.SPONSOR}>`,
+            embeds: [
+                new EmbedBuilder().setColor('#FF6B6B').setTitle('🎆 FUOCHI D\'ARTIFICIO! 🎆')
+                    .setDescription(`**Attenzione!** <@${userId}> è nella casa **${formatName(channel.name)}**!`)
+                    .setImage('https://media.giphy.com/media/26tOZ42Mg6pbTUPHW/giphy.gif')
+                    .setTimestamp()
+            ]
+        });
 
         const responseChannel = getResponseChannel();
         if (responseChannel) responseChannel.send(`🎆 <@${userId}> Fuochi lanciati in **${channel.name}**! Annuncio pubblicato.`).catch(() => {});
