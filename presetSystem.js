@@ -571,8 +571,12 @@ async function resolveScheduledPhase(triggerTime) {
 async function processAndClearPresets(presets, contextLabel) {
     if (presets.length === 0) return;
 
-    // Ordina per priorità
-    const sorted = presets.sort((a, b) => {
+    // Separo i fuochi d'artificio dagli altri preset
+    const fuochiPresets = presets.filter(p => p.type === 'SHOP' && p.details.itemId === 'fuochi');
+    const otherPresets = presets.filter(p => !(p.type === 'SHOP' && p.details.itemId === 'fuochi'));
+
+    // Ordina per priorità solo gli altri preset
+    const sorted = otherPresets.sort((a, b) => {
         const pA = PRIORITY_ORDER[a.category] || 999;
         const pB = PRIORITY_ORDER[b.category] || 999;
         if (pA !== pB) return pA - pB;
@@ -582,6 +586,7 @@ async function processAndClearPresets(presets, contextLabel) {
     let delayCounter = 0;
     let processedCount = 0;
 
+    // Processo prima tutti gli altri preset
     for (const preset of sorted) {
         if (preset.type === 'KNOCK') {
             const info = await db.housing.getVisitInfo(preset.userId);
@@ -610,6 +615,23 @@ async function processAndClearPresets(presets, contextLabel) {
         }, delayCounter * 50); 
         
         delayCounter++;
+        processedCount++;
+    }
+
+    // POI aggiungo i fuochi d'artificio con un delay di 2 secondi per farli apparire DOPO il messaggio NOTTE/GIORNO
+    const fuochiDelay = (delayCounter * 50) + 2000;
+    
+    for (const preset of fuochiPresets) {
+        const queueItem = {
+            type: preset.type,
+            userId: preset.userId,
+            details: preset.details
+        };
+
+        setTimeout(() => {
+            eventBus.emit('queue:add', queueItem);
+        }, fuochiDelay + ((processedCount - sorted.length) * 50));
+        
         processedCount++;
     }
 
