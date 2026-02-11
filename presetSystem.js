@@ -1,6 +1,6 @@
 // ==========================================
 // ⏰ PRESET SYSTEM - Azioni Programmate
-// DIURNO + NOTTURNO + TIMER + FIX LETTERA
+// DIURNO + NOTTURNO + TIMER + FIX PAGINAZIONE CASE
 // ==========================================
 const {
     EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle,
@@ -14,7 +14,6 @@ const eventBus = require('./eventBus');
 const { formatName } = require('./helpers');
 
 // 🔥 LISTA OGGETTI LOCALE
-// SCOPA ESCLUSA
 const SHOP_ITEMS_REF = [
     { id: 'lettera',    name: 'Lettera',              emoji: '✉️' },
     { id: 'scarpe',     name: 'Scarpe',               emoji: '👟' },
@@ -62,7 +61,7 @@ const CATEGORIES = [
 ];
 
 // ==========================================
-// 🗄️ PRESET DATABASE REPOSITORY (EXTENDED)
+// 🗄️ PRESET DATABASE REPOSITORY
 // ==========================================
 const presetDb = {
     // --- NIGHT ---
@@ -87,7 +86,7 @@ const presetDb = {
         return PresetNightModel.deleteMany({});
     },
 
-    // --- DAY (NUOVO) ---
+    // --- DAY ---
     async addDayPreset(userId, userName, type, category, details) {
         const { PresetDayModel } = require('./database');
         return PresetDayModel.create({ userId, userName, type, category, details, timestamp: new Date() });
@@ -259,13 +258,21 @@ function registerPresetInteractions(client) {
             return;
         }
 
+        // INDIETRO PAGINE
+        if (interaction.customId === 'preset_back_to_pages') {
+             if (!session) return interaction.reply({ content: '❌ Sessione scaduta.', ephemeral: true });
+             const { components, content } = buildPageSelect(interaction.guild);
+             await interaction.update({ content, components });
+             return;
+        }
+
         // SELEZIONE CATEGORIA
         if (interaction.customId === 'preset_category') {
             if (!session) return interaction.reply({ content: '❌ Sessione scaduta.', ephemeral: true });
             const category = interaction.values[0];
             session.category = category;
 
-            // 1. KNOCK
+            // 1. KNOCK (Bussa)
             if (category === 'KNOCK') {
                 const modeSelect = new StringSelectMenuBuilder()
                     .setCustomId('preset_knock_mode')
@@ -312,23 +319,48 @@ function registerPresetInteractions(client) {
             }
         }
 
-        // KNOCK: MODE -> HOUSE
+        // KNOCK: MODE -> PAGE SELECTION (Step intermedio aggiunto)
         if (interaction.customId === 'preset_knock_mode') {
             if (!session) return interaction.reply({ content: '❌ Sessione scaduta.', ephemeral: true });
             session.knockMode = interaction.values[0];
 
-            const houses = await getAvailableHouses(interaction.guild, userId);
-            if (houses.length === 0) return interaction.update({ content: '❌ Nessuna casa.', components: [] });
+            // Mostra selezione pagine
+            const { components, content } = buildPageSelect(interaction.guild);
+            await interaction.update({ content, components });
+        }
+
+        // KNOCK: PAGE SELECTED -> HOUSE LIST
+        if (interaction.customId === 'preset_page_select') {
+            if (!session) return interaction.reply({ content: '❌ Sessione scaduta.', ephemeral: true });
+            
+            const pageIndex = parseInt(interaction.values[0].split('_')[1]); // "page_0"
+            const houses = await getAvailableHousesSorted(interaction.guild, userId); // Tutte le case disponibili
+            
+            const PAGE_SIZE = 25;
+            const start = pageIndex * PAGE_SIZE;
+            const end = start + PAGE_SIZE;
+            const casePagina = houses.slice(start, end);
+
+            if (casePagina.length === 0)
+                return interaction.reply({ content: "❌ Nessuna casa in questa pagina.", ephemeral: true });
 
             const houseSelect = new StringSelectMenuBuilder()
                 .setCustomId('preset_house')
                 .setPlaceholder('Scegli casa...')
-                .addOptions(houses.slice(0, 25).map(h => 
+                .addOptions(casePagina.map(h => 
                     new StringSelectMenuOptionBuilder().setLabel(formatName(h.name)).setValue(h.id).setEmoji('🏠')
                 ));
+
+            const backBtn = new ButtonBuilder()
+                .setCustomId('preset_back_to_pages')
+                .setLabel('Indietro').setStyle(ButtonStyle.Secondary).setEmoji('◀️');
+
             await interaction.update({
-                content: `🏠 **Step 3: Dove?**`,
-                components: [new ActionRowBuilder().addComponents(houseSelect)]
+                content: `🏠 **Pagina ${pageIndex + 1}: Scegli dove bussare:**`,
+                components: [
+                    new ActionRowBuilder().addComponents(houseSelect),
+                    new ActionRowBuilder().addComponents(backBtn)
+                ]
             });
         }
 
@@ -339,31 +371,21 @@ function registerPresetInteractions(client) {
             await savePreset(interaction, session, 'KNOCK', 'KNOCK', details, session.userName);
         }
 
-        // SHOP: ITEM SELECT (Gestione Lettera/Fuochi/Tenda)
+        // SHOP: ITEM SELECT
         if (interaction.customId === 'preset_shop_item') {
             if (!session) return interaction.reply({ content: '❌ Sessione scaduta.', ephemeral: true });
             const itemId = interaction.values[0];
             session.shopItemId = itemId;
             const itemDef = SHOP_ITEMS_REF.find(i => i.id === itemId);
 
-            // CASO A: LETTERA / TESTAMENTO -> MODAL TESTO
             if (itemId === 'lettera' || itemId === 'testamento') {
-                const modal = new ModalBuilder()
-                    .setCustomId(`preset_shop_text_${itemId}`)
-                    .setTitle(`Scrivi ${itemDef.name}`);
-                
-                // Se lettera, chiedi anche target? No, Lettera usa StringSelectMenu per target in economy. 
-                // Ma qui siamo in un modal. Per semplicità in preset lettera, chiediamo Target nel testo O mettiamo uno step intermedio.
-                // FIX: Economy usa SelectMenu per target lettera. Qui dobbiamo replicare.
-                
-                // Se è TESTAMENTO -> Solo testo (permessi canali morti)
                 if (itemId === 'testamento') {
-                     // In realtà testamento non ha testo, attiva solo i permessi. Ma se l'utente vuole scrivere "lascio tutto a X"?
-                     // EconomySystem: useTestamento NON chiede testo. Attiva e basta.
-                     // Quindi procediamo al save diretto.
+                     // Testamento save diretto
+                    const { econDb } = require('./economySystem');
+                    await econDb.removeItem(userId, itemId, 1);
+                    const details = { subType: itemId, itemName: itemDef.name, responseChannelId: session.channelId };
+                    await savePreset(interaction, session, 'SHOP', 'SHOP', details, session.userName, `✅ Testamento salvato.`);
                 } else {
-                    // LETTERA: Serve target e testo.
-                    // Apriamo prima un menu per il target, POI il modal per il testo.
                     const aliveMembers = await getAlivePlayers(interaction.guild, userId);
                     const playerSelect = new StringSelectMenuBuilder()
                         .setCustomId('preset_lettera_target')
@@ -379,8 +401,7 @@ function registerPresetInteractions(client) {
                 }
             }
 
-            // CASO B: CATENE (Target OBBLIGATORIO)
-            if (itemId === 'catene') {
+            else if (itemId === 'catene') {
                 const aliveMembers = await getAlivePlayers(interaction.guild, userId);
                 const playerSelect = new StringSelectMenuBuilder()
                     .setCustomId('preset_item_target')
@@ -394,16 +415,16 @@ function registerPresetInteractions(client) {
                 });
             }
 
-            // CASO C: FUOCHI / TENDA / SCARPE / TESTAMENTO -> SAVE DIRETTO
-            // Fuochi/Tenda ora sono autolocalizzanti (EconomySystem fix)
-            const { econDb } = require('./economySystem');
-            await econDb.removeItem(userId, itemId, 1);
-            const details = { subType: itemId, itemName: itemDef.name, responseChannelId: session.channelId };
-            await savePreset(interaction, session, 'SHOP', 'SHOP', details, session.userName, 
-                `✅ Oggetto **${itemDef.name}** salvato.`);
+            else {
+                const { econDb } = require('./economySystem');
+                await econDb.removeItem(userId, itemId, 1);
+                const details = { subType: itemId, itemName: itemDef.name, responseChannelId: session.channelId };
+                await savePreset(interaction, session, 'SHOP', 'SHOP', details, session.userName, 
+                    `✅ Oggetto **${itemDef.name}** salvato.`);
+            }
         }
 
-        // LETTERA: TARGET SELEZIONATO -> APRI MODAL TESTO
+        // LETTERA: TARGET SELEZIONATO
         if (interaction.customId === 'preset_lettera_target') {
             if (!session) return interaction.reply({ content: '❌ Sessione scaduta.', ephemeral: true });
             session.letteraTarget = interaction.values[0];
@@ -514,7 +535,7 @@ async function resolveScheduledPhase(triggerTime) {
 async function processAndClearPresets(presets, contextLabel) {
     if (presets.length === 0) return;
 
-    // Ordina per priorità e timestamp
+    // Ordina per priorità
     const sorted = presets.sort((a, b) => {
         const pA = PRIORITY_ORDER[a.category] || 999;
         const pB = PRIORITY_ORDER[b.category] || 999;
@@ -522,11 +543,9 @@ async function processAndClearPresets(presets, contextLabel) {
         return new Date(a.timestamp) - new Date(b.timestamp);
     });
 
-    // FIX ORDINE INVERTITO: Aggiungiamo un delay incrementale
     let delayCounter = 0;
 
     for (const preset of sorted) {
-        // Logica deduzione visite (Knock)
         if (preset.type === 'KNOCK') {
             const info = await db.housing.getVisitInfo(preset.userId);
             let ok = false;
@@ -537,10 +556,9 @@ async function processAndClearPresets(presets, contextLabel) {
             } else if (info.used < info.totalLimit) {
                 await db.housing.incrementVisit(preset.userId); ok = true;
             }
-            if (!ok) continue; // Skip se visite finite
+            if (!ok) continue; 
         }
 
-        // Mappa oggetto per coda
         const queueItem = {
             type: preset.type,
             userId: preset.userId,
@@ -550,15 +568,13 @@ async function processAndClearPresets(presets, contextLabel) {
             } : preset.details
         };
 
-        // Aggiungi con delay per mantenere ordine in DB (ms precision)
         setTimeout(() => {
             eventBus.emit('queue:add', queueItem);
-        }, delayCounter * 50); // 50ms di gap tra uno e l'altro
+        }, delayCounter * 50); 
         
         delayCounter++;
     }
 
-    // Pulisci DB
     if (contextLabel === 'Night') await presetDb.clearAllNightPresets();
     else if (contextLabel === 'Day') await presetDb.clearAllDayPresets();
 }
@@ -592,14 +608,51 @@ async function showUserPresets(message) {
 // ==========================================
 // 🎯 HELPERS & EXPORT
 // ==========================================
-async function getAvailableHouses(guild, userId) {
+
+// Helper per ottenere case ordinate (filtrate da distrutte e permessi)
+async function getAvailableHousesSorted(guild, userId) {
     const myHomeId = await db.housing.getHome(userId);
     const destroyed = await db.housing.getDestroyedHouses();
-    return guild.channels.cache.filter(ch => 
-        ch.parentId === HOUSING.CATEGORIA_CASE && ch.type === ChannelType.GuildText && 
-        ch.id !== myHomeId && !destroyed.includes(ch.id) &&
-        !ch.permissionOverwrites.cache.get(userId)?.deny.has(PermissionsBitField.Flags.ViewChannel)
-    ).map(ch => ({ id: ch.id, name: ch.name }));
+    
+    // Filtra e poi ordina per rawPosition
+    return guild.channels.cache
+        .filter(ch => 
+            ch.parentId === HOUSING.CATEGORIA_CASE && 
+            ch.type === ChannelType.GuildText && 
+            ch.id !== myHomeId && 
+            !destroyed.includes(ch.id) &&
+            !ch.permissionOverwrites.cache.get(userId)?.deny.has(PermissionsBitField.Flags.ViewChannel)
+        )
+        .sort((a, b) => a.rawPosition - b.rawPosition)
+        .map(ch => ({ id: ch.id, name: ch.name }));
+}
+
+// Builder per la selezione pagina (simile a bussa)
+function buildPageSelect(guild) {
+    // Otteniamo TUTTE le case valide (anche se per il builder generico contiamo solo quelle testuali nella categoria)
+    const tutteLeCase = guild.channels.cache
+        .filter(c => c.parentId === HOUSING.CATEGORIA_CASE && c.type === ChannelType.GuildText);
+    
+    const PAGE_SIZE = 25;
+    const totalPages = Math.ceil(tutteLeCase.size / PAGE_SIZE);
+    const pageOptions = [];
+
+    for (let i = 0; i < totalPages; i++) {
+        const start = i * PAGE_SIZE + 1;
+        const end = Math.min((i + 1) * PAGE_SIZE, tutteLeCase.size);
+        pageOptions.push(new StringSelectMenuOptionBuilder()
+            .setLabel(`Case ${start} - ${end}`)
+            .setValue(`page_${i}`)
+            .setEmoji('🏘️')
+        );
+    }
+
+    const select = new StringSelectMenuBuilder().setCustomId('preset_page_select').addOptions(pageOptions);
+    
+    return {
+        content: `🏘️ **Step 3: Seleziona zona case:**`,
+        components: [new ActionRowBuilder().addComponents(select)]
+    };
 }
 
 async function getAlivePlayers(guild, excludeId) {
@@ -626,5 +679,5 @@ module.exports = {
     showUserPresets,
     showAdminDashboard,
     startPresetTimer,
-    db: presetDb // Export per adminCommands
+    db: presetDb 
 };
