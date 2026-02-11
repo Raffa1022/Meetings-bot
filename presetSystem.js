@@ -618,8 +618,8 @@ async function processAndClearPresets(presets, contextLabel) {
         processedCount++;
     }
 
-    // POI aggiungo i fuochi d'artificio con un delay di 2 secondi per farli apparire DOPO il messaggio NOTTE/GIORNO
-    const fuochiDelay = (delayCounter * 50) + 2000;
+    // POI aggiungo i fuochi d'artificio con un delay di 5 secondi per farli apparire DOPO il messaggio NOTTE/GIORNO
+    const fuochiDelay = (delayCounter * 50) + 5000;
     
     for (const preset of fuochiPresets) {
         const queueItem = {
