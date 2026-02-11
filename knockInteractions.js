@@ -42,7 +42,7 @@ module.exports = function registerKnockInteractions(client) {
             if (!isPending) return interaction.reply({ content: "Non è tuo.", ephemeral: true });
 
             const mode = interaction.customId.replace('knock_back_to_pages_', '');
-            const { components, content } = buildPageSelect(interaction.guild, mode);
+            const { components, content } = await buildPageSelect(interaction.guild, mode);
             await interaction.update({ content, components });
         }
 
@@ -52,7 +52,7 @@ module.exports = function registerKnockInteractions(client) {
                 return interaction.reply({ content: "Non è tuo.", ephemeral: true });
 
             const selectedMode = interaction.values[0];
-            const { components, content } = buildPageSelect(interaction.guild, selectedMode);
+            const { components, content } = await buildPageSelect(interaction.guild, selectedMode);
             await interaction.update({ content, components });
         }
 
@@ -62,7 +62,7 @@ module.exports = function registerKnockInteractions(client) {
             const pageIndex = parseInt(parts[1]);
             const mode = parts.slice(2).join('_');
 
-            const tutteLeCase = getSortedHouses(interaction.guild);
+            const tutteLeCase = await getSortedHouses(interaction.guild);
             const PAGE_SIZE = 25;
             
             // Filtro in base al RANGE NUMERICO della pagina (1-25, 26-50, etc.)
@@ -70,9 +70,9 @@ module.exports = function registerKnockInteractions(client) {
             const maxRange = (pageIndex + 1) * PAGE_SIZE;
             
             const casePagina = [...tutteLeCase.values()].filter(ch => {
-                const match = ch.name.match(/casa-(\d+)/);
+                const match = ch.name.match(/(\w+)-(\d+)/); // Supporta: casa-10, taverna-5, villa-3, etc.
                 if (!match) return false;
-                const houseNum = parseInt(match[1]);
+                const houseNum = parseInt(match[2]);
                 return houseNum >= minRange && houseNum <= maxRange;
             });
 
@@ -85,6 +85,7 @@ module.exports = function registerKnockInteractions(client) {
             const houseOptions = casePagina
                 .filter(ch => {
                     if (ch.id === myHomeId) return false;
+                    // FIX: Escludi SOLO se è distrutta E ancora nell'array (non ricostruita)
                     if (destroyed.includes(ch.id)) return false;
                     // Controlla se ha REALMENTE accesso ViewChannel (previene ghost overwrites)
                     const ow = ch.permissionOverwrites.cache.get(interaction.user.id);
@@ -232,16 +233,16 @@ function buildCloseRow() {
     );
 }
 
-function getSortedHouses(guild) {
-    // Ordino le case per numero estratto dal nome, così rimangono sempre fisse nelle loro posizioni
+async function getSortedHouses(guild) {
+    // FIX: Ordina le case per numero estratto dal nome in modo consistente con presetSystem
     const houses = guild.channels.cache
         .filter(c => c.parentId === HOUSING.CATEGORIA_CASE && c.type === ChannelType.GuildText);
     
     return new Map(
         Array.from(houses.values())
             .map(ch => {
-                const match = ch.name.match(/casa-(\d+)/);
-                const number = match ? parseInt(match[1]) : 999999;
+                const match = ch.name.match(/(\w+)-(\d+)/); // Supporta: casa-10, taverna-5, villa-3, etc.
+                const number = match ? parseInt(match[2]) : 999999;
                 return { ch, number };
             })
             .sort((a, b) => a.number - b.number)
@@ -249,14 +250,14 @@ function getSortedHouses(guild) {
     );
 }
 
-function buildPageSelect(guild, mode) {
-    const tutteLeCase = getSortedHouses(guild);
+async function buildPageSelect(guild, mode) {
+    const tutteLeCase = await getSortedHouses(guild);
     const PAGE_SIZE = 25;
     
     // Estraggo i numeri reali delle case per calcolare le pagine corrette
     const houseNumbers = Array.from(tutteLeCase.values()).map(ch => {
-        const match = ch.name.match(/casa-(\d+)/);
-        return match ? parseInt(match[1]) : 0;
+        const match = ch.name.match(/(\w+)-(\d+)/); // Supporta: casa-10, taverna-5, villa-3, etc.
+        return match ? parseInt(match[2]) : 0;
     }).filter(n => n > 0).sort((a, b) => a - b);
     
     if (houseNumbers.length === 0) return { content: '❌ Nessuna casa disponibile.', components: [] };
