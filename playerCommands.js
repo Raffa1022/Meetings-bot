@@ -460,9 +460,24 @@ module.exports = function registerPlayerCommands(client) {
                 return message.reply("✅ Nessuna casa è stata distrutta al momento.");
             }
 
-            const list = destroyed.map(id => {
-                const ch = message.guild.channels.cache.get(id);
-                return ch ? `🏚️ ${ch} (${formatName(ch.name)})` : `🏚️ ID: ${id} (canale non trovato)`;
+            // Recupero i metadati delle case distrutte
+            const destroyedData = await db.housing.getDestroyedHousesData();
+
+            // Ordino le case per numero estratto dal nome
+            const sortedDestroyed = destroyed
+                .map(id => {
+                    const ch = message.guild.channels.cache.get(id);
+                    const match = ch?.name.match(/casa-(\d+)/);
+                    const number = match ? parseInt(match[1]) : 999999;
+                    const phaseInfo = destroyedData[id];
+                    return { id, ch, number, phaseInfo };
+                })
+                .sort((a, b) => a.number - b.number);
+
+            const list = sortedDestroyed.map(({ ch, id, phaseInfo }) => {
+                const houseName = ch ? formatName(ch.name) : `ID: ${id} (canale non trovato)`;
+                const phaseText = phaseInfo?.phase ? ` - ${phaseInfo.phase}` : '';
+                return `🏚️ ${ch || houseName} (${houseName})${phaseText}`;
             }).join('\n');
 
             const embed = new EmbedBuilder()
@@ -511,9 +526,13 @@ module.exports = function registerPlayerCommands(client) {
             }
             // Help
             else {
-                message.reply({
+                const helpMsg = await message.reply({
                     content: "📋 **Comandi Preset:**\n`!preset notturno` - Imposta un'azione per la notte\n`!preset diurno` - Imposta un'azione per il giorno\n`!preset timer HH:MM` - Imposta un'azione per un orario specifico (es. 03:40)\n`!preset list` - Visualizza e gestisci le tue azioni programmate"
                 });
+                // Auto-cancellazione dopo 1 minuto (60000ms)
+                setTimeout(() => {
+                    helpMsg.delete().catch(() => {});
+                }, 60000);
             }
         }
     });
