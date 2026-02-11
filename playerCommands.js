@@ -512,27 +512,13 @@ module.exports = function registerPlayerCommands(client) {
                 await handlePresetCommand(message, args.slice(1), 'night');
             }
             else if (subcommand === 'intermedio') {
-                // FIX: timeArg è args[0] dopo "intermedio", non args[1]
                 const timeArg = args[0];
-                if (!timeArg || !timeArg.match(/^\d{2}:\d{2}$/)) {
+                if (!timeArg || !/^\d{2}:\d{2}$/.test(timeArg)) {
                     return message.reply("❌ Specifica l'orario nel formato HH:MM\nEsempio: `!preset intermedio 15:30`");
                 }
 
-                // Smart Rollover: se orario già passato, considera domani
-                const [hours, minutes] = timeArg.split(':').map(Number);
-                const now = new Date();
-                const triggerDate = new Date();
-                triggerDate.setHours(hours, minutes, 0, 0);
-
-                if (triggerDate <= now) {
-                    triggerDate.setDate(triggerDate.getDate() + 1);
-                }
-
                 const { handlePresetCommand } = require('./presetSystem');
-                // Salviamo il triggerTime nel messaggio per recuperarlo dopo
-                const originalContent = message.content;
-                message.content = `${originalContent} (trigger: ${timeArg})`;
-                await handlePresetCommand(message, args.slice(1), 'scheduled');
+                await handlePresetCommand(message, args.slice(1), 'scheduled', timeArg);
             }
             else if (subcommand === 'list') {
                 const { showUserPresets } = require('./presetSystem');
