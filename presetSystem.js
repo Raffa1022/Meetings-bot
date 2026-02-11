@@ -367,6 +367,27 @@ function registerPresetInteractions(client) {
         // KNOCK: SAVE
         if (interaction.customId === 'preset_house') {
             if (!session) return interaction.reply({ content: '❌ Sessione scaduta.', ephemeral: true });
+            
+            // ✅ VERIFICA: Non permettere 2 KNOCK nello stesso tipo di preset
+            const userId = interaction.user.id;
+            let existingPresets = [];
+            if (session.presetType === 'night') {
+                existingPresets = await presetDb.getUserNightPresets(userId);
+            } else if (session.presetType === 'day') {
+                existingPresets = await presetDb.getUserDayPresets(userId);
+            } else if (session.presetType === 'scheduled') {
+                existingPresets = await presetDb.getUserScheduledPresets(userId);
+                existingPresets = existingPresets.filter(p => p.triggerTime === session.triggerTime);
+            }
+            
+            const hasKnock = existingPresets.some(p => p.type === 'KNOCK');
+            if (hasKnock) {
+                return interaction.update({ 
+                    content: '❌ Hai già un preset KNOCK in questa fase! Rimuovilo prima con `!preset list` se vuoi cambiarlo.', 
+                    components: [] 
+                });
+            }
+            
             const details = { targetChannelId: interaction.values[0], mode: session.knockMode, fromChannelId: session.channelId };
             await savePreset(interaction, session, 'KNOCK', 'KNOCK', details, session.userName);
         }
