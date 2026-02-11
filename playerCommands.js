@@ -512,7 +512,8 @@ module.exports = function registerPlayerCommands(client) {
                 await handlePresetCommand(message, args.slice(1), 'night');
             }
             else if (subcommand === 'intermedio') {
-                const timeArg = args[1];
+                // FIX: timeArg è args[0] dopo "intermedio", non args[1]
+                const timeArg = args[0];
                 if (!timeArg || !timeArg.match(/^\d{2}:\d{2}$/)) {
                     return message.reply("❌ Specifica l'orario nel formato HH:MM\nEsempio: `!preset intermedio 15:30`");
                 }
@@ -531,7 +532,7 @@ module.exports = function registerPlayerCommands(client) {
                 // Salviamo il triggerTime nel messaggio per recuperarlo dopo
                 const originalContent = message.content;
                 message.content = `${originalContent} (trigger: ${timeArg})`;
-                await handlePresetCommand(message, args.slice(2), 'scheduled');
+                await handlePresetCommand(message, args.slice(1), 'scheduled');
             }
             else if (subcommand === 'list') {
                 const { showUserPresets } = require('./presetSystem');
