@@ -380,12 +380,16 @@ function registerPresetInteractions(client) {
 
             if (itemId === 'lettera' || itemId === 'testamento') {
                 if (itemId === 'testamento') {
-                     // Testamento save diretto
+                     // Testamento: rimuovi item e save diretto
                     const { econDb } = require('./economySystem');
+                    const hasItem = await econDb.hasItem(userId, itemId, 1);
+                    if (!hasItem) return interaction.update({ content: '❌ Non hai questo oggetto!', components: [] });
+                    
                     await econDb.removeItem(userId, itemId, 1);
                     const details = { subType: itemId, itemName: itemDef.name, responseChannelId: session.channelId };
                     await savePreset(interaction, session, 'SHOP', 'SHOP', details, session.userName, `✅ Testamento salvato.`);
                 } else {
+                    // Lettera: chiedi target
                     const aliveMembers = await getAlivePlayers(interaction.guild, userId);
                     const playerSelect = new StringSelectMenuBuilder()
                         .setCustomId('preset_lettera_target')
@@ -416,7 +420,11 @@ function registerPresetInteractions(client) {
             }
 
             else {
+                // Scarpe, Fuochi, Tenda: verifica e rimuovi, poi salva
                 const { econDb } = require('./economySystem');
+                const hasItem = await econDb.hasItem(userId, itemId, 1);
+                if (!hasItem) return interaction.update({ content: '❌ Non hai questo oggetto!', components: [] });
+                
                 await econDb.removeItem(userId, itemId, 1);
                 const details = { subType: itemId, itemName: itemDef.name, responseChannelId: session.channelId };
                 await savePreset(interaction, session, 'SHOP', 'SHOP', details, session.userName, 
@@ -449,6 +457,9 @@ function registerPresetInteractions(client) {
                 return interaction.reply({ content: "❌ Massimo 10 parole!", ephemeral: true });
 
             const { econDb } = require('./economySystem');
+            const hasItem = await econDb.hasItem(interaction.user.id, 'lettera', 1);
+            if (!hasItem) return interaction.reply({ content: '❌ Non hai questo oggetto!', ephemeral: true });
+            
             await econDb.removeItem(interaction.user.id, 'lettera', 1);
 
             const details = { 
@@ -466,6 +477,10 @@ function registerPresetInteractions(client) {
             if (!session) return interaction.reply({ content: '❌ Sessione scaduta.', ephemeral: true });
             const targetUserId = interaction.values[0];
             const { econDb } = require('./economySystem');
+            
+            const hasItem = await econDb.hasItem(interaction.user.id, session.shopItemId, 1);
+            if (!hasItem) return interaction.update({ content: '❌ Non hai questo oggetto!', components: [] });
+            
             await econDb.removeItem(interaction.user.id, session.shopItemId, 1);
 
             const details = { subType: session.shopItemId, itemName: 'Catene', targetUserId, responseChannelId: session.channelId };
@@ -544,6 +559,7 @@ async function processAndClearPresets(presets, contextLabel) {
     });
 
     let delayCounter = 0;
+    let processedCount = 0;
 
     for (const preset of sorted) {
         if (preset.type === 'KNOCK') {
@@ -573,10 +589,13 @@ async function processAndClearPresets(presets, contextLabel) {
         }, delayCounter * 50); 
         
         delayCounter++;
+        processedCount++;
     }
 
     if (contextLabel === 'Night') await presetDb.clearAllNightPresets();
     else if (contextLabel === 'Day') await presetDb.clearAllDayPresets();
+
+    console.log(`✅ [Preset] ${processedCount} preset aggiunti alla coda per ${contextLabel}`);
 }
 
 // ==========================================
