@@ -386,8 +386,8 @@ function registerPresetInteractions(client) {
                     if (!hasItem) return interaction.update({ content: '❌ Non hai questo oggetto!', components: [] });
                     
                     await econDb.removeItem(userId, itemId, 1);
-                    const details = { subType: itemId, itemName: itemDef.name, responseChannelId: session.channelId };
-                    await savePreset(interaction, session, 'SHOP', 'SHOP', details, session.userName, `✅ Testamento salvato.`);
+                    const details = { subType: itemId, itemName: itemDef.name };
+                    await savePreset(interaction, session, 'SHOP', 'SHOP', details, session.userName, `✅ Testamento salvato in preset.`);
                 } else {
                     // Lettera: chiedi target
                     const aliveMembers = await getAlivePlayers(interaction.guild, userId);
@@ -426,9 +426,10 @@ function registerPresetInteractions(client) {
                 if (!hasItem) return interaction.update({ content: '❌ Non hai questo oggetto!', components: [] });
                 
                 await econDb.removeItem(userId, itemId, 1);
-                const details = { subType: itemId, itemName: itemDef.name, responseChannelId: session.channelId };
+                // NON salviamo responseChannelId fisso, verrà calcolato dinamicamente quando il preset viene eseguito
+                const details = { subType: itemId, itemName: itemDef.name };
                 await savePreset(interaction, session, 'SHOP', 'SHOP', details, session.userName, 
-                    `✅ Oggetto **${itemDef.name}** salvato.`);
+                    `✅ Oggetto **${itemDef.name}** salvato in preset.`);
             }
         }
 
@@ -466,10 +467,9 @@ function registerPresetInteractions(client) {
                 subType: 'lettera', 
                 itemName: 'Lettera', 
                 targetUserId: session.letteraTarget, 
-                content: content,
-                responseChannelId: session.channelId 
+                content: content
             };
-            await savePreset(interaction, session, 'SHOP', 'SHOP', details, session.userName, "✅ Lettera salvata in coda.");
+            await savePreset(interaction, session, 'SHOP', 'SHOP', details, session.userName, "✅ Lettera salvata in preset.");
         }
 
         // CATENE: SAVE
@@ -483,8 +483,8 @@ function registerPresetInteractions(client) {
             
             await econDb.removeItem(interaction.user.id, session.shopItemId, 1);
 
-            const details = { subType: session.shopItemId, itemName: 'Catene', targetUserId, responseChannelId: session.channelId };
-            await savePreset(interaction, session, 'SHOP', 'SHOP', details, session.userName);
+            const details = { subType: session.shopItemId, itemName: 'Catene', targetUserId };
+            await savePreset(interaction, session, 'SHOP', 'SHOP', details, session.userName, "✅ Catene salvate in preset.");
         }
 
         // ABILITY: SAVE
