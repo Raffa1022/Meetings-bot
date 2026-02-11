@@ -740,4 +740,3 @@ module.exports = {
     showAdminDashboard,
     startPresetTimer,
 };
-}
