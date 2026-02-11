@@ -213,7 +213,7 @@ async function executeHousingAction(queueItem) {
                 // Nessuno ha risposto - apro automaticamente
                 await db.housing.clearActiveKnock(member.id);
                 await msg.reply("⏱️ Tempo scaduto - Apertura automatica.");
-                await enterHouse(member, fromCh, targetCh, `👋 ${member} è entrato (auto-apertura).`, false, true);
+                await enterHouse(member, fromCh, targetCh, `👋 ${member} è entrato.`, false, true);
             }
         });
     }
