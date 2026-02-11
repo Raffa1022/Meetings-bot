@@ -262,7 +262,7 @@ module.exports = async function handleAdminCommand(message, command, args, clien
         const annunciChannel = message.guild.channels.cache.get(HOUSING.CANALE_ANNUNCI);
         if (annunciChannel) {
             await annunciChannel.send(
-                `<@&${RUOLI.ALIVE}> <@&${RUOLI.SPONSOR}>\n✅ **I PRESET SONO STATI TUTTI EFFETTUATI!**\nDa ora in poi potrete nuovamente utilizzare il comando \`!abilità\`.`
+                `<@&${RUOLI.ALIVE}> <@&${RUOLI.SPONSOR}>\n✅ **I PRESET SONO STATI TUTTI EFFETTUATI!**\nDa ora in poi potrete nuovamente utilizzare i comandi \`!abilità\`, \`!bussa\` e \`!torna\`.`
             );
         }
         message.reply("✅ **Fase Preset Terminata.** Abilità sbloccate e coda processata.");
@@ -272,21 +272,44 @@ module.exports = async function handleAdminCommand(message, command, args, clien
     else if (command === 'preset' && message.mentions.members.size > 0) {
         const targetUser = message.mentions.members.first();
         
+        // Lista categorie per il formatting
+        const CATEGORIES = [
+            { label: 'Bussa', value: 'KNOCK', emoji: '✊' },
+            { label: 'Oggetti Shop', value: 'SHOP', emoji: '🛒' },
+            { label: 'Protezione', value: 'PROTEZIONE', emoji: '🛡️' },
+            { label: 'Letale', value: 'LETALE', emoji: '⚔️' },
+            { label: 'Informazione', value: 'INFORMAZIONE', emoji: '🔍' },
+            { label: 'Comunicazione', value: 'COMUNICAZIONE', emoji: '💬' },
+            { label: 'Potenziamento', value: 'POTENZIAMENTO', emoji: '⚡' },
+            { label: 'Trasporto', value: 'TRASPORTO', emoji: '🚗' },
+            { label: 'Cura', value: 'CURA', emoji: '💊' },
+            { label: 'Visitblock', value: 'VISITBLOCK', emoji: '🚫' },
+            { label: 'Roleblock', value: 'ROLEBLOCK', emoji: '🔒' },
+            { label: 'Manipolazione', value: 'MANIPOLAZIONE', emoji: '🎭' },
+            { label: 'Altro', value: 'ALTRO', emoji: '❓' },
+        ];
+        
         // Helper per visualizzare i dettagli corretti
         const formatDetails = (p) => {
+            // ✅ Aggiungo la categoria prima dei dettagli
+            const categoryIcon = CATEGORIES.find(c => c.value === p.category)?.emoji || '❓';
+            const categoryName = CATEGORIES.find(c => c.value === p.category)?.label || p.category;
+            
+            let details = `${categoryIcon} **${categoryName}**`;
+            
             if (p.type === 'KNOCK') {
                 const ch = message.guild.channels.cache.get(p.details.targetChannelId);
                 const chName = ch ? ch.name : `ID: ${p.details.targetChannelId}`;
                 const mode = p.details.mode === 'mode_forced' ? '🧨' : (p.details.mode === 'mode_hidden' ? '🕵️' : '👋');
-                return `→ 🏠 ${formatName(chName)} ${mode}`;
+                details += ` → 🏠 ${formatName(chName)} ${mode}`;
+            } else if (p.type === 'SHOP') {
+                details += ` → 🛒 ${p.details.itemName}`;
+            } else if (p.type === 'ABILITY') {
+                const text = p.details.text || "...";
+                const target = p.details.target ? ` (Target: ${p.details.target})` : '';
+                details += ` → ✨ ${text}${target}`;
             }
-            if (p.type === 'SHOP') {
-                return `→ 🛒 ${p.details.itemName}`;
-            }
-            if (p.type === 'ABILITY') {
-                return `→ ✨ ${p.details.text || "..."}`;
-            }
-            return `→ ${JSON.stringify(p.details)}`;
+            return details;
         };
 
         const nightPresets = await db.preset.getUserNightPresets(targetUser.id);
@@ -811,6 +834,56 @@ module.exports = async function handleAdminCommand(message, command, args, clien
         }
 
         message.reply(response);
+    }
+
+    // ===================== RIMUOVI PRESET =====================
+    else if (command === 'rimuovipreset') {
+        const targetUser = message.mentions.members.first();
+        if (!targetUser) {
+            return message.reply("❌ Uso: `!rimuovipreset @Utente [notturno/diurno/timer] [numero]`\nEsempio: `!rimuovipreset @Raffa notturno 1`");
+        }
+
+        const tipo = args[1]?.toLowerCase();
+        const numero = parseInt(args[2]);
+
+        if (!tipo || !['notturno', 'diurno', 'timer'].includes(tipo)) {
+            return message.reply("❌ Specifica il tipo: `notturno`, `diurno` o `timer`");
+        }
+
+        if (isNaN(numero) || numero < 1) {
+            return message.reply("❌ Specifica un numero valido (es. 1, 2, 3...)");
+        }
+
+        let presets = [];
+        let tipoDB = '';
+        
+        if (tipo === 'notturno') {
+            presets = await db.preset.getUserNightPresets(targetUser.id);
+            tipoDB = 'night';
+        } else if (tipo === 'diurno') {
+            presets = await db.preset.getUserDayPresets(targetUser.id);
+            tipoDB = 'day';
+        } else if (tipo === 'timer') {
+            presets = await db.preset.getUserScheduledPresets(targetUser.id);
+            tipoDB = 'scheduled';
+        }
+
+        if (numero > presets.length) {
+            return message.reply(`❌ ${targetUser} ha solo ${presets.length} preset ${tipo}.`);
+        }
+
+        const presetToRemove = presets[numero - 1];
+        
+        if (tipoDB === 'night') {
+            await db.preset.removeNightPreset(presetToRemove._id);
+        } else if (tipoDB === 'day') {
+            await db.preset.removeDayPreset(presetToRemove._id);
+        } else if (tipoDB === 'scheduled') {
+            await db.preset.removeScheduledPreset(presetToRemove._id);
+        }
+
+        const categoryName = presetToRemove.category || 'UNKNOWN';
+        message.reply(`✅ Preset **${tipo}** #${numero} di ${targetUser} rimosso.\nCategoria: **${categoryName}**`);
     }
 
     // ===================== PRESET DASHBOARD =====================
