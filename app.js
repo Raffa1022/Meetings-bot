@@ -47,7 +47,7 @@ const ADMIN_COMMANDS = new Set([
     'assegnacasa', 'visite', 'aggiunta', 'resetvisite', 'sblocca',
     'notte', 'giorno', 'distruzione', 'ricostruzione', 'pubblico',
     'sposta', 'dove', 'multipla', 'ritirata', 'ram', 'memoria', 'cancella', 'ritorno',
-    'presetdashboard', 'eseguipreset'
+    'presetdashboard', 'eseguipreset', 'rimuovipreset'
 ]);
 
 client.on('messageCreate', async message => {
@@ -56,15 +56,20 @@ client.on('messageCreate', async message => {
     const args = message.content.slice(PREFIX.length).trim().split(/ +/);
     const command = args.shift().toLowerCase();
 
-    // Gestione speciale per !preset con @utente (SOLO ADMIN)
-    if (command === 'preset' && message.mentions.members.size > 0 && isAdmin(message.member)) {
-        try {
-            await handleAdminCommand(message, command, args, client);
-        } catch (err) {
-            console.error(`❌ Errore comando admin preset:`, err);
-            message.reply("❌ Errore interno.").catch(() => {});
+    // Gestione speciale per !preset con @utente (ADMIN o NO)
+    if (command === 'preset' && message.mentions.members.size > 0) {
+        if (isAdmin(message.member)) {
+            try {
+                await handleAdminCommand(message, command, args, client);
+            } catch (err) {
+                console.error(`❌ Errore comando admin preset:`, err);
+                message.reply("❌ Errore interno.").catch(() => {});
+            }
+        } else {
+            // Non admin che prova a usare !preset @utente
+            message.reply("⛔ Solo gli admin possono visualizzare i preset di altri utenti.");
         }
-        return;
+        return; // ✅ IMPORTANTE: Evita che continui ai playerCommands
     }
 
     // Gestione speciale per !fine preset (SOLO ADMIN)
