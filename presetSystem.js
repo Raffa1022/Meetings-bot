@@ -261,7 +261,7 @@ function registerPresetInteractions(client) {
         // INDIETRO PAGINE
         if (interaction.customId === 'preset_back_to_pages') {
              if (!session) return interaction.reply({ content: '❌ Sessione scaduta.', ephemeral: true });
-             const { components, content } = buildPageSelect(interaction.guild);
+             const { components, content } = await buildPageSelect(interaction.guild, userId);
              await interaction.update({ content, components });
              return;
         }
@@ -325,7 +325,7 @@ function registerPresetInteractions(client) {
             session.knockMode = interaction.values[0];
 
             // Mostra selezione pagine
-            const { components, content } = buildPageSelect(interaction.guild);
+            const { components, content } = await buildPageSelect(interaction.guild, userId);
             await interaction.update({ content, components });
         }
 
@@ -334,12 +334,20 @@ function registerPresetInteractions(client) {
             if (!session) return interaction.reply({ content: '❌ Sessione scaduta.', ephemeral: true });
             
             const pageIndex = parseInt(interaction.values[0].split('_')[1]); // "page_0"
-            const houses = await getAvailableHousesSorted(interaction.guild, userId); // Tutte le case disponibili
+            const houses = await getAvailableHousesSorted(interaction.guild, userId);
             
             const PAGE_SIZE = 25;
-            const start = pageIndex * PAGE_SIZE;
-            const end = start + PAGE_SIZE;
-            const casePagina = houses.slice(start, end);
+            
+            // FIX: Filtro per range numerico invece di slice
+            const minRange = pageIndex * PAGE_SIZE + 1;
+            const maxRange = (pageIndex + 1) * PAGE_SIZE;
+            
+            const casePagina = houses.filter(h => {
+                const match = h.name.match(/(\w+)-(\d+)/); // Supporta: casa-10, taverna-5, villa-3, etc.
+                if (!match) return false;
+                const houseNum = parseInt(match[2]);
+                return houseNum >= minRange && houseNum <= maxRange;
+            });
 
             if (casePagina.length === 0)
                 return interaction.reply({ content: "❌ Nessuna casa in questa pagina.", ephemeral: true });
@@ -356,39 +364,19 @@ function registerPresetInteractions(client) {
                 .setLabel('Indietro').setStyle(ButtonStyle.Secondary).setEmoji('◀️');
 
             await interaction.update({
-                content: `🏠 **Pagina ${pageIndex + 1}: Scegli dove bussare:**`,
+                content: `🏘️ **Pagina ${pageIndex + 1}: Scegli casa:**`,
                 components: [
                     new ActionRowBuilder().addComponents(houseSelect),
-                    new ActionRowBuilder().addComponents(backBtn)
+                    new ActionRowBuilder().addComponents(backBtn),
                 ]
             });
         }
 
-        // KNOCK: SAVE
+        // HOUSE SELECTED (KNOCK)
         if (interaction.customId === 'preset_house') {
             if (!session) return interaction.reply({ content: '❌ Sessione scaduta.', ephemeral: true });
-            
-            // ✅ VERIFICA: Non permettere 2 KNOCK nello stesso tipo di preset
-            const userId = interaction.user.id;
-            let existingPresets = [];
-            if (session.presetType === 'night') {
-                existingPresets = await presetDb.getUserNightPresets(userId);
-            } else if (session.presetType === 'day') {
-                existingPresets = await presetDb.getUserDayPresets(userId);
-            } else if (session.presetType === 'scheduled') {
-                existingPresets = await presetDb.getUserScheduledPresets(userId);
-                existingPresets = existingPresets.filter(p => p.triggerTime === session.triggerTime);
-            }
-            
-            const hasKnock = existingPresets.some(p => p.type === 'KNOCK');
-            if (hasKnock) {
-                return interaction.update({ 
-                    content: '❌ Hai già un preset KNOCK in questa fase! Rimuovilo prima con `!preset list` se vuoi cambiarlo.', 
-                    components: [] 
-                });
-            }
-            
-            const details = { targetChannelId: interaction.values[0], mode: session.knockMode, fromChannelId: session.channelId };
+            const targetChannelId = interaction.values[0];
+            const details = { targetChannelId, mode: session.knockMode };
             await savePreset(interaction, session, 'KNOCK', 'KNOCK', details, session.userName);
         }
 
@@ -618,8 +606,9 @@ async function processAndClearPresets(presets, contextLabel) {
         processedCount++;
     }
 
-    // POI aggiungo i fuochi d'artificio con un delay di 5 secondi per farli apparire DOPO il messaggio NOTTE/GIORNO
-    const fuochiDelay = (delayCounter * 50) + 5000;
+    // FIX: Aggiungo i fuochi d'artificio con un delay di 2-3 secondi DOPO l'ultimo preset normale
+    // Questo assicura che appaiano DOPO il messaggio !notte/!giorno in annunci
+    const fuochiDelay = (delayCounter * 50) + 2500; // 2.5 secondi dopo l'ultimo preset
     
     for (const preset of fuochiPresets) {
         const queueItem = {
@@ -630,7 +619,7 @@ async function processAndClearPresets(presets, contextLabel) {
 
         setTimeout(() => {
             eventBus.emit('queue:add', queueItem);
-        }, fuochiDelay + ((processedCount - sorted.length) * 50));
+        }, fuochiDelay);
         
         processedCount++;
     }
@@ -671,37 +660,54 @@ async function showUserPresets(message) {
 // 🎯 HELPERS & EXPORT
 // ==========================================
 
-// Helper per ottenere case ordinate (filtrate da distrutte e permessi)
+// FIX: Helper per ottenere case ordinate per NUMERO (consistente con knockInteractions)
 async function getAvailableHousesSorted(guild, userId) {
     const myHomeId = await db.housing.getHome(userId);
     const destroyed = await db.housing.getDestroyedHouses();
     
-    // Filtra e poi ordina per rawPosition
-    return guild.channels.cache
+    // Filtra e ordina per NUMERO estratto dal nome
+    const houses = guild.channels.cache
         .filter(ch => 
             ch.parentId === HOUSING.CATEGORIA_CASE && 
             ch.type === ChannelType.GuildText && 
             ch.id !== myHomeId && 
             !destroyed.includes(ch.id) &&
             !ch.permissionOverwrites.cache.get(userId)?.deny.has(PermissionsBitField.Flags.ViewChannel)
-        )
-        .sort((a, b) => a.rawPosition - b.rawPosition)
-        .map(ch => ({ id: ch.id, name: ch.name }));
+        );
+    
+    return Array.from(houses.values())
+        .map(ch => {
+            const match = ch.name.match(/(\w+)-(\d+)/); // Supporta: casa-10, taverna-5, villa-3, etc.
+            const number = match ? parseInt(match[2]) : 999999;
+            return { ch, number };
+        })
+        .sort((a, b) => a.number - b.number)
+        .map(({ ch }) => ({ id: ch.id, name: ch.name }));
 }
 
-// Builder per la selezione pagina (simile a bussa)
-function buildPageSelect(guild) {
-    // Otteniamo TUTTE le case valide (anche se per il builder generico contiamo solo quelle testuali nella categoria)
-    const tutteLeCase = guild.channels.cache
-        .filter(c => c.parentId === HOUSING.CATEGORIA_CASE && c.type === ChannelType.GuildText);
+// FIX: Builder per la selezione pagina basata su NUMERI (consistente con knockInteractions)
+async function buildPageSelect(guild, userId) {
+    const houses = await getAvailableHousesSorted(guild, userId);
+    
+    if (houses.length === 0) return { content: '❌ Nessuna casa disponibile.', components: [] };
     
     const PAGE_SIZE = 25;
-    const totalPages = Math.ceil(tutteLeCase.size / PAGE_SIZE);
+    
+    // Estraggo i numeri reali delle case
+    const houseNumbers = houses.map(h => {
+        const match = h.name.match(/(\w+)-(\d+)/); // Supporta: casa-10, taverna-5, villa-3, etc.
+        return match ? parseInt(match[2]) : 0;
+    }).filter(n => n > 0);
+    
+    if (houseNumbers.length === 0) return { content: '❌ Nessuna casa disponibile.', components: [] };
+    
+    const maxHouse = Math.max(...houseNumbers);
+    const totalPages = Math.ceil(maxHouse / PAGE_SIZE);
     const pageOptions = [];
 
     for (let i = 0; i < totalPages; i++) {
         const start = i * PAGE_SIZE + 1;
-        const end = Math.min((i + 1) * PAGE_SIZE, tutteLeCase.size);
+        const end = Math.min((i + 1) * PAGE_SIZE, maxHouse);
         pageOptions.push(new StringSelectMenuOptionBuilder()
             .setLabel(`Case ${start} - ${end}`)
             .setValue(`page_${i}`)
