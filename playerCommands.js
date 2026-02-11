@@ -27,6 +27,12 @@ module.exports = function registerPlayerCommands(client) {
             message.delete().catch(() => {});
             if (message.channel.parentId !== HOUSING.CATEGORIA_CHAT_PRIVATE) return;
 
+            // ✅ BLOCCO PRESET PHASE
+            const isPresetPhase = await db.moderation.isPresetPhaseActive();
+            if (isPresetPhase) {
+                return message.channel.send("🔒 **Fase Preset attiva!** Non puoi usare !torna fino al comando `!fine preset`.");
+            }
+
             // Sponsor non possono
             if (message.member.roles.cache.has(RUOLI.SPONSOR) || message.member.roles.cache.has(RUOLI.SPONSOR_DEAD)) {
                 return message.channel.send("⛔ Gli sponsor non possono usare il comando !torna.");
@@ -91,6 +97,12 @@ module.exports = function registerPlayerCommands(client) {
             message.delete().catch(() => {});
             if (message.channel.parentId !== HOUSING.CATEGORIA_CHAT_PRIVATE)
                 return message.channel.send("⛔ Solo chat private!");
+
+            // ✅ BLOCCO PRESET PHASE
+            const isPresetPhase = await db.moderation.isPresetPhaseActive();
+            if (isPresetPhase) {
+                return message.channel.send("🔒 **Fase Preset attiva!** Non puoi usare !bussa fino al comando `!fine preset`.");
+            }
 
             if (message.member.roles.cache.has(RUOLI.SPONSOR) || message.member.roles.cache.has(RUOLI.SPONSOR_DEAD))
                 return message.channel.send("⛔ Gli sponsor non possono usare il comando !bussa.");
