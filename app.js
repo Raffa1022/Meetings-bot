@@ -56,8 +56,30 @@ client.on('messageCreate', async message => {
     const args = message.content.slice(PREFIX.length).trim().split(/ +/);
     const command = args.shift().toLowerCase();
 
+    // Gestione speciale per !preset con @utente (SOLO ADMIN)
+    if (command === 'preset' && message.mentions.members.size > 0 && isAdmin(message.member)) {
+        try {
+            await handleAdminCommand(message, command, args, client);
+        } catch (err) {
+            console.error(`❌ Errore comando admin preset:`, err);
+            message.reply("❌ Errore interno.").catch(() => {});
+        }
+        return;
+    }
+
+    // Gestione speciale per !fine preset (SOLO ADMIN)
+    if (command === 'fine' && args[0]?.toLowerCase() === 'preset' && isAdmin(message.member)) {
+        try {
+            await handleAdminCommand(message, command, args, client);
+        } catch (err) {
+            console.error(`❌ Errore comando fine preset:`, err);
+            message.reply("❌ Errore interno.").catch(() => {});
+        }
+        return;
+    }
+
     // Route ai comandi admin (auth gestita dentro handleAdminCommand)
-    if (ADMIN_COMMANDS.has(command)) {
+    if (ADMIN_COMMANDS.has(command) && command !== 'preset' && command !== 'fine') {
         try {
             await handleAdminCommand(message, command, args, client);
         } catch (err) {
