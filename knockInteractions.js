@@ -64,7 +64,17 @@ module.exports = function registerKnockInteractions(client) {
 
             const tutteLeCase = getSortedHouses(interaction.guild);
             const PAGE_SIZE = 25;
-            const casePagina = [...tutteLeCase.values()].slice(pageIndex * PAGE_SIZE, (pageIndex + 1) * PAGE_SIZE);
+            
+            // Filtro in base al RANGE NUMERICO della pagina (1-25, 26-50, etc.)
+            const minRange = pageIndex * PAGE_SIZE + 1;
+            const maxRange = (pageIndex + 1) * PAGE_SIZE;
+            
+            const casePagina = [...tutteLeCase.values()].filter(ch => {
+                const match = ch.name.match(/casa-(\d+)/);
+                if (!match) return false;
+                const houseNum = parseInt(match[1]);
+                return houseNum >= minRange && houseNum <= maxRange;
+            });
 
             if (casePagina.length === 0)
                 return interaction.reply({ content: "❌ Nessuna casa in questa pagina.", ephemeral: true });
@@ -242,12 +252,23 @@ function getSortedHouses(guild) {
 function buildPageSelect(guild, mode) {
     const tutteLeCase = getSortedHouses(guild);
     const PAGE_SIZE = 25;
-    const totalPages = Math.ceil(tutteLeCase.size / PAGE_SIZE);
+    
+    // Estraggo i numeri reali delle case per calcolare le pagine corrette
+    const houseNumbers = Array.from(tutteLeCase.values()).map(ch => {
+        const match = ch.name.match(/casa-(\d+)/);
+        return match ? parseInt(match[1]) : 0;
+    }).filter(n => n > 0).sort((a, b) => a - b);
+    
+    if (houseNumbers.length === 0) return { content: '❌ Nessuna casa disponibile.', components: [] };
+    
+    const minHouse = Math.min(...houseNumbers);
+    const maxHouse = Math.max(...houseNumbers);
+    const totalPages = Math.ceil(maxHouse / PAGE_SIZE);
     const pageOptions = [];
 
     for (let i = 0; i < totalPages; i++) {
         const start = i * PAGE_SIZE + 1;
-        const end = Math.min((i + 1) * PAGE_SIZE, tutteLeCase.size);
+        const end = Math.min((i + 1) * PAGE_SIZE, maxHouse);
         pageOptions.push(new StringSelectMenuOptionBuilder()
             .setLabel(`Case ${start} - ${end}`)
             .setValue(`page_${i}_${mode}`)
