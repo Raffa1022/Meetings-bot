@@ -1,6 +1,6 @@
 // ==========================================
 // 🚦 QUEUE SYSTEM - Coda Cronologica
-// EDIT DASHBOARD + BLOCCO FASE PRESET
+// EDIT DASHBOARD + GESTIONE GERARCHICA
 // ==========================================
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionsBitField } = require('discord.js');
 const { QUEUE, RUOLI, HOUSING } = require('./config');
@@ -20,6 +20,7 @@ async function processQueue() {
     processing = true;
 
     try {
+        // Prende SEMPRE il primo elemento in ordine (rispetta la gerarchia dei preset)
         const currentItem = await db.queue.getFirst();
 
         if (!currentItem) {
@@ -27,39 +28,31 @@ async function processQueue() {
             return;
         }
 
-        // ============================================================
-        // 🔒 BLOCCO FASE PRESET (!fine preset)
-        // Se la fase è attiva, le ABILITÀ rimangono in coda ma NON vengono eseguite/mostrate agli admin
-        // ============================================================
-        const isPresetPhaseActive = await db.moderation.isPresetPhaseActive();
-        
-        if (currentItem.type === 'ABILITY' && isPresetPhaseActive) {
-            // Se è un'abilità e la fase è bloccata, STOP.
-            // Non rimuoviamo l'item, semplicemente fermiamo il processore.
-            // L'item rimane "Primo in coda" ma bloccato.
-            // Aggiorniamo la dashboard dicendo che è in pausa.
-            await updateDashboard(true); // true = paused state
-            return;
-        }
-
         console.log(`📌 [Queue] Processo: ${currentItem.type} di ${currentItem.userId}`);
 
-        // ======= ABILITÀ → Check RB =======
+        // ======= ABILITÀ (Richiede Approvazione Manuale) =======
+        // Il processore si FERMA qui e aspetta l'admin.
+        // Non importa se la fase preset è attiva o no: tu devi poter approvare.
         if (currentItem.type === 'ABILITY') {
             const isRB = await db.moderation.isBlockedRB(currentItem.userId);
+            
             if (isRB) {
+                // Auto-rifiuta se in Roleblock
                 await notifyUser(currentItem.userId, '🚫 Abilità annullata: sei in Roleblock.');
                 await db.queue.remove(currentItem._id);
-                // Riprocessa subito il prossimo
                 processing = false; return processQueue();
             } else {
-                // Abilità valida: Mostra dashboard per approvazione Admin
-                await updateDashboard();
-                return; // Aspetta input admin
+                // Mostra i bottoni all'admin e STOPPA il processore finché non viene gestita
+                await updateDashboard(); 
+                return; 
             }
         }
 
-        // ======= HOUSING =======
+        // ======= AUTOMAZIONI (Shop, Knock, Return) =======
+        // Vengono eseguiti SUBITO, ma solo quando è il loro turno in coda.
+        // Se c'era un'abilità prima di loro, hanno dovuto aspettare che tu la approvassi.
+
+        // --- HOUSING ---
         if (currentItem.type === 'RETURN' || currentItem.type === 'KNOCK') {
             const isVB = await db.moderation.isBlockedVB(currentItem.userId);
             if (isVB) {
@@ -70,10 +63,11 @@ async function processQueue() {
                 await executeHousingAction(currentItem);
                 await db.queue.remove(currentItem._id);
             }
+            // Riprocessa subito il prossimo elemento
             processing = false; return processQueue();
         }
 
-        // ======= SHOP =======
+        // --- SHOP ---
         if (currentItem.type === 'SHOP') {
             const subType = currentItem.details?.subType;
             if (subType && subType !== 'acquisto') {
@@ -82,6 +76,7 @@ async function processQueue() {
                 if (handler) await handler(clientRef, currentItem.userId, currentItem.details);
             }
             await db.queue.remove(currentItem._id);
+            // Riprocessa subito il prossimo elemento
             processing = false; return processQueue();
         }
 
@@ -100,42 +95,54 @@ async function updateDashboard(isPaused = false) {
     if (!channel) return;
 
     const queue = await db.queue.getPending();
-    
-    // Se siamo in pausa (!fine preset non ancora dato), filtriamo visivamente o mostriamo avviso
-    const isPhaseBlocked = await db.moderation.isPresetPhaseActive();
+    const isPhaseBlocked = await db.moderation.isPresetPhaseActive(); // Solo per info visiva, non blocca più
 
     let description = queue.length === 0 ? "✅ **Nessuna azione in attesa.**" : "";
 
-    if (isPhaseBlocked && queue.length > 0 && queue[0].type === 'ABILITY') {
-        description = "🔒 **FASE PRESET ATTIVA**\nLe abilità sono bloccate fino al comando `!fine preset`.\n\n";
+    // Header informativo opzionale
+    if (isPhaseBlocked && queue.length > 0) {
+        description = "ℹ️ **FASE PRESET IN CORSO** (Puoi gestire le azioni man mano)\n\n";
     }
 
     queue.forEach((item, index) => {
         const time = `<t:${Math.floor(new Date(item.timestamp).getTime() / 1000)}:T>`;
         const icons = { ABILITY: "✨", RETURN: "🏠", KNOCK: "✊", SHOP: "🛒" };
-        const label = item.type === 'SHOP' ? (item.details?.itemName || 'Shop') : item.type;
+        
+        // Etichetta dettagliata
+        let label = item.type;
+        if (item.type === 'SHOP') label = item.details?.itemName || 'Shop';
+        else if (item.type === 'ABILITY') label = item.details?.category || 'ABILITÀ'; // Mostra Protezione, Letale, ecc.
+        else if (item.type === 'KNOCK') {
+             const mode = item.details?.mode || 'normal';
+             label = mode === 'mode_forced' ? 'SFONDAMENTO' : (mode === 'mode_hidden' ? 'INTRUSIONE' : 'BUSSA');
+        }
+
         const pointer = index === 0 ? "👉" : `**#${index + 1}**`;
         
-        description += `${pointer} ${icons[item.type] || ""} \`${label}\` <@${item.userId}> (${time})\n`;
+        description += `${pointer} ${icons[item.type] || ""} \`[${label}]\` <@${item.userId}> (${time})\n`;
     });
 
     const embed = new EmbedBuilder()
         .setTitle("📋 Coda Azioni Cronologica")
-        .setColor(isPhaseBlocked ? 'Orange' : (queue.length > 0 && queue[0].type === 'ABILITY' ? 'Yellow' : 'Green'))
+        .setColor(queue.length > 0 && queue[0].type === 'ABILITY' ? 'Yellow' : 'Green')
         .setDescription(description)
         .setTimestamp();
 
     let components = [];
     let contentText = " ";
 
-    if (queue.length > 0 && !isPhaseBlocked) {
+    // Mostra SEMPRE i bottoni se il primo elemento è un'abilità
+    if (queue.length > 0) {
         if (queue[0].type === 'ABILITY') {
             contentText = `<@&${RUOLI.ADMIN_QUEUE}> 🔔 **Nuova richiesta in coda!**`;
             components.push(new ActionRowBuilder().addComponents(
                 new ButtonBuilder().setCustomId(`q_approve_${queue[0]._id}`).setLabel('✅ Approva').setStyle(ButtonStyle.Success),
                 new ButtonBuilder().setCustomId(`q_reject_${queue[0]._id}`).setLabel('❌ Rifiuta').setStyle(ButtonStyle.Danger),
             ));
-            embed.addFields({ name: '📜 Dettaglio', value: queue[0].details?.text || "..." });
+            
+            // Dettagli nel footer dell'embed o come field
+            const detailText = queue[0].details?.text || "Nessun dettaglio";
+            embed.addFields({ name: '📜 Dettaglio Azione', value: detailText });
         }
     }
 
@@ -148,7 +155,7 @@ async function updateDashboard(isPaused = false) {
 }
 
 // ==========================================
-// 🎯 HOUSING ACTION EXECUTOR (CORRETTO)
+// 🎯 HOUSING ACTION EXECUTOR
 // ==========================================
 async function executeHousingAction(queueItem) {
     let guild = clientRef.guilds.cache.first(); 
@@ -157,32 +164,27 @@ async function executeHousingAction(queueItem) {
     const member = await guild.members.fetch(queueItem.userId).catch(() => null);
     if (!member) return;
 
-    // --- FIX: Calcolo dinamico posizione attuale se manca (per i Preset) ---
+    // Calcolo dinamico posizione attuale
     let { fromChannelId } = queueItem.details;
     if (!fromChannelId) {
-        // Cerca in quale casa si trova attualmente l'utente
         const currentHome = guild.channels.cache.find(c => 
             c.parentId === HOUSING.CATEGORIA_CASE &&
             c.permissionOverwrites.cache.has(member.id)
         );
         if (currentHome) fromChannelId = currentHome.id;
     }
-    // -----------------------------------------------------------------------
 
     if (queueItem.type === 'RETURN') {
         const homeId = await db.housing.getHome(member.id);
         const destroyed = await db.housing.getDestroyedHouses();
         
-        // Se homeId esiste e non è distrutta
         if (homeId && !destroyed.includes(homeId)) {
             const homeCh = guild.channels.cache.get(homeId);
-            const fromCh = guild.channels.cache.get(fromChannelId); // Ora fromChannelId è popolato
+            const fromCh = guild.channels.cache.get(fromChannelId);
             
-            // Esegui movimento solo se i canali esistono e sono diversi
             if (homeCh && fromCh && homeCh.id !== fromCh.id) {
                 await movePlayer(member, fromCh, homeCh, `🏠 ${member} è ritornato.`, false);
             } else if (homeCh && !fromCh) {
-                // Caso limite: l'utente non era in nessuna casa, lo forziamo in casa sua
                 await movePlayer(member, null, homeCh, `🏠 ${member} è ritornato.`, false);
             }
         }
@@ -192,11 +194,9 @@ async function executeHousingAction(queueItem) {
     if (queueItem.type === 'KNOCK') {
         const { targetChannelId, mode } = queueItem.details;
         const targetCh = guild.channels.cache.get(targetChannelId);
-        const fromCh = guild.channels.cache.get(fromChannelId); // Ora fromChannelId è popolato
+        const fromCh = guild.channels.cache.get(fromChannelId);
         
         if (!targetCh) return;
-
-        // Se l'utente è già lì, ignoriamo (evita spam)
         if (fromCh && fromCh.id === targetCh.id) return;
 
         if (mode === 'mode_forced' || mode === 'mode_hidden') {
@@ -223,7 +223,6 @@ async function executeHousingAction(queueItem) {
             await db.housing.clearActiveKnock(member.id);
             if (r.emoji.name === '✅') {
                 await msg.reply("✅ Aperto.");
-                // Ricalcoliamo fromCh nel momento dell'apertura per sicurezza
                 const currentFrom = guild.channels.cache.find(c => c.parentId === HOUSING.CATEGORIA_CASE && c.permissionOverwrites.cache.has(member.id));
                 await enterHouse(member, currentFrom, targetCh, `👋 ${member} è entrato.`, false, true);
             } else {
@@ -282,6 +281,9 @@ module.exports = function initQueueSystem(client) {
 
         await db.queue.remove(id);
         await i.reply({ content: `✅ ${action === 'APPROVE' ? 'Approvata' : 'Rifiutata'}.`, ephemeral: true });
+        
+        // Rilancia il processore per gestire il prossimo elemento (automatizzato o abilità)
+        processing = false; 
         processQueue();
     });
 
