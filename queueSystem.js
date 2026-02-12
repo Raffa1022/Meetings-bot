@@ -148,32 +148,56 @@ async function updateDashboard(isPaused = false) {
 }
 
 // ==========================================
-// 🎯 HOUSING ACTION EXECUTOR
+// 🎯 HOUSING ACTION EXECUTOR (CORRETTO)
 // ==========================================
 async function executeHousingAction(queueItem) {
-    const allHomes = await db.housing.getAllHomes();
     let guild = clientRef.guilds.cache.first(); 
     if (!guild) return;
 
     const member = await guild.members.fetch(queueItem.userId).catch(() => null);
     if (!member) return;
 
+    // --- FIX: Calcolo dinamico posizione attuale se manca (per i Preset) ---
+    let { fromChannelId } = queueItem.details;
+    if (!fromChannelId) {
+        // Cerca in quale casa si trova attualmente l'utente
+        const currentHome = guild.channels.cache.find(c => 
+            c.parentId === HOUSING.CATEGORIA_CASE &&
+            c.permissionOverwrites.cache.has(member.id)
+        );
+        if (currentHome) fromChannelId = currentHome.id;
+    }
+    // -----------------------------------------------------------------------
+
     if (queueItem.type === 'RETURN') {
         const homeId = await db.housing.getHome(member.id);
         const destroyed = await db.housing.getDestroyedHouses();
+        
+        // Se homeId esiste e non è distrutta
         if (homeId && !destroyed.includes(homeId)) {
             const homeCh = guild.channels.cache.get(homeId);
-            const fromCh = guild.channels.cache.get(queueItem.details.fromChannelId);
-            if (homeCh) await movePlayer(member, fromCh, homeCh, `🏠 ${member} è ritornato.`, false);
+            const fromCh = guild.channels.cache.get(fromChannelId); // Ora fromChannelId è popolato
+            
+            // Esegui movimento solo se i canali esistono e sono diversi
+            if (homeCh && fromCh && homeCh.id !== fromCh.id) {
+                await movePlayer(member, fromCh, homeCh, `🏠 ${member} è ritornato.`, false);
+            } else if (homeCh && !fromCh) {
+                // Caso limite: l'utente non era in nessuna casa, lo forziamo in casa sua
+                await movePlayer(member, null, homeCh, `🏠 ${member} è ritornato.`, false);
+            }
         }
         return;
     }
 
     if (queueItem.type === 'KNOCK') {
-        const { targetChannelId, mode, fromChannelId } = queueItem.details;
+        const { targetChannelId, mode } = queueItem.details;
         const targetCh = guild.channels.cache.get(targetChannelId);
-        const fromCh = guild.channels.cache.get(fromChannelId);
+        const fromCh = guild.channels.cache.get(fromChannelId); // Ora fromChannelId è popolato
+        
         if (!targetCh) return;
+
+        // Se l'utente è già lì, ignoriamo (evita spam)
+        if (fromCh && fromCh.id === targetCh.id) return;
 
         if (mode === 'mode_forced' || mode === 'mode_hidden') {
             const msg = mode === 'mode_forced' ? `🧨 ${member} ha sfondato la porta!` : "";
@@ -188,7 +212,6 @@ async function executeHousingAction(queueItem) {
             return;
         }
 
-        // ✅ Aggiungo mention ai ruoli ALIVE e SPONSOR
         const msg = await targetCh.send(`🔔 <@&${RUOLI.ALIVE}> <@&${RUOLI.SPONSOR}> **TOC TOC!** Qualcuno bussa.\n✅ Apri | ❌ Rifiuta`);
         await Promise.all([msg.react('✅'), msg.react('❌')]);
         await db.housing.setActiveKnock(member.id, targetChannelId);
@@ -200,20 +223,22 @@ async function executeHousingAction(queueItem) {
             await db.housing.clearActiveKnock(member.id);
             if (r.emoji.name === '✅') {
                 await msg.reply("✅ Aperto.");
-                await enterHouse(member, fromCh, targetCh, `👋 ${member} è entrato.`, false, true);
+                // Ricalcoliamo fromCh nel momento dell'apertura per sicurezza
+                const currentFrom = guild.channels.cache.find(c => c.parentId === HOUSING.CATEGORIA_CASE && c.permissionOverwrites.cache.has(member.id));
+                await enterHouse(member, currentFrom, targetCh, `👋 ${member} è entrato.`, false, true);
             } else {
                 await msg.reply("❌ Rifiutato.");
-                if (fromCh) fromCh.send(`⛔ ${member}, entrata rifiutata.`).catch(()=>{});
+                const currentFrom = guild.channels.cache.find(c => c.parentId === HOUSING.CATEGORIA_CASE && c.permissionOverwrites.cache.has(member.id));
+                if (currentFrom) currentFrom.send(`⛔ ${member}, entrata rifiutata.`).catch(()=>{});
             }
         });
         
-        // Auto-apertura dopo 5 minuti (300000ms) se nessuno risponde
         collector.on('end', async (collected, reason) => {
             if (reason === 'time' && collected.size === 0) {
-                // Nessuno ha risposto - apro automaticamente
                 await db.housing.clearActiveKnock(member.id);
                 await msg.reply("⏱️ Tempo scaduto - Apertura automatica.");
-                await enterHouse(member, fromCh, targetCh, `👋 ${member} è entrato.`, false, true);
+                const currentFrom = guild.channels.cache.find(c => c.parentId === HOUSING.CATEGORIA_CASE && c.permissionOverwrites.cache.has(member.id));
+                await enterHouse(member, currentFrom, targetCh, `👋 ${member} è entrato.`, false, true);
             }
         });
     }
