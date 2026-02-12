@@ -677,10 +677,16 @@ async function processAndClearPresets(presets, contextLabel) {
 
     // Processo prima tutti gli altri preset
     for (const preset of sorted) {
-        // 🔥 FIX: Le visite forzate/nascoste sono GIÀ state scalate dalla fase SUCCESSIVA quando il preset è stato creato
-        // Le visite normali verranno scalate quando il KNOCK viene processato dalla coda
-        // Non scaliamo di nuovo qui, altrimenti vengono scalate 2 volte!
-        
+             // 🔥 FIX: Scaliamo la visita ORA.
+        // Dato che non la scaliamo più alla creazione, dobbiamo farlo qui, 
+        // altrimenti la visita risulta "gratis" e il conteggio resta sempre 0/2.
+        if (preset.type === 'KNOCK') {
+            const mode = preset.details.mode;
+            if (mode === 'mode_forced') await db.housing.decrementForced(preset.userId);
+            else if (mode === 'mode_hidden') await db.housing.decrementHidden(preset.userId);
+            else await db.housing.incrementVisit(preset.userId);
+        }
+
         const queueItem = {
             type: preset.type,
             userId: preset.userId,
