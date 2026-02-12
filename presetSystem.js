@@ -593,6 +593,8 @@ if (interaction.customId === 'preset_list_select') {
     
     await interaction.update({ content: '✅ Preset rimosso e visite restituite!', components: [] });
 }
+    }); // End of client.on('interactionCreate')
+} // End of registerPresetInteractions
 // ==========================================
 // 💾 SAVE PRESET
 // ==========================================
@@ -689,11 +691,11 @@ async function processAndClearPresets(presets, contextLabel) {
 
     // Processo prima tutti gli altri preset
     for (const preset of sorted) {
-    // 🔥 FIX: Le visite forzate/nascoste sono GIÀ state scalate dalla fase SUCCESSIVA quando il preset è stato creato
-    // Le visite normali verranno scalate quando il KNOCK viene processato dalla coda
-    // Non scaliamo di nuovo qui, altrimenti vengono scalate 2 volte!
-    
-    const queueItem = {
+        // 🔥 FIX: Le visite forzate/nascoste sono GIÀ state scalate dalla fase SUCCESSIVA quando il preset è stato creato
+        // Le visite normali verranno scalate quando il KNOCK viene processato dalla coda
+        // Non scaliamo di nuovo qui, altrimenti vengono scalate 2 volte!
+        
+        const queueItem = {
             type: preset.type,
             userId: preset.userId,
             // Passiamo i dettagli così come sono. 
@@ -826,6 +828,5 @@ module.exports = {
     showUserPresets,
     showAdminDashboard,
     startPresetTimer,
-    db: presetDb 
-
+    db: presetDb
 };
