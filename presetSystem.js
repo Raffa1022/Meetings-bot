@@ -389,6 +389,18 @@ function registerPresetInteractions(client) {
         if (interaction.customId === 'preset_house') {
             if (!session) return interaction.reply({ content: '❌ Sessione scaduta.', ephemeral: true });
             const targetChannelId = interaction.values[0];
+                        // 🔥 NUOVO CONTROLLO: Impedisci doppio Bussa nel preset
+            let currentPresets = [];
+            if (session.presetType === 'night') currentPresets = await presetDb.getUserNightPresets(userId);
+            else if (session.presetType === 'day') currentPresets = await presetDb.getUserDayPresets(userId);
+            else currentPresets = await presetDb.getUserScheduledPresets(userId);
+
+            if (currentPresets.some(p => p.type === 'KNOCK')) {
+                return interaction.reply({ 
+                    content: "⛔ **Hai già programmato un'azione 'Bussa'!**\nNon puoi inserire due visite nello stesso preset.", 
+                    ephemeral: true 
+                });
+            }
             
             // 1. Recupera info limiti fase successiva
             // Se siamo in Giorno, ci darà i limiti della Notte. Se siamo in Notte, quelli del Giorno.
@@ -546,20 +558,37 @@ function registerPresetInteractions(client) {
             await savePreset(interaction, session, 'SHOP', 'SHOP', details, session.userName, "✅ Lettera salvata in preset.");
         }
 
-        // CATENE: SAVE
+                // CATENE: SAVE (Gestione Preset)
         if (interaction.customId === 'preset_item_target') {
             if (!session) return interaction.reply({ content: '❌ Sessione scaduta.', ephemeral: true });
+            
             const targetUserId = interaction.values[0];
+            
+            // 🔥 MODIFICA: Controllo se il target è nella lista "morti"
+            const markedForDeath = await db.moderation.getMarkedForDeath();
+            const isTargetDead = markedForDeath.some(m => m.userId === targetUserId);
+
+            if (isTargetDead) {
+                // ⛔ BLOCCO: Errore generico, NON rimuoviamo l'item, NON salviamo il preset
+                return interaction.update({ 
+                    content: "❌ Non è stato possibile programmare l'azione su questo giocatore.", 
+                    components: [] 
+                });
+            }
+
             const { econDb } = require('./economySystem');
             
+            // Controllo possesso oggetto
             const hasItem = await econDb.hasItem(interaction.user.id, session.shopItemId, 1);
             if (!hasItem) return interaction.update({ content: '❌ Non hai questo oggetto!', components: [] });
             
+            // ✅ Se il giocatore è valido, RIMUOVIAMO l'oggetto e SALVIAMO il preset
             await econDb.removeItem(interaction.user.id, session.shopItemId, 1);
 
             const details = { subType: session.shopItemId, itemName: 'Catene', targetUserId };
             await savePreset(interaction, session, 'SHOP', 'SHOP', details, session.userName, "✅ Catene salvate in preset.");
         }
+
 
         // ABILITY: SAVE
         if (interaction.customId.startsWith('preset_modal_')) {
@@ -799,8 +828,9 @@ async function buildPageSelect(guild, userId) {
 async function getAlivePlayers(guild, excludeId) {
     const aliveRole = guild.roles.cache.get(RUOLI.ALIVE);
     if (!aliveRole) return [];
-    const deadIds = (await db.moderation.getMarkedForDeath()).map(m => m.userId);
-    return aliveRole.members.filter(m => m.id !== excludeId && !m.user.bot && !deadIds.includes(m.id))
+    
+    // MODIFICA: Mostra TUTTI i giocatori con ruolo ALIVE (rimosso filtro morti)
+    return aliveRole.members.filter(m => m.id !== excludeId && !m.user.bot)
         .map(m => ({ id: m.id, name: m.displayName }));
 }
 
