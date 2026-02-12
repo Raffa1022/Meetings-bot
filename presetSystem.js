@@ -574,7 +574,7 @@ if (interaction.customId === 'preset_list_select') {
         return interaction.update({ content: '❌ Preset non trovato.', components: [] });
     }
     
-    // 🔥 RESTITUISCI le visite se era un KNOCK
+    // 🔥 RESTITUISCI le visite se era un KNOCK (tutte e tre le tipologie)
     if (preset.type === 'KNOCK') {
         const mode = preset.details.mode;
         const userId = preset.userId;
@@ -589,7 +589,6 @@ if (interaction.customId === 'preset_list_select') {
             await db.housing.incrementSpecificPhaseLimit(userId, field);
             console.log(`✅ [Preset] Visita nascosta ${phaseScaled === 'DAY' ? 'diurna' : 'notturna'} restituita a ${preset.userName}`);
         } else if (mode === 'mode_normal' && phaseScaled) {
-            // 🔥 RESTITUISCI anche le visite normali
             const field = phaseScaled === 'DAY' ? 'dayBaseLimit' : 'nightBaseLimit';
             await db.housing.incrementSpecificPhaseLimit(userId, field);
             console.log(`✅ [Preset] Visita normale ${phaseScaled === 'DAY' ? 'diurna' : 'notturna'} restituita a ${preset.userName}`);
