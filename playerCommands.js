@@ -489,7 +489,7 @@ module.exports = function registerPlayerCommands(client) {
             message.reply({ embeds: [embed] });
         }
 
-        // ===================== PRESET (NUOVO SISTEMA) =====================
+        // ===================== PRESET (NUOVO SISTEMA CON BLOCCO FASE) =====================
         else if (command === 'preset') {
             const { showAdminDashboard, handlePresetCommand, showUserPresets } = require('./presetSystem');
 
@@ -504,16 +504,31 @@ module.exports = function registerPlayerCommands(client) {
 
             if (!canUse) return message.reply("⛔ Non hai i permessi per usare i preset.");
 
-            // 1. Preset Notturno
+            // 🔥 NUOVO: Leggo la modalità corrente per bloccare i preset
+            const currentMode = await db.housing.getMode();
+
+            // 1. Preset Notturno - BLOCCATO durante fase NOTTURNA
             if (subcommand === 'notturno') {
+                if (currentMode === 'NIGHT') {
+                    return message.reply("🌙 **Siamo già in fase notturna!** Non puoi usare `!preset notturno` durante la notte. Usa questo comando durante il giorno per programmare le tue azioni notturne.");
+                }
                 await handlePresetCommand(message, args.slice(1), 'night');
             }
-            // 2. Preset Diurno
+            // 2. Preset Diurno - BLOCCATO durante fase DIURNA
             else if (subcommand === 'diurno') {
+                if (currentMode === 'DAY') {
+                    return message.reply("☀️ **Siamo già in fase diurna!** Non puoi usare `!preset diurno` durante il giorno. Usa questo comando durante la notte per programmare le tue azioni diurne.");
+                }
                 await handlePresetCommand(message, args.slice(1), 'day');
             }
-            // 3. Preset Timer (Sostituisce Intermedio)
+            // 3. Preset Timer - BLOCCATO durante fase preset attiva
             else if (subcommand === 'timer') {
+                // ✅ BLOCCO PRESET PHASE (stesso meccanismo di !bussa, !torna, !abilità)
+                const isPresetPhase = await db.moderation.isPresetPhaseActive();
+                if (isPresetPhase) {
+                    return message.reply("🔒 **Fase Preset attiva!** Non puoi usare `!preset timer` fino al comando `!fine preset`.");
+                }
+                
                 const timeArg = args[1]; // "!preset timer 15:30" -> args[1] è l'orario
                 if (!timeArg || !/^\d{2}:\d{2}$/.test(timeArg)) {
                     return message.reply("❌ Specifica l'orario nel formato HH:MM\nEsempio: `!preset timer 03:40`");
@@ -527,7 +542,7 @@ module.exports = function registerPlayerCommands(client) {
             // Help
             else {
                 const helpMsg = await message.reply({
-                    content: "📋 **Comandi Preset:**\n`!preset notturno` - Imposta un'azione per la notte\n`!preset diurno` - Imposta un'azione per il giorno\n`!preset timer HH:MM` - Imposta un'azione per un orario specifico (es. 03:40)\n`!preset list` - Visualizza e gestisci le tue azioni programmate"
+                    content: "📋 **Comandi Preset:**\n`!preset notturno` - Imposta un'azione per la notte (usabile solo di giorno)\n`!preset diurno` - Imposta un'azione per il giorno (usabile solo di notte)\n`!preset timer HH:MM` - Imposta un'azione per un orario specifico (es. 03:40)\n`!preset list` - Visualizza e gestisci le tue azioni programmate"
                 });
                 // Auto-cancellazione dopo 1 minuto (60000ms)
                 setTimeout(() => {
@@ -536,4 +551,5 @@ module.exports = function registerPlayerCommands(client) {
             }
         }
     });
+
 };
