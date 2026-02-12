@@ -102,6 +102,50 @@ const housing = {
         };
     },
 
+    // 🔥 NUOVO: Lettura visite per la fase SUCCESSIVA (per preset)
+    async getNextPhaseVisitInfo(userId) {
+        const doc = await HousingModel.findOne(H_ID, {
+            currentMode: 1,
+            [`playerVisits.${userId}`]: 1,
+            [`baseVisits.${userId}`]: 1,
+            [`extraVisits.${userId}`]: 1,
+            [`extraVisitsDay.${userId}`]: 1,
+            [`dayLimits.${userId}`]: 1,
+            [`forcedLimits.${userId}`]: 1,
+            [`hiddenLimits.${userId}`]: 1,
+        }).lean();
+        if (!doc) return null;
+
+        const currentMode = doc.currentMode || 'NIGHT';
+        // Se siamo in DAY, il prossimo è NIGHT e viceversa
+        const nextMode = currentMode === 'DAY' ? 'NIGHT' : 'DAY';
+        
+        let base, extra, forcedLimit, hiddenLimit;
+        if (nextMode === 'DAY') {
+            // Prossima fase è GIORNO: leggi dayLimits
+            const limits = doc.dayLimits?.[userId] || { base: 0, forced: 0, hidden: 0 };
+            base = limits.base !== undefined ? limits.base : 0;
+            extra = doc.extraVisitsDay?.[userId] || 0;
+            forcedLimit = limits.forced || 0;
+            hiddenLimit = limits.hidden || 0;
+        } else {
+            // Prossima fase è NOTTE: leggi baseVisits + limits standard
+            base = doc.baseVisits?.[userId] !== undefined ? doc.baseVisits[userId] : 0;
+            extra = doc.extraVisits?.[userId] || 0;
+            forcedLimit = doc.forcedLimits?.[userId] || 0;
+            hiddenLimit = doc.hiddenLimits?.[userId] || 0;
+        }
+
+        return {
+            nextMode,
+            base,
+            extra,
+            totalLimit: base + extra,
+            forcedLimit,
+            hiddenLimit,
+        };
+    },
+
     async getLastReset() {
         const doc = await HousingModel.findOne(H_ID, { lastReset: 1 }).lean();
         return doc?.lastReset || '';
@@ -131,6 +175,48 @@ const housing = {
 
     async decrementHidden(userId) {
         return HousingModel.updateOne(H_ID, { $inc: { [`hiddenVisits.${userId}`]: -1 } });
+    },
+
+    // 🔥 NUOVO: Decrementa visite per la fase SUCCESSIVA (per preset)
+    async decrementNextPhaseForcedLimit(userId) {
+        const mode = await housing.getMode();
+        // Se siamo in DAY, decrementiamo forcedLimits (notte)
+        // Se siamo in NIGHT, decrementiamo dayLimits.forced (giorno)
+        if (mode === 'DAY') {
+            return HousingModel.updateOne(H_ID, { $inc: { [`forcedLimits.${userId}`]: -1 } });
+        } else {
+            // Per dayLimits dobbiamo fare un'operazione più complessa
+            const doc = await HousingModel.findOne(H_ID, { [`dayLimits.${userId}`]: 1 }).lean();
+            const current = doc?.dayLimits?.[userId] || { base: 0, forced: 0, hidden: 0 };
+            current.forced = Math.max(0, (current.forced || 0) - 1);
+            return HousingModel.updateOne(H_ID, { $set: { [`dayLimits.${userId}`]: current } });
+        }
+    },
+
+    async decrementNextPhaseHiddenLimit(userId) {
+        const mode = await housing.getMode();
+        if (mode === 'DAY') {
+            return HousingModel.updateOne(H_ID, { $inc: { [`hiddenLimits.${userId}`]: -1 } });
+        } else {
+            const doc = await HousingModel.findOne(H_ID, { [`dayLimits.${userId}`]: 1 }).lean();
+            const current = doc?.dayLimits?.[userId] || { base: 0, forced: 0, hidden: 0 };
+            current.hidden = Math.max(0, (current.hidden || 0) - 1);
+            return HousingModel.updateOne(H_ID, { $set: { [`dayLimits.${userId}`]: current } });
+        }
+    },
+
+    async decrementNextPhaseBaseLimit(userId) {
+        const mode = await housing.getMode();
+        if (mode === 'DAY') {
+            // Prossima fase è NOTTE: decremento baseVisits
+            return HousingModel.updateOne(H_ID, { $inc: { [`baseVisits.${userId}`]: -1 } });
+        } else {
+            // Prossima fase è GIORNO: decremento dayLimits.base
+            const doc = await HousingModel.findOne(H_ID, { [`dayLimits.${userId}`]: 1 }).lean();
+            const current = doc?.dayLimits?.[userId] || { base: 0, forced: 0, hidden: 0 };
+            current.base = Math.max(0, (current.base || 0) - 1);
+            return HousingModel.updateOne(H_ID, { $set: { [`dayLimits.${userId}`]: current } });
+        }
     },
 
     async setVisitLimits(userId, base, forced, hidden) {
@@ -281,7 +367,25 @@ const housing = {
         });
     },
 
-    // Operazione BULK per resetVisite
+    // 🔥 NUOVO: Reset visite NOTTURNE (chiamato da !giorno)
+    // Resetta extraVisits (visite extra notturne) e riapplica i limiti base notturni
+    async resetNightVisits() {
+        console.log('♻️ [Housing] Reset visite notturne...');
+        return HousingModel.updateOne(H_ID, {
+            $set: { extraVisits: {} }
+        });
+    },
+
+    // 🔥 NUOVO: Reset visite DIURNE (chiamato da !notte)
+    // Resetta extraVisitsDay (visite extra diurne) e riapplica i limiti base diurni
+    async resetDayVisits() {
+        console.log('♻️ [Housing] Reset visite diurne...');
+        return HousingModel.updateOne(H_ID, {
+            $set: { extraVisitsDay: {} }
+        });
+    },
+
+    // Operazione BULK per resetVisite (LEGACY - mantenuto per compatibilità)
     async resetAllVisits() {
         const mode = await housing.getMode();
         await HousingModel.updateOne(H_ID, {
@@ -762,5 +866,6 @@ const preset = {
         return PresetScheduledModel.find({ triggerTime }).sort({ timestamp: 1 }).lean();
     },
 };
+
 
 module.exports = { housing, queue, meeting, ability, moderation, preset };
