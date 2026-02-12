@@ -1,8 +1,9 @@
 // ==========================================
 // 👮 COMANDI ADMIN HOUSING
-// assegnacasa, visite, aggiunta, resetvisite, sblocca,
+// assegnacasa, visite, aggiunta, sblocca,
 // notte, giorno, distruzione, ricostruzione, pubblico,
 // sposta, dove, multipla, ritirata, ram, ritorno, preset
+// NOTA: !resetvisite RIMOSSO - Reset automatico con !giorno e !notte
 // ==========================================
 const { PermissionsBitField, ChannelType, EmbedBuilder } = require('discord.js');
 const mongoose = require('mongoose');
@@ -87,12 +88,6 @@ module.exports = async function handleAdminCommand(message, command, args, clien
         }
     }
 
-    // ===================== RESETVISITE =====================
-    else if (command === 'resetvisite') {
-        await db.housing.resetAllVisits();
-        message.reply("♻️ **RESET GLOBALE COMPLETATO**");
-    }
-
     // ===================== SBLOCCA =====================
     else if (command === 'sblocca') {
         await db.housing.clearPendingKnocks();
@@ -107,6 +102,9 @@ module.exports = async function handleAdminCommand(message, command, args, clien
 
             // 1. Attiva blocco preset PRIMA di tutto
             await db.moderation.setPresetPhaseActive(true);
+
+            // 🔥 NUOVO: Reset automatico visite DIURNE (extra e base diurne tornano ai valori configurati)
+            await db.housing.resetDayVisits();
 
             // 2. Setta modalità Notte
             await Promise.all([
@@ -162,7 +160,7 @@ module.exports = async function handleAdminCommand(message, command, args, clien
                 if (annunciChannel) await annunciChannel.send(`🪙 <@&${RUOLI.ALIVE}> avete ricevuto il vostro collect giornaliero di **100 monete**!`);
             }
             
-            message.reply(`✅ **Notte ${numero} avviata.** Preset notturni elaborati. Abilità bloccate fino a \`!fine preset\`.`);
+            message.reply(`✅ **Notte ${numero} avviata.** Visite diurne resettate. Preset notturni elaborati. Abilità bloccate fino a \`!fine preset\`.`);
         } catch (error) {
             console.error('❌ Errore comando !notte:', error);
             return message.reply("❌ Errore durante l'esecuzione del comando.");
@@ -186,6 +184,9 @@ module.exports = async function handleAdminCommand(message, command, args, clien
 
             // 1. Attiva blocco preset
             await db.moderation.setPresetPhaseActive(true);
+
+            // 🔥 NUOVO: Reset automatico visite NOTTURNE (extra e base notturne tornano ai valori configurati)
+            await db.housing.resetNightVisits();
 
             // 2. Setta modalità Giorno
             await Promise.all([
@@ -243,7 +244,7 @@ module.exports = async function handleAdminCommand(message, command, args, clien
                 if (annunciChannel) await annunciChannel.send(`🪙 <@&${RUOLI.ALIVE}> avete ricevuto il vostro collect giornaliero di **100 monete**!`);
             }
             
-            message.reply(`✅ **Giorno ${numero} avviato.** Preset diurni elaborati. Abilità bloccate fino a \`!fine preset\`.`);
+            message.reply(`✅ **Giorno ${numero} avviato.** Visite notturne resettate. Preset diurni elaborati. Abilità bloccate fino a \`!fine preset\`.`);
         } catch (error) {
             console.error('❌ Errore comando !giorno:', error);
             return message.reply("❌ Errore durante l'esecuzione del comando.");
@@ -262,7 +263,7 @@ module.exports = async function handleAdminCommand(message, command, args, clien
         const annunciChannel = message.guild.channels.cache.get(HOUSING.CANALE_ANNUNCI);
         if (annunciChannel) {
             await annunciChannel.send(
-                `<@&${RUOLI.ALIVE}> <@&${RUOLI.SPONSOR}>\n✅ **I PRESET SONO STATI TUTTI EFFETTUATI!**\nDa ora in poi potrete nuovamente utilizzare i comandi \`!abilità\`, \`!bussa\` e \`!torna\`.`
+                `<@&${RUOLI.ALIVE}> <@&${RUOLI.SPONSOR}>\n✅ **I PRESET SONO STATI TUTTI EFFETTUATI!**\nDa ora in poi potrete nuovamente utilizzare i comandi \`!abilità\`, \`!bussa\`, \`!torna\` e \`!preset timer\`.`
             );
         }
         message.reply("✅ **Fase Preset Terminata.** Abilità sbloccate e coda processata.");
@@ -913,4 +914,5 @@ module.exports = async function handleAdminCommand(message, command, args, clien
         
         message.reply(`✅ Preset programmati per le ${triggerTime} eseguiti e aggiunti alla coda.`);
     }
+
 };
