@@ -399,6 +399,7 @@ module.exports = function initEconomySystem(client) {
             }
 
             // ========== MENU CATENE: SELEZIONE TARGET (TENDINA) ==========
+                        // ========== MENU CATENE: SELEZIONE TARGET (TENDINA) ==========
             else if (interaction.isStringSelectMenu() && interaction.customId.startsWith('catene_target_')) {
                 const senderUserId = interaction.customId.split('_')[2];
                 if (interaction.user.id !== senderUserId)
@@ -407,6 +408,15 @@ module.exports = function initEconomySystem(client) {
                 const targetUserId = interaction.values[0];
                 if (targetUserId === senderUserId)
                     return interaction.reply({ content: "❌ Non puoi incatenarti da solo!", ephemeral: true });
+
+                // 🔥 MODIFICA: Controllo se il target è nella lista "morti" (senza spoilerare)
+                const markedForDeath = await db.moderation.getMarkedForDeath();
+                const isTargetDead = markedForDeath.some(m => m.userId === targetUserId);
+
+                if (isTargetDead) {
+                    // Messaggio generico, OGGETTO NON RIMOSSO
+                    return interaction.reply({ content: "❌ Non è stato possibile effettuare l'azione su questo giocatore.", ephemeral: true });
+                }
 
                 const target = await interaction.guild.members.fetch(targetUserId).catch(() => null);
                 if (!target)
@@ -420,6 +430,7 @@ module.exports = function initEconomySystem(client) {
                 if (alreadyVB && alreadyRB)
                     return interaction.reply({ content: `⚠️ ${target} è già bloccato (VB + RB).`, ephemeral: true });
 
+                // ✅ Rimuovi item SOLO ORA che i controlli sono passati
                 const removed = await econDb.removeItem(senderUserId, 'catene');
                 if (!removed)
                     return interaction.reply({ content: "❌ Non possiedi più le catene.", ephemeral: true });
@@ -433,6 +444,7 @@ module.exports = function initEconomySystem(client) {
                 await interaction.reply({ content: `🔄 **Catene in coda!** VB + RB verrà applicato a <@${targetUserId}> quando sarà il tuo turno.`, ephemeral: false });
                 if (interaction.message?.deletable) interaction.message.delete().catch(() => {});
             }
+
         } catch (err) {
             console.error("❌ [Economy] Errore interazione:", err);
         }
@@ -762,20 +774,14 @@ async function useLettera(message, args) {
         return message.reply("❌ Usa la lettera solo nella tua chat privata!");
 
     try {
-        // Ottieni giocatori ALIVE non nella lista morti
-        const markedForDeath = await db.moderation.getMarkedForDeath();
-        const deadIds = new Set(markedForDeath.map(m => m.userId));
-
+                // MODIFICA: Mostra TUTTI i giocatori con ruolo ALIVE
         const allMembers = await message.guild.members.fetch();
         const aliveMembers = allMembers.filter(m =>
             !m.user.bot &&
             m.roles.cache.has(RUOLI.ALIVE) &&
-            !deadIds.has(m.id) &&
             m.id !== message.author.id
         );
 
-        if (aliveMembers.size === 0)
-            return message.reply("❌ Nessun giocatore disponibile.");
 
         const options = [...aliveMembers.values()].slice(0, 25).map(m =>
             new StringSelectMenuOptionBuilder()
@@ -843,16 +849,14 @@ async function useCatene(message, args) {
         return message.reply("❌ Usa le catene solo nella tua chat privata!");
 
     try {
-        const markedForDeath = await db.moderation.getMarkedForDeath();
-        const deadIds = new Set(markedForDeath.map(m => m.userId));
-
+                // MODIFICA: Mostra TUTTI i giocatori con ruolo ALIVE
         const allMembers = await message.guild.members.fetch();
         const aliveMembers = allMembers.filter(m =>
             !m.user.bot &&
             m.roles.cache.has(RUOLI.ALIVE) &&
-            !deadIds.has(m.id) &&
             m.id !== message.author.id
         );
+
 
         if (aliveMembers.size === 0)
             return message.reply("❌ Nessun giocatore disponibile.");
