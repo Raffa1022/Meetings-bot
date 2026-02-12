@@ -1,6 +1,7 @@
 // ==========================================
 // ⏰ PRESET SYSTEM - Azioni Programmate
 // DIURNO + NOTTURNO + TIMER + FIX PAGINAZIONE CASE
+// 🔥 NUOVO: Visite scalate dalla fase SUCCESSIVA
 // ==========================================
 const {
     EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle,
@@ -372,10 +373,46 @@ function registerPresetInteractions(client) {
             });
         }
 
-        // HOUSE SELECTED (KNOCK)
+        // HOUSE SELECTED (KNOCK) - 🔥 NUOVO: Controllo visite fase SUCCESSIVA
         if (interaction.customId === 'preset_house') {
             if (!session) return interaction.reply({ content: '❌ Sessione scaduta.', ephemeral: true });
             const targetChannelId = interaction.values[0];
+            
+            // 🔥 CONTROLLO VISITE FASE SUCCESSIVA
+            const nextPhaseInfo = await db.housing.getNextPhaseVisitInfo(userId);
+            if (!nextPhaseInfo) return interaction.reply({ content: "❌ Errore dati visite.", ephemeral: true });
+            
+            const mode = session.knockMode;
+            const nextPhaseLabel = nextPhaseInfo.nextMode === 'DAY' ? 'diurne' : 'notturne';
+            
+            if (mode === 'mode_forced') {
+                if (nextPhaseInfo.forcedLimit <= 0) {
+                    return interaction.reply({ 
+                        content: `⛔ **Non hai visite forzate ${nextPhaseLabel} disponibili!**\nLe visite forzate per la prossima fase sono esaurite.`, 
+                        ephemeral: true 
+                    });
+                }
+                // Scala dalla fase successiva
+                await db.housing.decrementNextPhaseForcedLimit(userId);
+            } else if (mode === 'mode_hidden') {
+                if (nextPhaseInfo.hiddenLimit <= 0) {
+                    return interaction.reply({ 
+                        content: `⛔ **Non hai visite nascoste ${nextPhaseLabel} disponibili!**\nLe visite nascoste per la prossima fase sono esaurite.`, 
+                        ephemeral: true 
+                    });
+                }
+                await db.housing.decrementNextPhaseHiddenLimit(userId);
+            } else {
+                // Visita normale - NON scaliamo qui, verrà scalata all'esecuzione del preset
+                // Ma controlliamo che ci siano visite disponibili
+                if (nextPhaseInfo.totalLimit <= 0) {
+                    return interaction.reply({ 
+                        content: `⛔ **Non hai visite normali ${nextPhaseLabel} disponibili!**\nLe visite normali per la prossima fase sono esaurite.`, 
+                        ephemeral: true 
+                    });
+                }
+            }
+            
             const details = { targetChannelId, mode: session.knockMode };
             await savePreset(interaction, session, 'KNOCK', 'KNOCK', details, session.userName);
         }
@@ -583,6 +620,7 @@ async function showUserPresets(message) {
     await message.reply({ content: '📋 **I tuoi preset:**', components: [new ActionRowBuilder().addComponents(select)] });
 }
 
+// 🔥 MODIFICATO: Le visite vengono scalate all'esecuzione del preset (qui)
 async function processAndClearPresets(presets, contextLabel) {
     if (presets.length === 0) return;
 
@@ -606,6 +644,8 @@ async function processAndClearPresets(presets, contextLabel) {
     // Processo prima tutti gli altri preset
     for (const preset of sorted) {
         if (preset.type === 'KNOCK') {
+            // 🔥 MODIFICATO: Ora le visite sono già state scalate al momento della creazione del preset
+            // Qui controlliamo solo le visite CORRENTI (già applicate) e le scaliamo
             const info = await db.housing.getVisitInfo(preset.userId);
             let ok = false;
             if (preset.details.mode === 'mode_forced' && info.forced > 0) {
@@ -615,7 +655,10 @@ async function processAndClearPresets(presets, contextLabel) {
             } else if (info.used < info.totalLimit) {
                 await db.housing.incrementVisit(preset.userId); ok = true;
             }
-            if (!ok) continue; 
+            if (!ok) {
+                console.log(`⚠️ [Preset] Visita saltata per ${preset.userName}: visite esaurite`);
+                continue; 
+            }
         }
 
         const queueItem = {
@@ -752,4 +795,5 @@ module.exports = {
     showAdminDashboard,
     startPresetTimer,
     db: presetDb 
+
 };
