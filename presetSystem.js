@@ -590,9 +590,9 @@ if (interaction.customId === 'preset_list_select') {
     if (type === 'night') await presetDb.removeNightPreset(id);
     else if (type === 'day') await presetDb.removeDayPreset(id);
     else await presetDb.removeScheduledPreset(id);
-    });
+    
+    await interaction.update({ content: '✅ Preset rimosso e visite restituite!', components: [] });
 }
-
 // ==========================================
 // 💾 SAVE PRESET
 // ==========================================
