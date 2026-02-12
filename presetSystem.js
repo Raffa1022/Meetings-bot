@@ -556,12 +556,41 @@ async function resolveScheduledPhase(triggerTime) {
     }
 }
 
+
+// ==========================================
+// 📋 LISTA UTENTE
+// ==========================================
+async function showUserPresets(message) {
+    const userId = message.author.id;
+    const n = await presetDb.getUserNightPresets(userId);
+    const d = await presetDb.getUserDayPresets(userId);
+    const s = await presetDb.getUserScheduledPresets(userId);
+
+    if (n.length === 0 && d.length === 0 && s.length === 0) return message.reply('📋 Nessun preset.');
+
+    const options = [];
+    n.forEach(p => options.push({ label: `🌙 ${p.category}`, value: `night_${p._id}`, desc: 'Notturno' }));
+    d.forEach(p => options.push({ label: `☀️ ${p.category}`, value: `day_${p._id}`, desc: 'Diurno' }));
+    s.forEach(p => options.push({ label: `⏰ ${p.triggerTime} ${p.category}`, value: `scheduled_${p._id}`, desc: 'Timer' }));
+
+    const select = new StringSelectMenuBuilder()
+        .setCustomId('preset_list_select')
+        .setPlaceholder('Rimuovi...')
+        .addOptions(options.slice(0, 25).map(o => 
+            new StringSelectMenuOptionBuilder().setLabel(o.label).setValue(o.value).setDescription(o.desc)
+        ));
+
+    await message.reply({ content: '📋 **I tuoi preset:**', components: [new ActionRowBuilder().addComponents(select)] });
+}
+
 async function processAndClearPresets(presets, contextLabel) {
     if (presets.length === 0) return;
 
-    // Separo i fuochi d'artificio dagli altri preset
-    const fuochiPresets = presets.filter(p => p.type === 'SHOP' && p.details.itemId === 'fuochi');
-    const otherPresets = presets.filter(p => !(p.type === 'SHOP' && p.details.itemId === 'fuochi'));
+    // --- FIX: itemId -> subType ---
+    // Nel DB salvi come 'subType', quindi devi filtrare per 'subType'
+    const fuochiPresets = presets.filter(p => p.type === 'SHOP' && p.details.subType === 'fuochi');
+    const otherPresets = presets.filter(p => !(p.type === 'SHOP' && p.details.subType === 'fuochi'));
+    // ------------------------------
 
     // Ordina per priorità solo gli altri preset
     const sorted = otherPresets.sort((a, b) => {
@@ -592,6 +621,8 @@ async function processAndClearPresets(presets, contextLabel) {
         const queueItem = {
             type: preset.type,
             userId: preset.userId,
+            // Passiamo i dettagli così come sono. 
+            // NOTA: fromChannelId non c'è, ma ora queueSystem lo calcola da solo!
             details: preset.type === 'ABILITY' ? { 
                 text: `[${CATEGORIES.find(c=>c.value===preset.category)?.label}] ${preset.details.text}` + (preset.details.target ? ` (Target: ${preset.details.target})` : ''),
                 category: preset.category 
@@ -600,15 +631,14 @@ async function processAndClearPresets(presets, contextLabel) {
 
         setTimeout(() => {
             eventBus.emit('queue:add', queueItem);
-        }, delayCounter * 50); 
+        }, delayCounter * 200); 
         
         delayCounter++;
         processedCount++;
     }
 
-    // FIX: Aggiungo i fuochi d'artificio con un delay di 2-3 secondi DOPO l'ultimo preset normale
-    // Questo assicura che appaiano DOPO il messaggio !notte/!giorno in annunci
-    const fuochiDelay = (delayCounter * 50) + 2500; // 2.5 secondi dopo l'ultimo preset
+    // FIX: Delay fuochi d'artificio
+    const fuochiDelay = (delayCounter * 200) + 3000; // 3 secondi dopo l'ultimo preset
     
     for (const preset of fuochiPresets) {
         const queueItem = {
@@ -628,32 +658,6 @@ async function processAndClearPresets(presets, contextLabel) {
     else if (contextLabel === 'Day') await presetDb.clearAllDayPresets();
 
     console.log(`✅ [Preset] ${processedCount} preset aggiunti alla coda per ${contextLabel}`);
-}
-
-// ==========================================
-// 📋 LISTA UTENTE
-// ==========================================
-async function showUserPresets(message) {
-    const userId = message.author.id;
-    const n = await presetDb.getUserNightPresets(userId);
-    const d = await presetDb.getUserDayPresets(userId);
-    const s = await presetDb.getUserScheduledPresets(userId);
-
-    if (n.length === 0 && d.length === 0 && s.length === 0) return message.reply('📋 Nessun preset.');
-
-    const options = [];
-    n.forEach(p => options.push({ label: `🌙 ${p.category}`, value: `night_${p._id}`, desc: 'Notturno' }));
-    d.forEach(p => options.push({ label: `☀️ ${p.category}`, value: `day_${p._id}`, desc: 'Diurno' }));
-    s.forEach(p => options.push({ label: `⏰ ${p.triggerTime} ${p.category}`, value: `scheduled_${p._id}`, desc: 'Timer' }));
-
-    const select = new StringSelectMenuBuilder()
-        .setCustomId('preset_list_select')
-        .setPlaceholder('Rimuovi...')
-        .addOptions(options.slice(0, 25).map(o => 
-            new StringSelectMenuOptionBuilder().setLabel(o.label).setValue(o.value).setDescription(o.desc)
-        ));
-
-    await message.reply({ content: '📋 **I tuoi preset:**', components: [new ActionRowBuilder().addComponents(select)] });
 }
 
 // ==========================================
