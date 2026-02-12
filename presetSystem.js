@@ -108,7 +108,19 @@ const presetDb = {
         const { PresetDayModel } = require('./database');
         return PresetDayModel.deleteMany({});
     },
-
+// --- GET BY ID (per recupero prima della rimozione) ---
+async getNightPresetById(id) {
+    const { PresetNightModel } = require('./database');
+    return PresetNightModel.findById(id).lean();
+},
+async getDayPresetById(id) {
+    const { PresetDayModel } = require('./database');
+    return PresetDayModel.findById(id).lean();
+},
+async getScheduledPresetById(id) {
+    const { PresetScheduledModel } = require('./database');
+    return PresetScheduledModel.findById(id).lean();
+},
     // --- SCHEDULED ---
     async addScheduledPreset(userId, userName, type, category, details, triggerTime) {
         const { PresetScheduledModel } = require('./database');
@@ -386,23 +398,25 @@ function registerPresetInteractions(client) {
             const nextPhaseLabel = nextPhaseInfo.nextMode === 'DAY' ? 'diurne' : 'notturne';
             
             if (mode === 'mode_forced') {
-                if (nextPhaseInfo.forcedLimit <= 0) {
-                    return interaction.reply({ 
-                        content: `⛔ **Non hai visite forzate ${nextPhaseLabel} disponibili!**\nLe visite forzate per la prossima fase sono esaurite.`, 
-                        ephemeral: true 
-                    });
-                }
+    if (nextPhaseInfo.forcedLimit <= 0) {
+        return interaction.reply({ 
+            content: `⛔ **Non hai visite forzate ${nextPhaseLabel} disponibili!**\\nLe visite forzate per la prossima fase sono esaurite.`, 
+            ephemeral: true 
+        });
+    }
                 // Scala dalla fase successiva
                 await db.housing.decrementNextPhaseForcedLimit(userId);
             } else if (mode === 'mode_hidden') {
-                if (nextPhaseInfo.hiddenLimit <= 0) {
-                    return interaction.reply({ 
-                        content: `⛔ **Non hai visite nascoste ${nextPhaseLabel} disponibili!**\nLe visite nascoste per la prossima fase sono esaurite.`, 
-                        ephemeral: true 
-                    });
-                }
-                await db.housing.decrementNextPhaseHiddenLimit(userId);
-            } else {
+    if (nextPhaseInfo.hiddenLimit <= 0) {
+        return interaction.reply({ 
+            content: `⛔ **Non hai visite nascoste ${nextPhaseLabel} disponibili!**\\nLe visite nascoste per la prossima fase sono esaurite.`, 
+            ephemeral: true 
+        });
+    }
+    await db.housing.decrementNextPhaseHiddenLimit(userId);
+    // 🔥 SALVA da quale fase sono state scalate
+    session.visitPhaseScaled = nextPhaseInfo.nextMode;
+} else {
                 // Visita normale - NON scaliamo qui, verrà scalata all'esecuzione del preset
                 // Ma controlliamo che ci siano visite disponibili
                 if (nextPhaseInfo.totalLimit <= 0) {
@@ -541,14 +555,41 @@ function registerPresetInteractions(client) {
             await savePreset(interaction, session, 'ABILITY', category, { target, text: desc }, session.userName);
         }
 
-        // REMOVE PRESET (LIST)
-        if (interaction.customId === 'preset_list_select') {
-            const [type, id] = interaction.values[0].split('_');
-            if (type === 'night') await presetDb.removeNightPreset(id);
-            else if (type === 'day') await presetDb.removeDayPreset(id);
-            else await presetDb.removeScheduledPreset(id);
-            await interaction.update({ content: '✅ Preset rimosso.', components: [] });
+        // REMOVE PRESET (LIST) - 🔥 CON RESTITUZIONE VISITE
+if (interaction.customId === 'preset_list_select') {
+    const [type, id] = interaction.values[0].split('_');
+    
+    // 🔥 RECUPERA il preset PRIMA di rimuoverlo
+    let preset = null;
+    if (type === 'night') preset = await presetDb.getNightPresetById(id);
+    else if (type === 'day') preset = await presetDb.getDayPresetById(id);
+    else preset = await presetDb.getScheduledPresetById(id);
+    
+    if (!preset) {
+        return interaction.update({ content: '❌ Preset non trovato.', components: [] });
+    }
+    
+    // 🔥 RESTITUISCI le visite se era un KNOCK con visite forzate/nascoste
+    if (preset.type === 'KNOCK') {
+        const mode = preset.details.mode;
+        const userId = preset.userId;
+        const phaseScaled = preset.details.visitPhaseScaled;
+        
+        if (mode === 'mode_forced' && phaseScaled) {
+            const field = phaseScaled === 'DAY' ? 'dayForcedLimit' : 'nightForcedLimit';
+            await db.housing.incrementSpecificPhaseLimit(userId, field);
+            console.log(`✅ [Preset] Visita forzata ${phaseScaled === 'DAY' ? 'diurna' : 'notturna'} restituita a ${preset.userName}`);
+        } else if (mode === 'mode_hidden' && phaseScaled) {
+            const field = phaseScaled === 'DAY' ? 'dayHiddenLimit' : 'nightHiddenLimit';
+            await db.housing.incrementSpecificPhaseLimit(userId, field);
+            console.log(`✅ [Preset] Visita nascosta ${phaseScaled === 'DAY' ? 'diurna' : 'notturna'} restituita a ${preset.userName}`);
         }
+    }
+    
+    // Rimuovi il preset dal database
+    if (type === 'night') await presetDb.removeNightPreset(id);
+    else if (type === 'day') await presetDb.removeDayPreset(id);
+    else await presetDb.removeScheduledPreset(id);
     });
 }
 
@@ -556,6 +597,11 @@ function registerPresetInteractions(client) {
 // 💾 SAVE PRESET
 // ==========================================
 async function savePreset(interaction, session, type, category, details, userName, customMsg) {
+    // 🔥 Aggiungi la fase scalata ai details se presente
+    if (session.visitPhaseScaled) {
+        details.visitPhaseScaled = session.visitPhaseScaled;
+    }
+    
     if (session.presetType === 'night') {
         await presetDb.addNightPreset(interaction.user.id, userName, type, category, details);
     } else if (session.presetType === 'day') {
@@ -643,25 +689,11 @@ async function processAndClearPresets(presets, contextLabel) {
 
     // Processo prima tutti gli altri preset
     for (const preset of sorted) {
-        if (preset.type === 'KNOCK') {
-            // 🔥 MODIFICATO: Ora le visite sono già state scalate al momento della creazione del preset
-            // Qui controlliamo solo le visite CORRENTI (già applicate) e le scaliamo
-            const info = await db.housing.getVisitInfo(preset.userId);
-            let ok = false;
-            if (preset.details.mode === 'mode_forced' && info.forced > 0) {
-                await db.housing.decrementForced(preset.userId); ok = true;
-            } else if (preset.details.mode === 'mode_hidden' && info.hidden > 0) {
-                await db.housing.decrementHidden(preset.userId); ok = true;
-            } else if (info.used < info.totalLimit) {
-                await db.housing.incrementVisit(preset.userId); ok = true;
-            }
-            if (!ok) {
-                console.log(`⚠️ [Preset] Visita saltata per ${preset.userName}: visite esaurite`);
-                continue; 
-            }
-        }
-
-        const queueItem = {
+    // 🔥 FIX: Le visite forzate/nascoste sono GIÀ state scalate dalla fase SUCCESSIVA quando il preset è stato creato
+    // Le visite normali verranno scalate quando il KNOCK viene processato dalla coda
+    // Non scaliamo di nuovo qui, altrimenti vengono scalate 2 volte!
+    
+    const queueItem = {
             type: preset.type,
             userId: preset.userId,
             // Passiamo i dettagli così come sono. 
