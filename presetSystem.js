@@ -419,17 +419,15 @@ function registerPresetInteractions(client) {
                 // 🔥 SALVA da quale fase sono state scalate
                 session.visitPhaseScaled = nextPhaseInfo.nextMode;
             } else {
-                // Visita normale - Scala dalla fase successiva
+                // Visita normale - NON scaliamo qui, verrà scalata quando il preset viene eseguito
+                // Controlliamo solo che ci siano visite disponibili
                 if (nextPhaseInfo.totalLimit <= 0) {
                     return interaction.reply({ 
                         content: `⛔ **Non hai visite normali ${nextPhaseLabel} disponibili!**\nLe visite normali per la prossima fase sono esaurite.`, 
                         ephemeral: true 
                     });
                 }
-                // 🔥 SCALA le visite normali dalla fase successiva
-                await db.housing.decrementNextPhaseBaseLimit(userId);
-                // 🔥 SALVA da quale fase sono state scalate
-                session.visitPhaseScaled = nextPhaseInfo.nextMode;
+                // NON salviamo visitPhaseScaled perché non scaliamo le visite normali qui
             }
             
             const details = { targetChannelId, mode: session.knockMode };
@@ -574,7 +572,7 @@ if (interaction.customId === 'preset_list_select') {
         return interaction.update({ content: '❌ Preset non trovato.', components: [] });
     }
     
-    // 🔥 RESTITUISCI le visite se era un KNOCK (tutte e tre le tipologie)
+    // 🔥 RESTITUISCI solo visite forzate/nascoste (normali non vengono scalate alla creazione)
     if (preset.type === 'KNOCK') {
         const mode = preset.details.mode;
         const userId = preset.userId;
@@ -588,11 +586,8 @@ if (interaction.customId === 'preset_list_select') {
             const field = phaseScaled === 'DAY' ? 'dayHiddenLimit' : 'nightHiddenLimit';
             await db.housing.incrementSpecificPhaseLimit(userId, field);
             console.log(`✅ [Preset] Visita nascosta ${phaseScaled === 'DAY' ? 'diurna' : 'notturna'} restituita a ${preset.userName}`);
-        } else if (mode === 'mode_normal' && phaseScaled) {
-            const field = phaseScaled === 'DAY' ? 'dayBaseLimit' : 'nightBaseLimit';
-            await db.housing.incrementSpecificPhaseLimit(userId, field);
-            console.log(`✅ [Preset] Visita normale ${phaseScaled === 'DAY' ? 'diurna' : 'notturna'} restituita a ${preset.userName}`);
         }
+        // Visite normali: non vengono scalate/restituite perché vengono gestite dalla coda
     }
     
     // Rimuovi il preset dal database
