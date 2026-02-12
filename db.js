@@ -205,13 +205,16 @@ const housing = {
         }
     },
 async incrementSpecificPhaseLimit(userId, field) {
-        // field può essere: 'dayForcedLimit', 'nightForcedLimit', 'dayHiddenLimit', 'nightHiddenLimit'
+        // field può essere: 'dayForcedLimit', 'nightForcedLimit', 'dayHiddenLimit', 'nightHiddenLimit', 'dayBaseLimit', 'nightBaseLimit'
         if (field === 'nightForcedLimit') {
             // Incrementa forced notturne
             return HousingModel.updateOne(H_ID, { $inc: { [`forcedLimits.${userId}`]: 1 } });
         } else if (field === 'nightHiddenLimit') {
             // Incrementa hidden notturne
             return HousingModel.updateOne(H_ID, { $inc: { [`hiddenLimits.${userId}`]: 1 } });
+        } else if (field === 'nightBaseLimit') {
+            // Incrementa base notturne
+            return HousingModel.updateOne(H_ID, { $inc: { [`baseVisits.${userId}`]: 1 } });
         } else if (field === 'dayForcedLimit') {
             // Incrementa forced diurne
             const doc = await HousingModel.findOne(H_ID, { [`dayLimits.${userId}`]: 1 }).lean();
@@ -223,6 +226,12 @@ async incrementSpecificPhaseLimit(userId, field) {
             const doc = await HousingModel.findOne(H_ID, { [`dayLimits.${userId}`]: 1 }).lean();
             const current = doc?.dayLimits?.[userId] || { base: 0, forced: 0, hidden: 0 };
             current.hidden = (current.hidden || 0) + 1;
+            return HousingModel.updateOne(H_ID, { $set: { [`dayLimits.${userId}`]: current } });
+        } else if (field === 'dayBaseLimit') {
+            // Incrementa base diurne
+            const doc = await HousingModel.findOne(H_ID, { [`dayLimits.${userId}`]: 1 }).lean();
+            const current = doc?.dayLimits?.[userId] || { base: 0, forced: 0, hidden: 0 };
+            current.base = (current.base || 0) + 1;
             return HousingModel.updateOne(H_ID, { $set: { [`dayLimits.${userId}`]: current } });
         }
     },
