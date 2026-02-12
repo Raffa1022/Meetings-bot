@@ -204,32 +204,14 @@ const housing = {
             return HousingModel.updateOne(H_ID, { $set: { [`dayLimits.${userId}`]: current } });
         }
     },
-
-    // 🔥 NUOVO: Decrementa visite base per la fase SUCCESSIVA (per preset normali)
-    async decrementNextPhaseBaseLimit(userId) {
-        const mode = await housing.getMode();
-        if (mode === 'DAY') {
-            // Prossima fase è NOTTE: decremento baseVisits
-            return HousingModel.updateOne(H_ID, { $inc: { [`baseVisits.${userId}`]: -1 } });
-        } else {
-            // Prossima fase è GIORNO: decremento dayLimits.base
-            const doc = await HousingModel.findOne(H_ID, { [`dayLimits.${userId}`]: 1 }).lean();
-            const current = doc?.dayLimits?.[userId] || { base: 0, forced: 0, hidden: 0 };
-            current.base = Math.max(0, (current.base || 0) - 1);
-            return HousingModel.updateOne(H_ID, { $set: { [`dayLimits.${userId}`]: current } });
-        }
-    },
 async incrementSpecificPhaseLimit(userId, field) {
-        // field può essere: 'dayForcedLimit', 'nightForcedLimit', 'dayHiddenLimit', 'nightHiddenLimit', 'dayBaseLimit', 'nightBaseLimit'
+        // field può essere: 'dayForcedLimit', 'nightForcedLimit', 'dayHiddenLimit', 'nightHiddenLimit'
         if (field === 'nightForcedLimit') {
             // Incrementa forced notturne
             return HousingModel.updateOne(H_ID, { $inc: { [`forcedLimits.${userId}`]: 1 } });
         } else if (field === 'nightHiddenLimit') {
             // Incrementa hidden notturne
             return HousingModel.updateOne(H_ID, { $inc: { [`hiddenLimits.${userId}`]: 1 } });
-        } else if (field === 'nightBaseLimit') {
-            // Incrementa base notturne
-            return HousingModel.updateOne(H_ID, { $inc: { [`baseVisits.${userId}`]: 1 } });
         } else if (field === 'dayForcedLimit') {
             // Incrementa forced diurne
             const doc = await HousingModel.findOne(H_ID, { [`dayLimits.${userId}`]: 1 }).lean();
@@ -241,12 +223,6 @@ async incrementSpecificPhaseLimit(userId, field) {
             const doc = await HousingModel.findOne(H_ID, { [`dayLimits.${userId}`]: 1 }).lean();
             const current = doc?.dayLimits?.[userId] || { base: 0, forced: 0, hidden: 0 };
             current.hidden = (current.hidden || 0) + 1;
-            return HousingModel.updateOne(H_ID, { $set: { [`dayLimits.${userId}`]: current } });
-        } else if (field === 'dayBaseLimit') {
-            // Incrementa base diurne
-            const doc = await HousingModel.findOne(H_ID, { [`dayLimits.${userId}`]: 1 }).lean();
-            const current = doc?.dayLimits?.[userId] || { base: 0, forced: 0, hidden: 0 };
-            current.base = (current.base || 0) + 1;
             return HousingModel.updateOne(H_ID, { $set: { [`dayLimits.${userId}`]: current } });
         }
     },
@@ -412,58 +388,21 @@ async incrementSpecificPhaseLimit(userId, field) {
         });
     },
 
-    // 🔥 MODIFICATO: NON resetta più le visite, solo le extra della fase corrente
+    // 🔥 NUOVO: Reset visite NOTTURNE (chiamato da !giorno)
+    // Resetta extraVisits (visite extra notturne) e riapplica i limiti base notturni
     async resetNightVisits() {
-        console.log('♻️ [Housing] Reset visite extra notturne...');
+        console.log('♻️ [Housing] Reset visite notturne...');
         return HousingModel.updateOne(H_ID, {
             $set: { extraVisits: {} }
         });
     },
 
-    // 🔥 MODIFICATO: NON resetta più le visite, solo le extra della fase corrente
+    // 🔥 NUOVO: Reset visite DIURNE (chiamato da !notte)
+    // Resetta extraVisitsDay (visite extra diurne) e riapplica i limiti base diurni
     async resetDayVisits() {
-        console.log('♻️ [Housing] Reset visite extra diurne...');
+        console.log('♻️ [Housing] Reset visite diurne...');
         return HousingModel.updateOne(H_ID, {
             $set: { extraVisitsDay: {} }
-        });
-    },
-
-    // 🔥 NUOVO: Resetta le visite ai valori base impostati (per !resetvisite)
-    async resetVisitsToBase() {
-        console.log('♻️ [Housing] Reset visite ai valori base...');
-        const mode = await housing.getMode();
-        
-        const doc = await HousingModel.findOne(H_ID, {
-            playerHomes: 1, baseVisits: 1, dayLimits: 1,
-            forcedLimits: 1, hiddenLimits: 1
-        }).lean();
-        if (!doc) return;
-
-        const allUsers = new Set([
-            ...Object.keys(doc.playerHomes || {}),
-            ...Object.keys(doc.baseVisits || {}),
-            ...Object.keys(doc.dayLimits || {}),
-        ]);
-
-        const setOps = {};
-        allUsers.forEach(userId => {
-            if (mode === 'DAY') {
-                const limits = doc.dayLimits?.[userId] || { forced: 0, hidden: 0 };
-                setOps[`forcedVisits.${userId}`] = limits.forced || 0;
-                setOps[`hiddenVisits.${userId}`] = limits.hidden || 0;
-            } else {
-                setOps[`forcedVisits.${userId}`] = doc.forcedLimits?.[userId] || 0;
-                setOps[`hiddenVisits.${userId}`] = doc.hiddenLimits?.[userId] || 0;
-            }
-        });
-
-        return HousingModel.updateOne(H_ID, {
-            $set: { 
-                playerVisits: {}, 
-                extraVisits: {}, 
-                extraVisitsDay: {},
-                ...setOps 
-            }
         });
     },
 
@@ -550,72 +489,90 @@ const queue = {
         return QueueModel.find({ status: 'PENDING' }).sort({ timestamp: 1 }).lean();
     },
 
-    async updateStatus(id, status) {
-        return QueueModel.findByIdAndUpdate(id, { status });
+    async getFirst() {
+        return QueueModel.findOne({ status: 'PENDING' }).sort({ timestamp: 1 }).lean();
     },
 
-    async clearPending() {
-        return QueueModel.deleteMany({ status: 'PENDING' });
+    async remove(id) {
+        return QueueModel.findByIdAndDelete(id);
     },
 
-    async clearAll() {
-        return QueueModel.deleteMany({});
+    async findById(id) {
+        return QueueModel.findById(id).lean();
     },
 
-    async getAll() {
-        return QueueModel.find({}).sort({ timestamp: 1 }).lean();
+    async getUserPending(userId, types = ['RETURN', 'KNOCK']) {
+        return QueueModel.findOne({
+            userId, status: 'PENDING', type: { $in: types }
+        }).lean();
+    },
+
+    async getUserAllPending(userId) {
+        return QueueModel.find({ userId, status: 'PENDING' }).lean();
+    },
+
+    async removeUserPending(userId, type) {
+        return QueueModel.findOneAndDelete({ userId, status: 'PENDING', type });
+    },
+
+    async deleteUserPendingActions(userId, types = ['KNOCK', 'RETURN']) {
+        return QueueModel.deleteMany({
+            userId, status: 'PENDING', type: { $in: types }
+        });
     },
 };
 
 // ==========================================
-// 🗳️ MEETING
+// 👥 MEETING - 100% ATOMICO
 // ==========================================
 const meeting = {
-    // --- LETTURE MIRATE (una query, un campo) ---
-    async getPhase() {
-        const doc = await MeetingModel.findOne(M_ID, { phase: 1 }).lean();
-        return doc?.phase || 'INACTIVE';
+    // --- LETTURE (tutte .lean()) ---
+    async getAutoRoleState() {
+        const doc = await MeetingModel.findOne(M_ID, { isAutoRoleActive: 1 }).lean();
+        return doc?.isAutoRoleActive || false;
     },
 
-    async getNumPlayers() {
-        const doc = await MeetingModel.findOne(M_ID, { numPlayers: 1 }).lean();
-        return doc?.numPlayers || 0;
+    async getMeetingCount(userId) {
+        const doc = await MeetingModel.findOne(M_ID, { [`meetingCounts.${userId}`]: 1 }).lean();
+        return doc?.meetingCounts?.[userId] || 0;
     },
 
-    async getTotalVotes(targetUserId) {
-        const doc = await MeetingModel.findOne(M_ID, { [`votes.${targetUserId}`]: 1 }).lean();
-        const arr = doc?.votes?.[targetUserId] || [];
-        return arr.length;
+    async getLetturaCount(userId) {
+        const doc = await MeetingModel.findOne(M_ID, { [`letturaCounts.${userId}`]: 1 }).lean();
+        return doc?.letturaCounts?.[userId] || 0;
     },
 
-    async hasVoted(voterId) {
-        const doc = await MeetingModel.findOne(M_ID, { voters: 1 }).lean();
-        return (doc?.voters || []).includes(voterId);
+    async isUserActive(userId) {
+        const doc = await MeetingModel.findOne({ ...M_ID, activeUsers: userId }, { _id: 1 }).lean();
+        return !!doc;
     },
 
-    async getVotes() {
-        const doc = await MeetingModel.findOne(M_ID, { votes: 1 }).lean();
-        return doc?.votes || {};
+    async getActiveUsers() {
+        const doc = await MeetingModel.findOne(M_ID, { activeUsers: 1 }).lean();
+        return doc?.activeUsers || [];
     },
 
-    async getVoters() {
-        const doc = await MeetingModel.findOne(M_ID, { voters: 1 }).lean();
-        return doc?.voters || [];
+    async getTable() {
+        const doc = await MeetingModel.findOne(M_ID, { table: 1 }).lean();
+        return doc?.table || { limit: 0, slots: [], messageId: null };
     },
 
-    async getTarget() {
-        const doc = await MeetingModel.findOne(M_ID, { target: 1 }).lean();
-        return doc?.target || null;
+    async findSponsor(playerId) {
+        const data = await MeetingModel.findOne(M_ID, { 'table.slots': 1, activeGameSlots: 1 }).lean();
+        if (!data) return null;
+        let slot = data.table?.slots?.find(s => s.player === playerId);
+        if (slot?.sponsor) return slot.sponsor;
+        slot = data.activeGameSlots?.find(s => s.player === playerId);
+        return slot?.sponsor || null;
     },
 
-    async getDoubleVoters() {
-        const doc = await MeetingModel.findOne(M_ID, { doubleVoters: 1 }).lean();
-        return doc?.doubleVoters || [];
-    },
-
-    async getBlockedVoters() {
-        const doc = await MeetingModel.findOne(M_ID, { blockedVoters: 1 }).lean();
-        return doc?.blockedVoters || [];
+    async findPlayer(sponsorId) {
+        const data = await MeetingModel.findOne(M_ID, { 'table.slots': 1, activeGameSlots: 1 }).lean();
+        if (!data) return null;
+        let slot = data.table?.slots?.find(s => s.sponsor === sponsorId);
+        if (slot?.player) return slot.player;
+        slot = data.activeGameSlots?.find(s => s.sponsor === sponsorId);
+        return slot?.player || null;
     },
 
     async getActiveGameSlots() {
@@ -623,92 +580,108 @@ const meeting = {
         return doc?.activeGameSlots || [];
     },
 
-    async getFullDoc() {
-        return MeetingModel.findOne(M_ID).lean();
-    },
-
     // --- SCRITTURE ATOMICHE ---
-    async setPhase(phase) {
-        return MeetingModel.updateOne(M_ID, { $set: { phase } });
+    async toggleAutoRole() {
+        const current = await meeting.getAutoRoleState();
+        const newState = !current;
+        await MeetingModel.updateOne(M_ID, { $set: { isAutoRoleActive: newState } });
+        return newState;
     },
 
-    async setNumPlayers(num) {
-        return MeetingModel.updateOne(M_ID, { $set: { numPlayers: num } });
+    async resetCounts() {
+        return MeetingModel.updateOne(M_ID, { $set: { meetingCounts: {}, letturaCounts: {} } });
     },
 
-    async setTarget(userId) {
-        return MeetingModel.updateOne(M_ID, { $set: { target: userId } });
+    async incrementMeetingCount(userId) {
+        return MeetingModel.updateOne(M_ID, { $inc: { [`meetingCounts.${userId}`]: 1 } });
     },
 
-    async addVote(targetUserId, voterId) {
+    async incrementLetturaCount(userId) {
+        return MeetingModel.updateOne(M_ID, { $inc: { [`letturaCounts.${userId}`]: 1 } });
+    },
+
+    async addActiveUsers(userIds) {
         return MeetingModel.updateOne(M_ID, {
-            $push: { [`votes.${targetUserId}`]: voterId },
-            $addToSet: { voters: voterId }
+            $addToSet: { activeUsers: { $each: Array.isArray(userIds) ? userIds : [userIds] } }
         });
     },
 
-    async removeVote(targetUserId, voterId) {
+    async removeActiveUsers(userIds) {
         return MeetingModel.updateOne(M_ID, {
-            $pull: { [`votes.${targetUserId}`]: voterId, voters: voterId }
+            $pull: { activeUsers: { $in: Array.isArray(userIds) ? userIds : [userIds] } }
         });
     },
 
-    async resetVotes() {
+    async createTable(limit, messageId) {
+        const slots = Array(limit).fill(null).map(() => ({ player: null, sponsor: null }));
         return MeetingModel.updateOne(M_ID, {
-            $set: { votes: {}, voters: [], target: null }
+            $set: { table: { limit, slots, messageId }, activeGameSlots: [] }
         });
     },
 
-    async addDoubleVoter(userId) {
-        return MeetingModel.updateOne(M_ID, { $addToSet: { doubleVoters: userId } });
-    },
+    async setSlot(slotIndex, type, userId) {
+        const table = await meeting.getTable();
+        if (table.limit === 0) return null;
 
-    async removeDoubleVoter(userId) {
-        return MeetingModel.updateOne(M_ID, { $pull: { doubleVoters: userId } });
-    },
-
-    async clearDoubleVoters() {
-        return MeetingModel.updateOne(M_ID, { $set: { doubleVoters: [] } });
-    },
-
-    async addBlockedVoter(userId) {
-        return MeetingModel.updateOne(M_ID, { $addToSet: { blockedVoters: userId } });
-    },
-
-    async removeBlockedVoter(userId) {
-        return MeetingModel.updateOne(M_ID, { $pull: { blockedVoters: userId } });
-    },
-
-    async clearBlockedVoters() {
-        return MeetingModel.updateOne(M_ID, { $set: { blockedVoters: [] } });
-    },
-
-    async setActiveGameSlots(slots) {
-        return MeetingModel.updateOne(M_ID, { $set: { activeGameSlots: slots } });
-    },
-
-    async updateGameSlot(slotIndex, updates) {
         const setOps = {};
-        Object.keys(updates).forEach(key => {
-            setOps[`activeGameSlots.${slotIndex}.${key}`] = updates[key];
+        table.slots.forEach((slot, i) => {
+            if (slot.player === userId) setOps[`table.slots.${i}.player`] = null;
+            if (slot.sponsor === userId) setOps[`table.slots.${i}.sponsor`] = null;
         });
-        return MeetingModel.updateOne(M_ID, { $set: setOps });
+        if (table.slots[slotIndex]?.[type]) return 'OCCUPIED';
+        setOps[`table.slots.${slotIndex}.${type}`] = userId;
+
+        await MeetingModel.updateOne(M_ID, { $set: setOps });
+        return meeting.getTable();
     },
 
-    async clearActiveGameSlots() {
-        return MeetingModel.updateOne(M_ID, { $set: { activeGameSlots: [] } });
+    async removeFromSlots(userId) {
+        const table = await meeting.getTable();
+        if (table.limit === 0) return null;
+
+        const setOps = {};
+        let found = false;
+        table.slots.forEach((slot, i) => {
+            if (slot.player === userId) { setOps[`table.slots.${i}.player`] = null; found = true; }
+            if (slot.sponsor === userId) { setOps[`table.slots.${i}.sponsor`] = null; found = true; }
+        });
+        if (!found) return null;
+        await MeetingModel.updateOne(M_ID, { $set: setOps });
+        return meeting.getTable();
     },
 
-    // Operazione ATOMICA per swap tra 2 player
-    async swapPlayerData(p1Id, p2Id) {
-        const doc = await MeetingModel.findOne(M_ID).lean();
+    async updateTableMessageId(messageId) {
+        return MeetingModel.updateOne(M_ID, { $set: { 'table.messageId': messageId } });
+    },
+
+    async saveGameAndClearTable(slots) {
+        return MeetingModel.updateOne(M_ID, {
+            $set: {
+                activeGameSlots: slots,
+                table: { limit: 0, slots: [], messageId: null }
+            }
+        });
+    },
+
+    async reopenTableFromGame(messageId) {
+        const doc = await MeetingModel.findOne(M_ID, { activeGameSlots: 1 }).lean();
+        const slots = doc?.activeGameSlots || [];
+        if (slots.length === 0) return null;
+        const table = { limit: slots.length, slots: slots.map(s => ({ ...s })), messageId };
+        await MeetingModel.updateOne(M_ID, { $set: { table } });
+        return table;
+    },
+
+    async swapMeetingData(p1Id, p2Id) {
+        const doc = await MeetingModel.findOne(M_ID, {
+            meetingCounts: 1, letturaCounts: 1, activeGameSlots: 1
+        }).lean();
         if (!doc) return;
 
         const setOps = {};
         const unsetOps = {};
 
-        // Swap nei votes
-        ['votes', 'voters', 'doubleVoters', 'blockedVoters'].forEach(key => {
+        ['meetingCounts', 'letturaCounts'].forEach(key => {
             const obj = doc[key] || {};
             const v1 = obj[p1Id];
             const v2 = obj[p2Id];
