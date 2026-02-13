@@ -72,7 +72,7 @@ async function processQueue() {
                     ? "⛓️ **Azione fallita:** Sei incatenato! (Visitblock + Roleblock attivo)"
                     : "🚫 **Azione fallita:** Sei in Visitblock.";
 
-                await notifyUser(currentItem.userId, msg);
+                await notifyUserInCategory(currentItem.userId, msg);
                 
                 // Se era KNOCK, pulisci lo stato pending ma NON scalare visite dal DB
                 if (currentItem.type === 'KNOCK') await db.housing.removePendingKnock(currentItem.userId);
@@ -353,6 +353,23 @@ async function executeHousingAction(queueItem) {
 async function notifyUser(userId, text) {
     const user = await clientRef.users.fetch(userId).catch(() => null);
     if (user) user.send(text).catch(() => {});
+}
+
+async function notifyUserInCategory(userId, text) {
+    const guild = clientRef.guilds.cache.first();
+    if (!guild) return;
+    
+    const category = guild.channels.cache.get('1460741414357827747');
+    if (!category) return;
+    
+    const userChannel = category.children.cache.find(ch =>
+        ch.type === 0 && // GuildText
+        ch.permissionOverwrites.cache.some(p => p.id === userId && p.allow.has('ViewChannel'))
+    );
+    
+    if (userChannel) {
+        userChannel.send(text).catch(() => {});
+    }
 }
 
 // ==========================================
