@@ -142,13 +142,13 @@ module.exports = function registerKnockInteractions(client) {
 
             if (mode === 'mode_forced') {
                 if (info.forced <= 0) return interaction.reply({ content: "⛔ Finite forzate.", ephemeral: true });
-                await db.housing.decrementForced(knocker.id);
+                // NON decrementare qui - verrà fatto in queueSystem
             } else if (mode === 'mode_hidden') {
                 if (info.hidden <= 0) return interaction.reply({ content: "⛔ Finite nascoste.", ephemeral: true });
-                await db.housing.decrementHidden(knocker.id);
+                // NON decrementare qui - verrà fatto in queueSystem
             } else {
                 if (info.used >= info.totalLimit) return interaction.reply({ content: "⛔ Visite finite!", ephemeral: true });
-                await db.housing.incrementVisit(knocker.id);
+                // NON incrementare qui - verrà fatto in queueSystem
             }
 
             // Pulisci menu e pending
