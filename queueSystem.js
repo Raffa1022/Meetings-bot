@@ -315,7 +315,7 @@ async function executeHousingAction(queueItem) {
             });
 
             const msg = mode === 'mode_forced' 
-                ? `<@&${RUOLI.ALIVE}> <@&${RUOLI.SPONSOR}> 🧨 **${member} ha sfondato la porta ed è entrato!**` 
+                ? `<@&${RUOLI.ALIVE}> <@&${RUOLI.SPONSOR}> 🧨 ${member} ha sfondato la porta ed è entrato!` 
                 : "";
             
             const silent = mode === 'mode_hidden';
