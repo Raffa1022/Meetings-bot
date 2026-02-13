@@ -485,11 +485,17 @@ module.exports = function initModerationSystem(client) {
                 if (targetMember.roles.cache.has(RUOLI.ALIVE)) {
                     roleOps.push(targetMember.roles.remove(RUOLI.ALIVE).catch(() => {}));
                     roleOps.push(targetMember.roles.add(RUOLI.DEAD).catch(() => {}));
-                    results.push(`☠️ ${targetMember.displayName} → <@&${RUOLI.DEAD}>`);
+                    // ✅ FIX: Imposta visite a 0 per DEAD
+                    await db.housing.setVisitLimits(targetMember.id, 0, 0, 0);
+                    await db.housing.resetPlayerVisits(targetMember.id);
+                    results.push(`☠️ ${targetMember.displayName} → <@&${RUOLI.DEAD}> (0 visite)`);
                 } else if (targetMember.roles.cache.has(RUOLI.SPONSOR)) {
                     roleOps.push(targetMember.roles.remove(RUOLI.SPONSOR).catch(() => {}));
                     roleOps.push(targetMember.roles.add(RUOLI.SPONSOR_DEAD).catch(() => {}));
-                    results.push(`💀 ${targetMember.displayName} (sponsor) → <@&${RUOLI.SPONSOR_DEAD}>`);
+                    // ✅ FIX: Imposta visite a 0 per SPONSOR_DEAD
+                    await db.housing.setVisitLimits(targetMember.id, 0, 0, 0);
+                    await db.housing.resetPlayerVisits(targetMember.id);
+                    results.push(`💀 ${targetMember.displayName} (sponsor) → <@&${RUOLI.SPONSOR_DEAD}> (0 visite)`);
                 }
 
                 // 6. Cambio ruoli partner
@@ -497,11 +503,17 @@ module.exports = function initModerationSystem(client) {
                     if (partner.roles.cache.has(RUOLI.SPONSOR)) {
                         roleOps.push(partner.roles.remove(RUOLI.SPONSOR).catch(() => {}));
                         roleOps.push(partner.roles.add(RUOLI.SPONSOR_DEAD).catch(() => {}));
-                        results.push(`💀 ${partner.displayName} (partner) → <@&${RUOLI.SPONSOR_DEAD}>`);
+                        // ✅ FIX: Imposta visite a 0 per partner SPONSOR_DEAD
+                        await db.housing.setVisitLimits(partner.id, 0, 0, 0);
+                        await db.housing.resetPlayerVisits(partner.id);
+                        results.push(`💀 ${partner.displayName} (partner) → <@&${RUOLI.SPONSOR_DEAD}> (0 visite)`);
                     } else if (partner.roles.cache.has(RUOLI.ALIVE)) {
                         roleOps.push(partner.roles.remove(RUOLI.ALIVE).catch(() => {}));
                         roleOps.push(partner.roles.add(RUOLI.DEAD).catch(() => {}));
-                        results.push(`☠️ ${partner.displayName} (partner) → <@&${RUOLI.DEAD}>`);
+                        // ✅ FIX: Imposta visite a 0 per partner DEAD
+                        await db.housing.setVisitLimits(partner.id, 0, 0, 0);
+                        await db.housing.resetPlayerVisits(partner.id);
+                        results.push(`☠️ ${partner.displayName} (partner) → <@&${RUOLI.DEAD}> (0 visite)`);
                     }
                 }
 
