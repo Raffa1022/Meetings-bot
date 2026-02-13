@@ -313,10 +313,14 @@ async function executeHousingAction(queueItem) {
                 SendMessages: true, 
                 ReadMessageHistory: true
             });
+            // FIX: Cerca la VERA casa vecchia tra quelle della categoria (ignora chat comandi)
+            const oldHouse = guild.channels.cache.find(c => 
+                c.parentId === HOUSING.CATEGORIA_CASE && 
+                c.permissionOverwrites.cache.has(member.id) &&
+                c.id !== targetCh.id
+            );
+            if (oldHouse) await oldHouse.permissionOverwrites.delete(member.id).catch(() => {});
 
-                        // RIMUOVI I PERMESSI DELLA VECCHIA CASA
-            if (fromCh && fromCh.id !== targetCh.id) {
-                await fromCh.permissionOverwrites.delete(member.id).catch(() => {});
             }
 
             const msg = mode === 'mode_forced' 
@@ -337,10 +341,14 @@ async function executeHousingAction(queueItem) {
                 SendMessages: true, 
                 ReadMessageHistory: true
             });
-                        // RIMUOVI I PERMESSI DELLA VECCHIA CASA
-            if (fromCh && fromCh.id !== targetCh.id) {
-                await fromCh.permissionOverwrites.delete(member.id).catch(() => {});
-            }
+                        // FIX: Cerca la VERA casa vecchia tra quelle della categoria (ignora chat comandi)
+            const oldHouse = guild.channels.cache.find(c => 
+                c.parentId === HOUSING.CATEGORIA_CASE && 
+                c.permissionOverwrites.cache.has(member.id) &&
+                c.id !== targetCh.id
+            );
+            if (oldHouse) await oldHouse.permissionOverwrites.delete(member.id).catch(() => {});
+
 
             await enterHouse(member, fromCh, targetCh, `👋 ${member} è entrato.`, false);
             return;
