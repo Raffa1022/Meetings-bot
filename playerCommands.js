@@ -21,6 +21,12 @@ module.exports = function registerPlayerCommands(client) {
         if (message.author.bot || !message.content.startsWith(PREFIX)) return;
         const args = message.content.slice(PREFIX.length).trim().split(/ +/);
         const command = args.shift().toLowerCase();
+        
+        // ✅ FIX: BLOCCO LISTA MORTI - Impedisce ai giocatori nella lista morti di usare QUALSIASI comando
+        const markedForDeath = await db.moderation.isMarkedForDeath(message.author.id);
+        if (markedForDeath && !isAdmin(message.member)) {
+            return message.reply("☠️ **Sei nella lista morti!** Non puoi utilizzare comandi del bot fino al processamento.");
+        }
 
         // ===================== TORNA =====================
         if (command === 'torna') {
