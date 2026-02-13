@@ -1,5 +1,3 @@
-
-
 // ==========================================
 
 // 🚦 QUEUE SYSTEM - Coda Cronologica
@@ -360,80 +358,46 @@ async function executeHousingAction(queueItem) {
 }
 
 async function notifyUser(userId, text) {
-
-    const user = await clientRef.users.fetch(userId).catch(() => null);
-
-    if (user) user.send(text).catch(() => {});
-
+    const user = await clientRef.users.fetch(userId).catch(() => null);
+    if (user) user.send(text).catch(() => {});
 }
 
-
 // ==========================================
-
 // 🚀 INIT
-
 // ==========================================
-
 module.exports = function initQueueSystem(client) {
+    clientRef = client;
 
-    clientRef = client;
+    eventBus.on('queue:add', async (data) => {
+        await db.queue.add(data.type, data.userId, data.details);
+        processQueue();
+    });
 
+    eventBus.on('queue:process', () => processQueue());
 
-    eventBus.on('queue:add', async (data) => {
+    client.on('interactionCreate', async i => {
+        if (!i.isButton() || !i.customId.startsWith('q_done_')) return;
 
-        await db.queue.add(data.type, data.userId, data.details);
+        const id = i.customId.split('_')[2];
+        const item = await db.queue.findById(id);
 
-        processQueue();
+        if (!item) return i.reply({ content: "❌ Già gestita.", ephemeral: true });
 
-    });
+        if (item.type === 'ABILITY') {
+            if (await db.moderation.isBlockedRB(item.userId)) {
+                await db.queue.remove(id);
+                await i.reply("🚫 Annullata: Roleblock.");
+                processing = false;
+                return processQueue();
+            }
+        }
 
+        await db.queue.remove(id);
+        await i.reply({ content: `✅ Gestita.`, ephemeral: true });
+        
+        processing = false;
+        processQueue();
+    });
 
-    eventBus.on('queue:process', () => processQueue());
-
-
-    client.on('interactionCreate', async i => {
-
-        if (!i.isButton() || !i.customId.startsWith('q_done_')) return;
-
-
-        const id = i.customId.split('_')[2];
-
-        const item = await db.queue.findById(id);
-
-
-        if (!item) return i.reply({ content: "❌ Già gestita.", ephemeral: true });
-
-
-        if (item.type === 'ABILITY') {
-
-            if (await db.moderation.isBlockedRB(item.userId)) {
-
-                await db.queue.remove(id);
-
-                await i.reply("🚫 Annullata: Roleblock.");
-
-                processing = false;
-
-                return processQueue();
-
-            }
-
-        }
-
-
-        await db.queue.remove(id);
-
-        await i.reply({ content: `✅ Gestita.`, ephemeral: true });
-
-
-        processing = false;
-
-        processQueue();
-
-    });
-
-
-    processQueue();
-
+    processQueue();
 };
-
