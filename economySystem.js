@@ -1162,7 +1162,7 @@ const shopEffects = {
         }
     },
 
-    // ⛓️ CATENE: VB + RB su target + partner
+        // ⛓️ CATENE: VB + RB su target + partner (FIX DOPPIO MESSAGGIO)
     async catene(client, userId, details) {
         const guild = client.guilds.cache.first();
         if (!guild) return;
@@ -1178,37 +1178,38 @@ const shopEffects = {
         const partner = await findPartner(target, guild);
         const results = [];
 
+        // Applica effetti Target
         if (!alreadyVB) {
             await db.moderation.addBlockedVB(details.targetUserId, target.user.tag);
             results.push(`🚫 **${target.user.tag}** → Visitblock`);
-            if (partner && !(await db.moderation.isBlockedVB(partner.id))) {
-                await db.moderation.addBlockedVB(partner.id, partner.user.tag);
-                results.push(`🚫 **${partner.user.tag}** (partner) → Visitblock`);
-            }
         }
         if (!alreadyRB) {
             await db.moderation.addBlockedRB(details.targetUserId, target.user.tag);
             results.push(`🚫 **${target.user.tag}** → Roleblock`);
-            if (partner && !(await db.moderation.isBlockedRB(partner.id))) {
-                await db.moderation.addBlockedRB(partner.id, partner.user.tag);
-                results.push(`🚫 **${partner.user.tag}** (partner) → Roleblock`);
-            }
         }
-
         const alreadyUnprotectable = await db.moderation.isUnprotectable(details.targetUserId);
         if (!alreadyUnprotectable) {
             await db.moderation.addUnprotectable(details.targetUserId, target.user.tag);
             results.push(`⛓️ **${target.user.tag}** → Non può essere protetto`);
         }
+
+        // Applica effetti Partner
         if (partner) {
-            const partnerUnprotectable = await db.moderation.isUnprotectable(partner.id);
-            if (!partnerUnprotectable) {
+            if (!(await db.moderation.isBlockedVB(partner.id))) {
+                await db.moderation.addBlockedVB(partner.id, partner.user.tag);
+                results.push(`🚫 **${partner.user.tag}** (partner) → Visitblock`);
+            }
+            if (!(await db.moderation.isBlockedRB(partner.id))) {
+                await db.moderation.addBlockedRB(partner.id, partner.user.tag);
+                results.push(`🚫 **${partner.user.tag}** (partner) → Roleblock`);
+            }
+            if (!(await db.moderation.isUnprotectable(partner.id))) {
                 await db.moderation.addUnprotectable(partner.id, partner.user.tag);
                 results.push(`⛓️ **${partner.user.tag}** (partner) → Non può essere protetto`);
             }
         }
 
-        // Response channel: usa quello specificato o cerca la chat privata dell'utente
+        // 1. Notifica chi ha usato le catene (Sender)
         let responseChannel = details.responseChannelId ? client.channels.cache.get(details.responseChannelId) : null;
         if (!responseChannel) {
             const catPriv = guild.channels.cache.get(HOUSING.CATEGORIA_CHAT_PRIVATE);
@@ -1217,37 +1218,48 @@ const shopEffects = {
                 ch.permissionOverwrites.cache.some(p => p.id === userId && p.allow.has(PermissionsBitField.Flags.ViewChannel))
             );
         }
-        
         if (responseChannel) {
             responseChannel.send({ embeds: [
                 new EmbedBuilder().setColor('#2C3E50').setTitle('⛓️ Catene Applicate!')
-                    .setDescription(results.join('\n') || 'Target già bloccato.').setTimestamp()
+                    .setDescription(results.join('\n') || 'Target già completamente bloccato.').setTimestamp()
             ]}).catch(() => {});
         }
 
-        // Notifica il target che le catene sono state usate su di lui
+        // 2. Notifica Target (e Partner)
         const catPriv = guild.channels.cache.get(HOUSING.CATEGORIA_CHAT_PRIVATE);
+        
         const targetChannel = catPriv?.children.cache.find(ch =>
             ch.type === ChannelType.GuildText &&
             ch.permissionOverwrites.cache.some(p => p.id === details.targetUserId && p.allow.has(PermissionsBitField.Flags.ViewChannel))
         );
-        
-        if (targetChannel) {
-            targetChannel.send({ embeds: [
-                new EmbedBuilder().setColor('#FF0000').setTitle('⛓️ Sei stato colpito da Catene!')
-                    .setDescription(`Qualcuno ha utilizzato le **Catene** su di te!\n\n${results.join('\n')}`)
-                    .setTimestamp()
-            ]}).catch(() => {});
-        }
 
-        // Notifica anche il partner se presente
+        let partnerChannel = null;
         if (partner) {
-            const partnerChannel = catPriv?.children.cache.find(ch =>
+            partnerChannel = catPriv?.children.cache.find(ch =>
                 ch.type === ChannelType.GuildText &&
                 ch.permissionOverwrites.cache.some(p => p.id === partner.id && p.allow.has(PermissionsBitField.Flags.ViewChannel))
             );
-            
-            if (partnerChannel) {
+        }
+
+        // Caso A: Target e Partner sono nella STESSA chat (Coppia) -> Manda 1 solo messaggio
+        if (partner && targetChannel && partnerChannel && targetChannel.id === partnerChannel.id) {
+            targetChannel.send({ embeds: [
+                new EmbedBuilder().setColor('#FF0000').setTitle('⛓️ Siete stati colpiti da Catene!')
+                    .setDescription(`Qualcuno ha utilizzato le **Catene** su <@${target.id}> e gli effetti si sono riflessi sul partner!\n\n${results.join('\n')}`)
+                    .setTimestamp()
+            ]}).catch(() => {});
+        } 
+        // Caso B: Chat separate o Solo Target
+        else {
+            if (targetChannel) {
+                 targetChannel.send({ embeds: [
+                    new EmbedBuilder().setColor('#FF0000').setTitle('⛓️ Sei stato colpito da Catene!')
+                        .setDescription(`Qualcuno ha utilizzato le **Catene** su di te!\n\n${results.join('\n')}`)
+                        .setTimestamp()
+                ]}).catch(() => {});
+            }
+
+            if (partner && partnerChannel) {
                 partnerChannel.send({ embeds: [
                     new EmbedBuilder().setColor('#FF0000').setTitle('⛓️ Sei stato colpito da Catene!')
                         .setDescription(`Qualcuno ha utilizzato le **Catene** e sei stato colpito come partner!\n\n${results.filter(r => r.includes('partner')).join('\n')}`)
