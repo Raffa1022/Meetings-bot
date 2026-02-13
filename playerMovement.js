@@ -49,6 +49,7 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
             if (prevMode !== 'HIDDEN' && isMainPlayer) {
                 await channelToLeave.send(`🚪 ${member} è uscito.`);
             }
+            // ✅ FIX NASCOSTA: Rimuovi sempre i permessi quando esci (anche se hidden)
             await channelToLeave.permissionOverwrites.delete(member.id).catch(() => {});
         }
         // Rimuovi sponsor dalla vecchia casa (senza narrazione)
