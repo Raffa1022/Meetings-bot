@@ -272,11 +272,11 @@ async function executeHousingAction(queueItem) {
                 c.permissionOverwrites.cache.has(member.id)
             );
 
-            // FIX: Aggiungi ReadMessageHistory: true per vedere i messaggi vecchi
+            // Dai permessi alla home (con ReadMessageHistory per leggere chat passate)
             if (homeCh) {
                 await homeCh.permissionOverwrites.edit(member.id, { 
                     ViewChannel: true, 
-                    SendMessages: true, 
+                    SendMessages: true,
                     ReadMessageHistory: true
                 });
             }
@@ -318,7 +318,7 @@ async function executeHousingAction(queueItem) {
                 c.id !== targetCh.id
             );
             
-            // NARRAZIONE DI USCITA solo se esco dalla mia HOME (non da case visitate)
+            // NARRAZIONE DI USCITA: SOLO se esco dalla mia HOME (per entrambe forzata e nascosta)
             if (oldHouse) {
                 const myHomeId = await db.housing.getHome(member.id);
                 if (oldHouse.id === myHomeId) {
@@ -328,7 +328,7 @@ async function executeHousingAction(queueItem) {
             
             await targetCh.permissionOverwrites.edit(member.id, {
                 ViewChannel: true, 
-                SendMessages: true, 
+                SendMessages: true,
                 ReadMessageHistory: true
             });
             
@@ -353,7 +353,7 @@ async function executeHousingAction(queueItem) {
                 c.id !== targetCh.id
             );
             
-            // NARRAZIONE DI USCITA solo se esco dalla mia HOME
+            // NARRAZIONE DI USCITA: SOLO se esco dalla mia HOME
             if (oldHouse) {
                 const myHomeId = await db.housing.getHome(member.id);
                 if (oldHouse.id === myHomeId) {
@@ -364,7 +364,7 @@ async function executeHousingAction(queueItem) {
             // Casa vuota: dai permessi e entra subito
             await targetCh.permissionOverwrites.edit(member.id, {
                 ViewChannel: true, 
-                SendMessages: true, 
+                SendMessages: true,
                 ReadMessageHistory: true
             });
             
@@ -389,7 +389,7 @@ async function executeHousingAction(queueItem) {
                 await msg.reply("✅ Qualcuno ha aperto.");
                 const currentFrom = guild.channels.cache.find(c => c.parentId === HOUSING.CATEGORIA_CASE && c.permissionOverwrites.cache.has(member.id));
                 
-                // NARRAZIONE DI USCITA solo se esco dalla mia HOME
+                // NARRAZIONE DI USCITA: SOLO se esco dalla mia HOME
                 if (currentFrom && currentFrom.id !== targetCh.id) {
                     const myHomeId = await db.housing.getHome(member.id);
                     if (currentFrom.id === myHomeId) {
@@ -413,7 +413,7 @@ async function executeHousingAction(queueItem) {
                 await msg.reply("⏱️ Tempo scaduto - Apertura automatica.");
                 const currentFrom = guild.channels.cache.find(c => c.parentId === HOUSING.CATEGORIA_CASE && c.permissionOverwrites.cache.has(member.id));
                 
-                // NARRAZIONE DI USCITA solo se esco dalla mia HOME
+                // NARRAZIONE DI USCITA: SOLO se esco dalla mia HOME
                 if (currentFrom && currentFrom.id !== targetCh.id) {
                     const myHomeId = await db.housing.getHome(member.id);
                     if (currentFrom.id === myHomeId) {
