@@ -255,25 +255,40 @@ async function executeHousingAction(queueItem) {
         if (currentHome) fromChannelId = currentHome.id;
     }
 
-    // --- RETURN ---
+  // --- RETURN ---
     if (queueItem.type === 'RETURN') {
         const homeId = await db.housing.getHome(member.id);
         const destroyed = await db.housing.getDestroyedHouses();
 
         if (homeId && !destroyed.includes(homeId)) {
             const homeCh = guild.channels.cache.get(homeId);
-            const fromCh = guild.channels.cache.get(fromChannelId);
+            
+            // ✅ FIX: Trova TUTTE le case dove il player ha permessi (potrebbero essere 2!)
+            const housesWithPerms = guild.channels.cache.filter(c =>
+                c.parentId === HOUSING.CATEGORIA_CASE &&
+                c.permissionOverwrites.cache.has(member.id)
+            );
 
             // FIX: Aggiungi ReadMessageHistory: true per vedere i messaggi vecchi
             if (homeCh) {
                 await homeCh.permissionOverwrites.edit(member.id, { 
                     ViewChannel: true, 
                     SendMessages: true, 
-                    ReadMessageHistory: true // <--- FIX CRONOLOGIA
+                    ReadMessageHistory: true
                 });
             }
 
-            if (homeCh && fromCh && homeCh.id !== fromCh.id) {
+            // ✅ FIX: Rimuovi i permessi da TUTTE le case tranne la home
+            for (const [houseId, house] of housesWithPerms) {
+                if (houseId !== homeId) {
+                    await house.permissionOverwrites.delete(member.id).catch(() => {});
+                }
+            }
+
+            // ✅ FIX: Usa la prima casa NON-home come fromCh (quella da cui esce)
+            const fromCh = housesWithPerms.find(h => h.id !== homeId);
+
+            if (homeCh && fromCh) {
                 await movePlayer(member, fromCh, homeCh, `🏠 ${member} è ritornato.`, false);
             } else if (homeCh && !fromCh) {
                 await movePlayer(member, null, homeCh, `🏠 ${member} è ritornato.`, false);
@@ -282,7 +297,7 @@ async function executeHousingAction(queueItem) {
         return;
     }
 
-    // --- KNOCK ---
+// --- KNOCK ---
     if (queueItem.type === 'KNOCK') {
         const { targetChannelId, mode } = queueItem.details;
         const targetCh = guild.channels.cache.get(targetChannelId);
@@ -291,15 +306,14 @@ async function executeHousingAction(queueItem) {
         if (!targetCh) return;
         if (fromCh && fromCh.id === targetCh.id) return;
 
-        // FIX: Aggiungi ReadMessageHistory al targetCh prima di entrare
-        await targetCh.permissionOverwrites.edit(member.id, {
-             ViewChannel: true, 
-             SendMessages: true, 
-             ReadMessageHistory: true // <--- FIX CRONOLOGIA
-        });
-
+        // ✅ FIX: Per FORZATA e NASCOSTA, dai permessi subito (perché entrano direttamente)
         if (mode === 'mode_forced' || mode === 'mode_hidden') {
-            // FIX MESSAGGIO SFONDAMENTO CON TAG
+            await targetCh.permissionOverwrites.edit(member.id, {
+                ViewChannel: true, 
+                SendMessages: true, 
+                ReadMessageHistory: true
+            });
+
             const msg = mode === 'mode_forced' 
                 ? `<@&${RUOLI.ALIVE}> <@&${RUOLI.SPONSOR}> 🧨 **${member} ha sfondato la porta ed è entrato!**` 
                 : "";
@@ -312,10 +326,17 @@ async function executeHousingAction(queueItem) {
         // Visita Normale
         const occupants = getOccupants(targetCh, member.id);
         if (occupants.size === 0) {
+            // Casa vuota: dai permessi e entra subito
+            await targetCh.permissionOverwrites.edit(member.id, {
+                ViewChannel: true, 
+                SendMessages: true, 
+                ReadMessageHistory: true
+            });
             await enterHouse(member, fromCh, targetCh, `👋 ${member} è entrato.`, false);
             return;
         }
 
+        // ✅ FIX: NON dare permessi prima del TOC TOC - li darà enterHouse DOPO l'accettazione
         const msg = await targetCh.send(`🔔 <@&${RUOLI.ALIVE}> <@&${RUOLI.SPONSOR}> **TOC TOC!** Qualcuno bussa.\n✅ Apri | ❌ Rifiuta`);
         await Promise.all([msg.react('✅'), msg.react('❌')]);
         await db.housing.setActiveKnock(member.id, targetChannelId);
@@ -326,10 +347,9 @@ async function executeHousingAction(queueItem) {
         collector.on('collect', async (r) => {
             await db.housing.clearActiveKnock(member.id);
             if (r.emoji.name === '✅') {
-                await msg.reply("✅Qualcuno ha aperto.");
+                await msg.reply("✅ Qualcuno ha aperto.");
                 const currentFrom = guild.channels.cache.find(c => c.parentId === HOUSING.CATEGORIA_CASE && c.permissionOverwrites.cache.has(member.id));
-                // FIX CRONOLOGIA ANCHE QUI
-                await targetCh.permissionOverwrites.edit(member.id, { ViewChannel: true, SendMessages: true, ReadMessageHistory: true });
+                // ✅ ORA i permessi vengono dati da enterHouse, non prima
                 await enterHouse(member, currentFrom, targetCh, `👋 ${member} è entrato.`, false, true);
             } else {
                 await msg.reply("❌ Qualcuno ha rifiutato.");
@@ -343,13 +363,11 @@ async function executeHousingAction(queueItem) {
                 await db.housing.clearActiveKnock(member.id);
                 await msg.reply("⏱️ Tempo scaduto - Apertura automatica.");
                 const currentFrom = guild.channels.cache.find(c => c.parentId === HOUSING.CATEGORIA_CASE && c.permissionOverwrites.cache.has(member.id));
-                 // FIX CRONOLOGIA ANCHE QUI
-                await targetCh.permissionOverwrites.edit(member.id, { ViewChannel: true, SendMessages: true, ReadMessageHistory: true });
+                // ✅ ORA i permessi vengono dati da enterHouse, non prima
                 await enterHouse(member, currentFrom, targetCh, `👋 ${member} è entrato.`, false, true);
             }
         });
     }
-}
 
 async function notifyUser(userId, text) {
     const user = await clientRef.users.fetch(userId).catch(() => null);
