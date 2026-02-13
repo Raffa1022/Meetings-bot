@@ -204,6 +204,15 @@ const housing = {
             return HousingModel.updateOne(H_ID, { $set: { [`dayLimits.${userId}`]: current } });
         }
     },
+    async resetPlayerVisits(userId) {
+        return HousingModel.updateOne(H_ID, { 
+            $set: { 
+                [`playerVisits.${userId}`]: 0,
+                [`forcedVisits.${userId}`]: 0,
+                [`hiddenVisits.${userId}`]: 0
+            } 
+        });
+    },
 async incrementSpecificPhaseLimit(userId, field) {
         // field può essere: 'dayForcedLimit', 'nightForcedLimit', 'dayHiddenLimit', 'nightHiddenLimit', 'dayBaseLimit', 'nightBaseLimit'
         if (field === 'nightForcedLimit') {
