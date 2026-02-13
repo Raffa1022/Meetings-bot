@@ -166,15 +166,15 @@ const housing = {
     },
 
     async incrementVisit(userId) {
-        return HousingModel.updateOne(H_ID, { $inc: { [`playerVisits.${userId}`]: 1 } });
+        return HousingModel.updateOne(H_ID, { $inc: { [`playerVisits.${userId}`]: 1 } }); // ✅ FIX: +1 invece di +2
     },
 
     async decrementForced(userId) {
-        return HousingModel.updateOne(H_ID, { $inc: { [`forcedVisits.${userId}`]: -1 } });
+        return HousingModel.updateOne(H_ID, { $inc: { [`forcedVisits.${userId}`]: -1 } }); // ✅ FIX: -1 invece di -2
     },
 
     async decrementHidden(userId) {
-        return HousingModel.updateOne(H_ID, { $inc: { [`hiddenVisits.${userId}`]: -1 } });
+        return HousingModel.updateOne(H_ID, { $inc: { [`hiddenVisits.${userId}`]: -1 } }); // ✅ FIX: -1 invece di -2
     },
 
     // 🔥 NUOVO: Decrementa visite per la fase SUCCESSIVA (per preset)
