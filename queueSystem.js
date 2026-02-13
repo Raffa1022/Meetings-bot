@@ -225,10 +225,13 @@ async function updateDashboard(isPaused = false) {
 
         else await channel.send({ content: contentText, embeds: [embed], components });
 
-    } catch (err) { console.error("Update Dashboard Err:", err); }
+    } catch (e) {
+
+        console.error("Errore updateDashboard:", e);
+
+    }
 
 }
-
 
 // ==========================================
 
@@ -319,7 +322,7 @@ async function executeHousingAction(queueItem) {
                 c.permissionOverwrites.cache.has(member.id) &&
                 c.id !== targetCh.id
             );
-            if (oldHouse) await oldHouse.permissionOverwrites.delete(member.id).catch(() => {})
+            if (oldHouse) await oldHouse.permissionOverwrites.delete(member.id).catch(() => {});
 
             const msg = mode === 'mode_forced' 
                 ? `<@&${RUOLI.ALIVE}> <@&${RUOLI.SPONSOR}> 🧨 ${member} ha sfondato la porta ed è entrato!` 
@@ -339,7 +342,7 @@ async function executeHousingAction(queueItem) {
                 SendMessages: true, 
                 ReadMessageHistory: true
             });
-                        // FIX: Cerca la VERA casa vecchia tra quelle della categoria (ignora chat comandi)
+            // FIX: Cerca la VERA casa vecchia tra quelle della categoria (ignora chat comandi)
             const oldHouse = guild.channels.cache.find(c => 
                 c.parentId === HOUSING.CATEGORIA_CASE && 
                 c.permissionOverwrites.cache.has(member.id) &&
@@ -350,6 +353,7 @@ async function executeHousingAction(queueItem) {
 
             await enterHouse(member, fromCh, targetCh, `👋 ${member} è entrato.`, false);
             return;
+        }
 
         // ✅ FIX: NON dare permessi prima del TOC TOC - li darà enterHouse DOPO l'accettazione
         const msg = await targetCh.send(`🔔 <@&${RUOLI.ALIVE}> <@&${RUOLI.SPONSOR}> **TOC TOC!** Qualcuno bussa.\n✅ Apri | ❌ Rifiuta`);
@@ -364,7 +368,7 @@ async function executeHousingAction(queueItem) {
             if (r.emoji.name === '✅') {
                 await msg.reply("✅ Qualcuno ha aperto.");
                 const currentFrom = guild.channels.cache.find(c => c.parentId === HOUSING.CATEGORIA_CASE && c.permissionOverwrites.cache.has(member.id));
-                                if (currentFrom && currentFrom.id !== targetCh.id) {
+                if (currentFrom && currentFrom.id !== targetCh.id) {
                     await currentFrom.permissionOverwrites.delete(member.id).catch(() => {});
                 }
                 
@@ -382,16 +386,16 @@ async function executeHousingAction(queueItem) {
                 await db.housing.clearActiveKnock(member.id);
                 await msg.reply("⏱️ Tempo scaduto - Apertura automatica.");
                 const currentFrom = guild.channels.cache.find(c => c.parentId === HOUSING.CATEGORIA_CASE && c.permissionOverwrites.cache.has(member.id));
-                                if (currentFrom && currentFrom.id !== targetCh.id) {
+                if (currentFrom && currentFrom.id !== targetCh.id) {
                     await currentFrom.permissionOverwrites.delete(member.id).catch(() => {});
                 }
 
                 // ✅ ORA i permessi vengono dati da enterHouse, non prima
                 await enterHouse(member, currentFrom, targetCh, `👋 ${member} è entrato.`, false, true);
-                } 
-            }); 
-        }
+            } 
+        }); 
     }
+}
 
 async function notifyUser(userId, text) {
     const user = await clientRef.users.fetch(userId).catch(() => null);
