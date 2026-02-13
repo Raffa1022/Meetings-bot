@@ -74,19 +74,26 @@ async function processQueue() {
 
                 await notifyUserInCategory(currentItem.userId, msg);
                 
-                // Se era KNOCK, pulisci lo stato pending ma NON scalare visite dal DB
+                // ✅ FIX: Se era KNOCK, pulisci lo stato pending ma NON scalare visite dal DB
                 if (currentItem.type === 'KNOCK') await db.housing.removePendingKnock(currentItem.userId);
                 
                 await db.queue.remove(currentItem._id);
             } else {
-                // 2. Se NON è bloccato, scala la visita ORA (solo per KNOCK)
+                // ✅ FIX: Se NON è bloccato, scala la visita ORA (solo per KNOCK) con +1 e -1
                 if (currentItem.type === 'KNOCK') {
                     const mode = currentItem.details.mode;
                     if (mode === 'mode_forced') await db.housing.decrementForced(currentItem.userId);
                     else if (mode === 'mode_hidden') await db.housing.decrementHidden(currentItem.userId);
-                    else await db.housing.incrementVisit(currentItem.userId);
+                    else await db.housing.incrementVisit(currentItem.userId); // +1 invece di +2
                 }
 
+                // 3. Esegui azione
+                await executeHousingAction(currentItem);
+                await db.queue.remove(currentItem._id);
+            }
+            processing = false;
+            return processQueue();
+        }
                 // 3. Esegui azione
                 await executeHousingAction(currentItem);
                 await db.queue.remove(currentItem._id);
