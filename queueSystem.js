@@ -337,21 +337,17 @@ async function executeHousingAction(queueItem) {
             
             // GESTIONE MESSAGGIO USCITA
             if (oldHouse) {
-                let sendExitMsg = true;
-
                 // Controlla se era entrato in modalità hidden in questa casa
                 const wasHidden = await db.housing.isHiddenEntry(member.id, oldHouse.id);
-                if (wasHidden) {
-                    sendExitMsg = false;
-                    // Pulisco il flag hidden per questa casa
-                    await db.housing.clearHiddenEntry(member.id, oldHouse.id);
-                }
-
-                if (sendExitMsg) {
+                
+                if (!wasHidden) {
                     await oldHouse.send({
                         content: `🚪 ${member} è uscito.`,
                         allowedMentions: { parse: [] } 
                     }).catch(() => {});
+                } else {
+                    // Pulisco il flag hidden
+                    await db.housing.clearHiddenEntry(member.id, oldHouse.id);
                 }
             }
             
@@ -370,7 +366,7 @@ async function executeHousingAction(queueItem) {
             
             const silent = mode === 'mode_hidden';
             
-            // Salvo che è entrato in modalità hidden
+            // Salva che è entrato in modalità hidden
             if (mode === 'mode_hidden') {
                 await db.housing.setHiddenEntry(member.id, targetCh.id);
             }
@@ -405,7 +401,7 @@ async function executeHousingAction(queueItem) {
                         allowedMentions: { parse: [] }
                     }).catch(() => {});
                 } else {
-                    // Pulisco il flag hidden per questa casa
+                    // Pulisco il flag hidden
                     await db.housing.clearHiddenEntry(member.id, oldHouse.id);
                 }
             }
@@ -456,7 +452,7 @@ async function executeHousingAction(queueItem) {
                                 allowedMentions: { parse: [] }
                             }).catch(() => {});
                         } else {
-                            // Pulisco il flag hidden per questa casa
+                            // Pulisco il flag hidden
                             await db.housing.clearHiddenEntry(member.id, currentFrom.id);
                         }
                         await currentFrom.permissionOverwrites.delete(member.id).catch(() => {});
@@ -512,7 +508,7 @@ async function executeHousingAction(queueItem) {
                                 allowedMentions: { parse: [] }
                             }).catch(() => {});
                         } else {
-                            // Pulisco il flag hidden per questa casa
+                            // Pulisco il flag hidden
                             await db.housing.clearHiddenEntry(member.id, currentFrom.id);
                         }
                         await currentFrom.permissionOverwrites.delete(member.id).catch(() => {});
