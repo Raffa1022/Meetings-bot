@@ -388,10 +388,11 @@ async function executeHousingAction(queueItem) {
 
                 // ✅ ORA i permessi vengono dati da enterHouse, non prima
                 await enterHouse(member, currentFrom, targetCh, `👋 ${member} è entrato.`, false, true);
+                } 
             }
         });
     }
-  } 
+
 async function notifyUser(userId, text) {
     const user = await clientRef.users.fetch(userId).catch(() => null);
     if (user) user.send(text).catch(() => {});
