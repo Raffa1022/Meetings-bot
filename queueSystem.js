@@ -266,8 +266,12 @@ async function executeHousingAction(queueItem) {
             // LOGICA: Se ho permessi in una casa diversa dalla mia HOME, sono lì.
             const guestHouse = housesWithPerms.find(h => h.id !== homeId);
 
+            // Recupera la modalità se presente (per sapere se era hidden)
+            const mode = (queueItem.details && queueItem.details.mode) ? queueItem.details.mode : 'normal';
+
             // Messaggio uscita PRIMA di togliere i permessi
-            if (guestHouse) {
+            // FIX: Se mode è 'mode_hidden', NON mostrare l'uscita (né qui né altrove)
+            if (guestHouse && mode !== 'mode_hidden') {
                 await guestHouse.send({
                     content: `🚪 ${member} è uscito.`,
                     allowedMentions: { parse: [] }
@@ -357,6 +361,7 @@ async function executeHousingAction(queueItem) {
                 ReadMessageHistory: true
             });
             
+            // Rimuovi permessi dalla vecchia posizione reale
             if (oldHouse) await oldHouse.permissionOverwrites.delete(member.id).catch(() => {});
 
             const msg = mode === 'mode_forced' 
