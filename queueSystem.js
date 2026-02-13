@@ -270,12 +270,19 @@ async function executeHousingAction(queueItem) {
             const mode = (queueItem.details && queueItem.details.mode) ? queueItem.details.mode : 'normal';
 
             // Messaggio uscita PRIMA di togliere i permessi
-            // FIX: Se mode è 'mode_hidden', NON mostrare l'uscita (né qui né altrove)
-            if (guestHouse && mode !== 'mode_hidden') {
-                await guestHouse.send({
-                    content: `🚪 ${member} è uscito.`,
-                    allowedMentions: { parse: [] }
-                }).catch(() => {});
+            // Controlla nel database se era entrato in modalità hidden
+            if (guestHouse) {
+                const wasHidden = await db.housing.isHiddenEntry(member.id, guestHouse.id);
+                
+                if (!wasHidden) {
+                    await guestHouse.send({
+                        content: `🚪 ${member} è uscito.`,
+                        allowedMentions: { parse: [] }
+                    }).catch(() => {});
+                } else {
+                    // Pulisco il flag hidden
+                    await db.housing.clearHiddenEntry(member.id, guestHouse.id);
+                }
             }
 
             // Assegna permessi HOME
