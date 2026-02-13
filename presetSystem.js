@@ -683,79 +683,49 @@ async function showUserPresets(message) {
     await message.reply({ content: '📋 **I tuoi preset:**', components: [new ActionRowBuilder().addComponents(select)] });
 }
 
-// 🔥 MODIFICATO: Le visite vengono scalate all'esecuzione del preset (qui)
+// 🔥 MODIFICATO: Fuochi integrati (SHOP = 1) ma con ritardo di sicurezza iniziale
 async function processAndClearPresets(presets, contextLabel) {
     if (presets.length === 0) return;
 
-    // --- FIX: itemId -> subType ---
-    // Nel DB salvi come 'subType', quindi devi filtrare per 'subType'
-    const fuochiPresets = presets.filter(p => p.type === 'SHOP' && p.details.subType === 'fuochi');
-    const otherPresets = presets.filter(p => !(p.type === 'SHOP' && p.details.subType === 'fuochi'));
-    // ------------------------------
-
-    // Ordina per priorità solo gli altri preset
-    const sorted = otherPresets.sort((a, b) => {
+    // 1. Ordina TUTTI i preset per priorità (SHOP/Fuochi andranno in cima)
+    const sorted = presets.sort((a, b) => {
         const pA = PRIORITY_ORDER[a.category] || 999;
         const pB = PRIORITY_ORDER[b.category] || 999;
         if (pA !== pB) return pA - pB;
         return new Date(a.timestamp) - new Date(b.timestamp);
     });
 
+    // 2. Imposta un ritardo iniziale di 2.5 secondi per dare tempo al messaggio di fase di apparire
+    const INITIAL_DELAY = 2500; 
     let delayCounter = 0;
     let processedCount = 0;
 
-    // Processo prima tutti gli altri preset
     for (const preset of sorted) {
-             // 🔥 FIX: Scaliamo la visita ORA.
-        // Dato che non la scaliamo più alla creazione, dobbiamo farlo qui, 
-        // altrimenti la visita risulta "gratis" e il conteggio resta sempre 0/2.
-        if (preset.type === 'KNOCK') {
-            const mode = preset.details.mode;
-            if (mode === 'mode_forced') await db.housing.decrementForced(preset.userId);
-            else if (mode === 'mode_hidden') await db.housing.decrementHidden(preset.userId);
-            else await db.housing.incrementVisit(preset.userId);
-        }
-
+        // Prepariamo l'oggetto per la coda
         const queueItem = {
             type: preset.type,
             userId: preset.userId,
-            // Passiamo i dettagli così come sono. 
-            // NOTA: fromChannelId non c'è, ma ora queueSystem lo calcola da solo!
+            // Passiamo i dettagli (senza modifiche extra)
             details: preset.type === 'ABILITY' ? { 
                 text: `[${CATEGORIES.find(c=>c.value===preset.category)?.label}] ${preset.details.text}` + (preset.details.target ? ` (Target: ${preset.details.target})` : ''),
                 category: preset.category 
             } : preset.details
         };
 
+        // Aggiungiamo alla coda: INITIAL_DELAY + (scaletta progressiva)
         setTimeout(() => {
             eventBus.emit('queue:add', queueItem);
-        }, delayCounter * 200); 
+        }, INITIAL_DELAY + (delayCounter * 500)); // 500ms tra un'azione e l'altra per fluidità
         
         delayCounter++;
         processedCount++;
     }
 
-    // FIX: Delay fuochi d'artificio
-    const fuochiDelay = (delayCounter * 200) + 3000; // 3 secondi dopo l'ultimo preset
-    
-    for (const preset of fuochiPresets) {
-        const queueItem = {
-            type: preset.type,
-            userId: preset.userId,
-            details: preset.details
-        };
-
-        setTimeout(() => {
-            eventBus.emit('queue:add', queueItem);
-        }, fuochiDelay);
-        
-        processedCount++;
-    }
-
+    // Pulizia Database
     if (contextLabel === 'Night') await presetDb.clearAllNightPresets();
     else if (contextLabel === 'Day') await presetDb.clearAllDayPresets();
 
-    console.log(`✅ [Preset] ${processedCount} preset aggiunti alla coda per ${contextLabel}`);
+    console.log(`✅ [Preset] ${processedCount} preset aggiunti alla coda per ${contextLabel} (Start delay: ${INITIAL_DELAY}ms)`);
 }
 
 // ==========================================
