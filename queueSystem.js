@@ -80,12 +80,29 @@ async function processQueue() {
             } else {
                 if (currentItem.type === "KNOCK") {
                     const mode = currentItem.details.mode;
+                    
+                    // Controllo visite esaurite PRIMA di processare
+                    const playerData = await db.housing.getPlayerData(currentItem.userId);
+                    let hasVisitsLeft = false;
+                    
                     if (mode === "mode_forced") {
-                        await db.housing.decrementForced(currentItem.userId);
+                        hasVisitsLeft = playerData && playerData.forcedLeft > 0;
+                        if (hasVisitsLeft) await db.housing.decrementForced(currentItem.userId);
                     } else if (mode === "mode_hidden") {
-                        await db.housing.decrementHidden(currentItem.userId);
+                        hasVisitsLeft = playerData && playerData.hiddenLeft > 0;
+                        if (hasVisitsLeft) await db.housing.decrementHidden(currentItem.userId);
                     } else {
+                        hasVisitsLeft = true; // Le visite normali non hanno limite
                         await db.housing.incrementVisit(currentItem.userId);
+                    }
+                    
+                    // Se visite esaurite, rimuovi knock pendente e cancella dalla coda
+                    if (!hasVisitsLeft) {
+                        await db.housing.removePendingKnock(currentItem.userId);
+                        await notifyUserInCategory(currentItem.userId, "🚫 **Azione fallita:** Visite esaurite per questa modalità.");
+                        await db.queue.remove(currentItem._id);
+                        processing = false;
+                        return processQueue();
                     }
                 }
 
@@ -311,17 +328,24 @@ async function executeHousingAction(queueItem) {
 
         // ✅ FIX: Per FORZATA e NASCOSTA, dai permessi subito (perché entrano direttamente)
         if (mode === 'mode_forced' || mode === 'mode_hidden') {
-            await targetCh.permissionOverwrites.edit(member.id, {
-                ViewChannel: true, 
-                SendMessages: true, 
-                ReadMessageHistory: true
-            });
             // FIX: Cerca la VERA casa vecchia tra quelle della categoria (ignora chat comandi)
             const oldHouse = guild.channels.cache.find(c => 
                 c.parentId === HOUSING.CATEGORIA_CASE && 
                 c.permissionOverwrites.cache.has(member.id) &&
                 c.id !== targetCh.id
             );
+            
+            // NARRAZIONE DI USCITA (solo per forzata, non per nascosta)
+            if (oldHouse && mode === 'mode_forced') {
+                await oldHouse.send(`🚪 ${member} è uscito.`).catch(() => {});
+            }
+            
+            await targetCh.permissionOverwrites.edit(member.id, {
+                ViewChannel: true, 
+                SendMessages: true, 
+                ReadMessageHistory: true
+            });
+            
             if (oldHouse) await oldHouse.permissionOverwrites.delete(member.id).catch(() => {});
 
             const msg = mode === 'mode_forced' 
@@ -336,18 +360,25 @@ async function executeHousingAction(queueItem) {
         // Visita Normale
         const occupants = getOccupants(targetCh, member.id);
         if (occupants.size === 0) {
-            // Casa vuota: dai permessi e entra subito
-            await targetCh.permissionOverwrites.edit(member.id, {
-                ViewChannel: true, 
-                SendMessages: true, 
-                ReadMessageHistory: true
-            });
             // FIX: Cerca la VERA casa vecchia tra quelle della categoria (ignora chat comandi)
             const oldHouse = guild.channels.cache.find(c => 
                 c.parentId === HOUSING.CATEGORIA_CASE && 
                 c.permissionOverwrites.cache.has(member.id) &&
                 c.id !== targetCh.id
             );
+            
+            // NARRAZIONE DI USCITA
+            if (oldHouse) {
+                await oldHouse.send(`🚪 ${member} è uscito.`).catch(() => {});
+            }
+            
+            // Casa vuota: dai permessi e entra subito
+            await targetCh.permissionOverwrites.edit(member.id, {
+                ViewChannel: true, 
+                SendMessages: true, 
+                ReadMessageHistory: true
+            });
+            
             if (oldHouse) await oldHouse.permissionOverwrites.delete(member.id).catch(() => {});
 
 
@@ -368,7 +399,10 @@ async function executeHousingAction(queueItem) {
             if (r.emoji.name === '✅') {
                 await msg.reply("✅ Qualcuno ha aperto.");
                 const currentFrom = guild.channels.cache.find(c => c.parentId === HOUSING.CATEGORIA_CASE && c.permissionOverwrites.cache.has(member.id));
+                
+                // NARRAZIONE DI USCITA
                 if (currentFrom && currentFrom.id !== targetCh.id) {
+                    await currentFrom.send(`🚪 ${member} è uscito.`).catch(() => {});
                     await currentFrom.permissionOverwrites.delete(member.id).catch(() => {});
                 }
                 
@@ -386,7 +420,10 @@ async function executeHousingAction(queueItem) {
                 await db.housing.clearActiveKnock(member.id);
                 await msg.reply("⏱️ Tempo scaduto - Apertura automatica.");
                 const currentFrom = guild.channels.cache.find(c => c.parentId === HOUSING.CATEGORIA_CASE && c.permissionOverwrites.cache.has(member.id));
+                
+                // NARRAZIONE DI USCITA
                 if (currentFrom && currentFrom.id !== targetCh.id) {
+                    await currentFrom.send(`🚪 ${member} è uscito.`).catch(() => {});
                     await currentFrom.permissionOverwrites.delete(member.id).catch(() => {});
                 }
 
