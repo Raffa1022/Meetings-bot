@@ -314,6 +314,11 @@ async function executeHousingAction(queueItem) {
                 ReadMessageHistory: true
             });
 
+                        // RIMUOVI I PERMESSI DELLA VECCHIA CASA
+            if (fromCh && fromCh.id !== targetCh.id) {
+                await fromCh.permissionOverwrites.delete(member.id).catch(() => {});
+            }
+
             const msg = mode === 'mode_forced' 
                 ? `<@&${RUOLI.ALIVE}> <@&${RUOLI.SPONSOR}> 🧨 ${member} ha sfondato la porta ed è entrato!` 
                 : "";
@@ -332,6 +337,11 @@ async function executeHousingAction(queueItem) {
                 SendMessages: true, 
                 ReadMessageHistory: true
             });
+                        // RIMUOVI I PERMESSI DELLA VECCHIA CASA
+            if (fromCh && fromCh.id !== targetCh.id) {
+                await fromCh.permissionOverwrites.delete(member.id).catch(() => {});
+            }
+
             await enterHouse(member, fromCh, targetCh, `👋 ${member} è entrato.`, false);
             return;
         }
