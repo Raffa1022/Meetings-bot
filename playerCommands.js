@@ -57,17 +57,19 @@ module.exports = function registerPlayerCommands(client) {
             const homeChannel = message.guild.channels.cache.get(homeId);
             if (!homeChannel) return message.channel.send("❌ Errore casa.");
 
-            const currentHouse = message.guild.channels.cache.find(c =>
+            // ✅ FIX: Trova TUTTE le case dove hai permessi (potrebbero essere 2 dopo visita nascosta/normale/forzata)
+            const housesWithPerms = message.guild.channels.cache.filter(c =>
                 c.parentId === HOUSING.CATEGORIA_CASE &&
                 c.type === ChannelType.GuildText &&
                 c.permissionOverwrites.cache.has(message.author.id)
             );
 
-            if (!currentHouse) {
+            if (housesWithPerms.size === 0) {
                 return message.channel.send("🏠 Non sei in nessuna casa! Non puoi usare !torna.");
             }
             
-            if (currentHouse.id === homeId) {
+            // ✅ FIX: Se hai permessi solo nella tua casa (e non in altre), sei già a casa
+            if (housesWithPerms.size === 1 && housesWithPerms.first().id === homeId) {
                 return message.channel.send("🏠 Sei già nella tua casa! Non puoi usare !torna.");
             }
 
