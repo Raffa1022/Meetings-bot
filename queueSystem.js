@@ -25,13 +25,6 @@ let processing = false;
 
 
 // ==========================================
-
-// ⚙️ PROCESSORE CODA
-
-// ==========================================
-
-async function processQueue() {
-// ==========================================
 // ⚙️ PROCESSORE CODA (Aggiornato)
 // ==========================================
 async function processQueue() {
@@ -134,104 +127,104 @@ async function processQueue() {
 
 async function updateDashboard(isPaused = false) {
 
-    const channel = clientRef.channels.cache.get(QUEUE.CANALE_LOG);
+    const channel = clientRef.channels.cache.get(QUEUE.CANALE_LOG);
 
-    if (!channel) return;
-
-
-    const queue = await db.queue.getPending();
-
-    const isPhaseBlocked = await db.moderation.isPresetPhaseActive();
+    if (!channel) return;
 
 
-    let description = queue.length === 0 ? "✅ **Nessuna azione in attesa.**" : "";
+    const queue = await db.queue.getPending();
+
+    const isPhaseBlocked = await db.moderation.isPresetPhaseActive();
 
 
-    if (isPhaseBlocked && queue.length > 0) {
-
-        description = "ℹ️ **FASE PRESET IN CORSO** (Puoi gestire le azioni man mano)\n\n";
-
-    }
+    let description = queue.length === 0 ? "✅ **Nessuna azione in attesa.**" : "";
 
 
-    queue.forEach((item, index) => {
+    if (isPhaseBlocked && queue.length > 0) {
 
-        const time = `<t:${Math.floor(new Date(item.timestamp).getTime() / 1000)}:T>`;
+        description = "ℹ️ **FASE PRESET IN CORSO** (Puoi gestire le azioni man mano)\n\n";
 
-        const icons = { ABILITY: "✨", RETURN: "🏠", KNOCK: "✊", SHOP: "🛒" };
-
-
-        let label = item.type;
-
-        if (item.type === 'SHOP') label = item.details?.itemName || 'Shop';
-
-        else if (item.type === 'ABILITY') label = item.details?.category || 'ABILITÀ';
-
-        else if (item.type === 'KNOCK') {
-
-             const mode = item.details?.mode || 'normal';
-
-             label = mode === 'mode_forced' ? 'SFONDAMENTO' : (mode === 'mode_hidden' ? 'INTRUSIONE' : 'BUSSA');
-
-        }
+    }
 
 
-        const pointer = index === 0 ? "👉" : `**#${index + 1}**`;
+    queue.forEach((item, index) => {
 
-        description += `${pointer} ${icons[item.type] || ""} \`[${label}]\` <@${item.userId}> (${time})\n`;
+        const time = `<t:${Math.floor(new Date(item.timestamp).getTime() / 1000)}:T>`;
 
-    });
-
-
-    const embed = new EmbedBuilder()
-
-        .setTitle("📋 Coda Azioni Cronologica")
-
-        .setColor(queue.length > 0 && queue[0].type === 'ABILITY' ? 'Yellow' : 'Green')
-
-        .setDescription(description)
-
-        .setTimestamp();
+        const icons = { ABILITY: "✨", RETURN: "🏠", KNOCK: "✊", SHOP: "🛒" };
 
 
-    let components = [];
+        let label = item.type;
 
-    let contentText = " ";
+        if (item.type === 'SHOP') label = (item.details && item.details.itemName) ? item.details.itemName : 'Shop';
 
+        else if (item.type === 'ABILITY') label = (item.details && item.details.category) ? item.details.category : 'ABILITÀ';
 
-    if (queue.length > 0) {
+        else if (item.type === 'KNOCK') {
 
-        if (queue[0].type === 'ABILITY') {
+             const mode = (item.details && item.details.mode) ? item.details.mode : 'normal';
 
-            contentText = `<@&${RUOLI.ADMIN_QUEUE}> 🔔 **Nuova richiesta in coda!**`;
+             label = mode === 'mode_forced' ? 'SFONDAMENTO' : (mode === 'mode_hidden' ? 'INTRUSIONE' : 'BUSSA');
 
-            components.push(new ActionRowBuilder().addComponents(
-
-                new ButtonBuilder().setCustomId(`q_done_${queue[0]._id}`).setLabel('✅ Gestita').setStyle(ButtonStyle.Success),
-
-            ));
+        }
 
 
-            const detailText = queue[0].details?.text || "Nessun dettaglio";
+        const pointer = index === 0 ? "👉" : `**#${index + 1}**`;
 
-            embed.addFields({ name: '📜 Dettaglio Azione', value: detailText });
+        description += `${pointer} ${icons[item.type] || ""} \`[${label}]\` <@${item.userId}> (${time})\n`;
 
-        }
-
-    }
+    });
 
 
-    try {
+    const embed = new EmbedBuilder()
 
-        const messages = await channel.messages.fetch({ limit: 10 });
+        .setTitle("📋 Coda Azioni Cronologica")
 
-        const existingMsg = messages.find(m => m.author.id === clientRef.user.id);
+        .setColor(queue.length > 0 && queue[0].type === 'ABILITY' ? 'Yellow' : 'Green')
 
-        if (existingMsg) await existingMsg.edit({ content: contentText, embeds: [embed], components });
+        .setDescription(description)
 
-        else await channel.send({ content: contentText, embeds: [embed], components });
+        .setTimestamp();
 
-    } catch (err) { console.error("Update Dashboard Err:", err); }
+
+    let components = [];
+
+    let contentText = " ";
+
+
+    if (queue.length > 0) {
+
+        if (queue[0].type === 'ABILITY') {
+
+            contentText = `<@&${RUOLI.ADMIN_QUEUE}> 🔔 **Nuova richiesta in coda!**`;
+
+            components.push(new ActionRowBuilder().addComponents(
+
+                new ButtonBuilder().setCustomId(`q_done_${queue[0]._id}`).setLabel('✅ Gestita').setStyle(ButtonStyle.Success),
+
+            ));
+
+
+            const detailText = (queue[0].details && queue[0].details.text) ? queue[0].details.text : "Nessun dettaglio";
+
+            embed.addFields({ name: '📜 Dettaglio Azione', value: detailText });
+
+        }
+
+    }
+
+
+    try {
+
+        const messages = await channel.messages.fetch({ limit: 10 });
+
+        const existingMsg = messages.find(m => m.author.id === clientRef.user.id);
+
+        if (existingMsg) await existingMsg.edit({ content: contentText, embeds: [embed], components });
+
+        else await channel.send({ content: contentText, embeds: [embed], components });
+
+    } catch (err) { console.error("Update Dashboard Err:", err); }
 
 }
 
