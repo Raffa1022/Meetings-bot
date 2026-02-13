@@ -43,10 +43,10 @@ async function processQueue() {
         console.log(`📌 [Queue] Processo: ${currentItem.type} di ${currentItem.userId}`);
 
         // ======= ABILITÀ =======
-        if (currentItem.type === 'ABILITY') {
+        if (currentItem.type === "ABILITY") {
             const isRB = await db.moderation.isBlockedRB(currentItem.userId);
             if (isRB) {
-                await notifyUser(currentItem.userId, '🚫 **Abilità fallita:** Sei stato Rolebloccato!');
+                await notifyUser(currentItem.userId, "🚫 **Abilità fallita:** Sei stato Rolebloccato!");
                 await db.queue.remove(currentItem._id);
                 processing = false;
                 return processQueue();
@@ -58,35 +58,26 @@ async function processQueue() {
         }
 
         // ======= AUTOMAZIONI (Housing) =======
-        if (currentItem.type === 'RETURN' || currentItem.type === 'KNOCK') {
-            // 1. Controlla Visitblock
+        if (currentItem.type === "RETURN" || currentItem.type === "KNOCK") {
             const isVB = await db.moderation.isBlockedVB(currentItem.userId);
 
             if (isVB) {
-                // Controllo se è "Catene" (VB + RB + Unprotectable)
                 const isRB = await db.moderation.isBlockedRB(currentItem.userId);
-                const isUnprot = await db.moderation.isUnprotectable(
-                    currentItem.userId
-                );
+                const isUnprot = await db.moderation.isUnprotectable(currentItem.userId);
                 const isCatene = isRB && isUnprot;
 
                 const msg = isCatene
-                    ? "⛓️ **Azione fallita:** Sei incatenato! " +
-                      "(Visitblock + Roleblock attivo)"
+                    ? "⛓️ **Azione fallita:** Sei incatenato! (Visitblock + Roleblock attivo)"
                     : "🚫 **Azione fallita:** Sei in Visitblock.";
 
                 await notifyUserInCategory(currentItem.userId, msg);
 
-                // Se era KNOCK, pulisci lo stato pending
-                // ma NON scalare visite dal DB
                 if (currentItem.type === "KNOCK") {
                     await db.housing.removePendingKnock(currentItem.userId);
                 }
 
                 await db.queue.remove(currentItem._id);
             } else {
-                // Se NON è bloccato, scala la visita ORA
-                // (solo per KNOCK) con +1 e -1
                 if (currentItem.type === "KNOCK") {
                     const mode = currentItem.details.mode;
                     if (mode === "mode_forced") {
@@ -98,7 +89,6 @@ async function processQueue() {
                     }
                 }
 
-                // 3. Esegui azione
                 await executeHousingAction(currentItem);
                 await db.queue.remove(currentItem._id);
             }
@@ -107,15 +97,10 @@ async function processQueue() {
         }
 
         // ======= SHOP =======
-        if (currentItem.type === 'SHOP') {
+        if (currentItem.type === "SHOP") {
             const subType = currentItem.details ? currentItem.details.subType : undefined;
-            if (subType && subType !== 'acquisto') {
-
-        // ======= SHOP =======
-        if (currentItem.type === 'SHOP') {
-            const subType = currentItem.details ? currentItem.details.subType : undefined;
-            if (subType && subType !== 'acquisto') {
-                const { shopEffects } = require('./economySystem');
+            if (subType && subType !== "acquisto") {
+                const { shopEffects } = require("./economySystem");
                 const handler = shopEffects[subType];
                 if (handler) await handler(clientRef, currentItem.userId, currentItem.details);
             }
