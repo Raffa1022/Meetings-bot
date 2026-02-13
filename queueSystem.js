@@ -33,139 +33,100 @@ let processing = false;
 // ==========================================
 
 async function processQueue() {
-
-    if (processing) return;
-
-    processing = true;
-
-
-    try {
-
-        const currentItem = await db.queue.getFirst();
-
-
-        if (!currentItem) {
-
-            await updateDashboard();
-
-            processing = false;
-
-            return;
-
-        }
-
-
-        console.log(`📌 [Queue] Processo: ${currentItem.type} di ${currentItem.userId}`);
-
-
-        // ======= ABILITÀ (Richiede Gestione Manuale Admin) =======
-
-        if (currentItem.type === 'ABILITY') {
-
-            const isRB = await db.moderation.isBlockedRB(currentItem.userId);
-
-
-            if (isRB) {
-
-                await notifyUser(currentItem.userId, '🚫 Abilità annullata: sei in Roleblock.');
-
-                await db.queue.remove(currentItem._id);
-
-                processing = false;
-
-                return processQueue();
-
-            } else {
-
-                await updateDashboard();
-
-                processing = false;
-
-                return;
-
-            }
-
-        }
-
-
-        // ======= AUTOMAZIONI (Shop, Knock, Return) =======
-
-
-        // --- HOUSING ---
-
-        if (currentItem.type === 'RETURN' || currentItem.type === 'KNOCK') {
-
-            const isVB = await db.moderation.isBlockedVB(currentItem.userId);
-
-            if (isVB) {
-
-                await notifyUser(currentItem.userId, '🚫 Movimento annullato: sei in Visitblock.');
-
-                if (currentItem.type === 'KNOCK') await db.housing.removePendingKnock(currentItem.userId);
-
-                await db.queue.remove(currentItem._id);
-
-            } else {
-
-                await executeHousingAction(currentItem);
-
-                await db.queue.remove(currentItem._id);
-
-            }
-
-            processing = false;
-
-            return processQueue();
-
-        }
-
-
-        // --- SHOP ---
-
-        if (currentItem.type === 'SHOP') {
-
-            const subType = currentItem.details?.subType;
-
-            if (subType && subType !== 'acquisto') {
-
-                const { shopEffects } = require('./economySystem');
-
-                const handler = shopEffects[subType];
-
-                if (handler) await handler(clientRef, currentItem.userId, currentItem.details);
-
-            }
-
-            await db.queue.remove(currentItem._id);
-
-            processing = false;
-
-            return processQueue();
-
-        }
-
-
-        // Tipo sconosciuto: rimuovi e continua
-
-        console.log(`⚠️ [Queue] Tipo sconosciuto: ${currentItem.type}, rimuovo.`);
-
-        await db.queue.remove(currentItem._id);
-
-        processing = false;
-
-        return processQueue();
-
-
-    } catch (err) {
-
-        console.error("❌ Errore processQueue:", err);
-
-        processing = false;
-
-    }
-
+// ==========================================
+// ⚙️ PROCESSORE CODA (Aggiornato)
+// ==========================================
+async function processQueue() {
+    if (processing) return;
+    processing = true;
+
+    try {
+        const currentItem = await db.queue.getFirst();
+
+        if (!currentItem) {
+            await updateDashboard();
+            processing = false;
+            return;
+        }
+
+        console.log(`📌 [Queue] Processo: ${currentItem.type} di ${currentItem.userId}`);
+
+        // ======= ABILITÀ =======
+        if (currentItem.type === 'ABILITY') {
+            const isRB = await db.moderation.isBlockedRB(currentItem.userId);
+            if (isRB) {
+                await notifyUser(currentItem.userId, '🚫 **Abilità fallita:** Sei stato Rolebloccato!');
+                await db.queue.remove(currentItem._id);
+                processing = false;
+                return processQueue();
+            } else {
+                await updateDashboard();
+                processing = false;
+                return;
+            }
+        }
+
+        // ======= AUTOMAZIONI (Housing) =======
+        if (currentItem.type === 'RETURN' || currentItem.type === 'KNOCK') {
+            // 1. Controlla Visitblock
+            const isVB = await db.moderation.isBlockedVB(currentItem.userId);
+
+            if (isVB) {
+                // Controllo se è "Catene" (VB + RB + Unprotectable)
+                const isRB = await db.moderation.isBlockedRB(currentItem.userId);
+                const isUnprot = await db.moderation.isUnprotectable(currentItem.userId);
+                const isCatene = isRB && isUnprot;
+
+                const msg = isCatene 
+                    ? "⛓️ **Azione fallita:** Sei incatenato! (Visitblock + Roleblock attivo)"
+                    : "🚫 **Azione fallita:** Sei in Visitblock.";
+
+                await notifyUser(currentItem.userId, msg);
+                
+                // Se era KNOCK, pulisci lo stato pending ma NON scalare visite dal DB
+                if (currentItem.type === 'KNOCK') await db.housing.removePendingKnock(currentItem.userId);
+                
+                await db.queue.remove(currentItem._id);
+            } else {
+                // 2. Se NON è bloccato, scala la visita ORA (solo per KNOCK)
+                if (currentItem.type === 'KNOCK') {
+                    const mode = currentItem.details.mode;
+                    if (mode === 'mode_forced') await db.housing.decrementForced(currentItem.userId);
+                    else if (mode === 'mode_hidden') await db.housing.decrementHidden(currentItem.userId);
+                    else await db.housing.incrementVisit(currentItem.userId);
+                }
+
+                // 3. Esegui azione
+                await executeHousingAction(currentItem);
+                await db.queue.remove(currentItem._id);
+            }
+            processing = false;
+            return processQueue();
+        }
+
+        // ======= SHOP =======
+        if (currentItem.type === 'SHOP') {
+            const subType = currentItem.details?.subType;
+            if (subType && subType !== 'acquisto') {
+                const { shopEffects } = require('./economySystem');
+                const handler = shopEffects[subType];
+                if (handler) await handler(clientRef, currentItem.userId, currentItem.details);
+            }
+            await db.queue.remove(currentItem._id);
+            processing = false;
+            return processQueue();
+        }
+
+        // Tipo sconosciuto
+        await db.queue.remove(currentItem._id);
+        processing = false;
+        return processQueue();
+
+    } catch (err) {
+        console.error("❌ Errore processQueue:", err);
+        processing = false;
+    }
 }
-
 
 // ==========================================
 
@@ -283,161 +244,120 @@ async function updateDashboard(isPaused = false) {
 
 // ==========================================
 
+// ==========================================
+// 🎯 HOUSING ACTION EXECUTOR (Aggiornato)
+// ==========================================
 async function executeHousingAction(queueItem) {
-
-    let guild = clientRef.guilds.cache.first();
-
-    if (!guild) return;
-
-
-    const member = await guild.members.fetch(queueItem.userId).catch(() => null);
-
-    if (!member) return;
-
-
-    let { fromChannelId } = queueItem.details;
-
-    if (!fromChannelId) {
-
-        const currentHome = guild.channels.cache.find(c =>
-
-            c.parentId === HOUSING.CATEGORIA_CASE &&
-
-            c.permissionOverwrites.cache.has(member.id)
-
-        );
-
-        if (currentHome) fromChannelId = currentHome.id;
-
-    }
-
-
-    if (queueItem.type === 'RETURN') {
-
-        const homeId = await db.housing.getHome(member.id);
-
-        const destroyed = await db.housing.getDestroyedHouses();
-
-
-        if (homeId && !destroyed.includes(homeId)) {
-
-            const homeCh = guild.channels.cache.get(homeId);
-
-            const fromCh = guild.channels.cache.get(fromChannelId);
-
-
-            if (homeCh && fromCh && homeCh.id !== fromCh.id) {
-
-                await movePlayer(member, fromCh, homeCh, `🏠 ${member} è ritornato.`, false);
-
-            } else if (homeCh && !fromCh) {
-
-                await movePlayer(member, null, homeCh, `🏠 ${member} è ritornato.`, false);
-
-            }
-
-        }
-
-        return;
-
-    }
-
-
-    if (queueItem.type === 'KNOCK') {
-
-        const { targetChannelId, mode } = queueItem.details;
-
-        const targetCh = guild.channels.cache.get(targetChannelId);
-
-        const fromCh = guild.channels.cache.get(fromChannelId);
-
-
-        if (!targetCh) return;
-
-        if (fromCh && fromCh.id === targetCh.id) return;
-
-
-        if (mode === 'mode_forced' || mode === 'mode_hidden') {
-
-            const msg = mode === 'mode_forced' ? `🧨 ${member} ha sfondato la porta!` : "";
-
-            const silent = mode === 'mode_hidden';
-
-            await enterHouse(member, fromCh, targetCh, msg, silent);
-
-            return;
-
-        }
-
-
-        const occupants = getOccupants(targetCh, member.id);
-
-        if (occupants.size === 0) {
-
-            await enterHouse(member, fromCh, targetCh, `👋 ${member} è entrato.`, false);
-
-            return;
-
-        }
-
-
-        const msg = await targetCh.send(`🔔 <@&${RUOLI.ALIVE}> <@&${RUOLI.SPONSOR}> **TOC TOC!** Qualcuno bussa.\n✅ Apri | ❌ Rifiuta`);
-
-        await Promise.all([msg.react('✅'), msg.react('❌')]);
-
-        await db.housing.setActiveKnock(member.id, targetChannelId);
-
-
-        const filter = (r, u) => ['✅', '❌'].includes(r.emoji.name) && occupants.has(u.id);
-
-        const collector = msg.createReactionCollector({ filter, time: 300000, max: 1 });
-
-
-        collector.on('collect', async (r) => {
-
-            await db.housing.clearActiveKnock(member.id);
-
-            if (r.emoji.name === '✅') {
-
-                await msg.reply("✅ Aperto.");
-
-                const currentFrom = guild.channels.cache.find(c => c.parentId === HOUSING.CATEGORIA_CASE && c.permissionOverwrites.cache.has(member.id));
-
-                await enterHouse(member, currentFrom, targetCh, `👋 ${member} è entrato.`, false, true);
-
-            } else {
-
-                await msg.reply("❌ Rifiutato.");
-
-                const currentFrom = guild.channels.cache.find(c => c.parentId === HOUSING.CATEGORIA_CASE && c.permissionOverwrites.cache.has(member.id));
-
-                if (currentFrom) currentFrom.send(`⛔ ${member}, entrata rifiutata.`).catch(()=>{});
-
-            }
-
-        });
-
-
-        collector.on('end', async (collected, reason) => {
-
-            if (reason === 'time' && collected.size === 0) {
-
-                await db.housing.clearActiveKnock(member.id);
-
-                await msg.reply("⏱️ Tempo scaduto - Apertura automatica.");
-
-                const currentFrom = guild.channels.cache.find(c => c.parentId === HOUSING.CATEGORIA_CASE && c.permissionOverwrites.cache.has(member.id));
-
-                await enterHouse(member, currentFrom, targetCh, `👋 ${member} è entrato.`, false, true);
-
-            }
-
-        });
-
-    }
-
+    let guild = clientRef.guilds.cache.first();
+    if (!guild) return;
+
+    const member = await guild.members.fetch(queueItem.userId).catch(() => null);
+    if (!member) return;
+
+    let { fromChannelId } = queueItem.details;
+    if (!fromChannelId) {
+        const currentHome = guild.channels.cache.find(c =>
+            c.parentId === HOUSING.CATEGORIA_CASE &&
+            c.permissionOverwrites.cache.has(member.id)
+        );
+        if (currentHome) fromChannelId = currentHome.id;
+    }
+
+    // --- RETURN ---
+    if (queueItem.type === 'RETURN') {
+        const homeId = await db.housing.getHome(member.id);
+        const destroyed = await db.housing.getDestroyedHouses();
+
+        if (homeId && !destroyed.includes(homeId)) {
+            const homeCh = guild.channels.cache.get(homeId);
+            const fromCh = guild.channels.cache.get(fromChannelId);
+
+            // FIX: Aggiungi ReadMessageHistory: true per vedere i messaggi vecchi
+            if (homeCh) {
+                await homeCh.permissionOverwrites.edit(member.id, { 
+                    ViewChannel: true, 
+                    SendMessages: true, 
+                    ReadMessageHistory: true // <--- FIX CRONOLOGIA
+                });
+            }
+
+            if (homeCh && fromCh && homeCh.id !== fromCh.id) {
+                await movePlayer(member, fromCh, homeCh, `🏠 ${member} è ritornato.`, false);
+            } else if (homeCh && !fromCh) {
+                await movePlayer(member, null, homeCh, `🏠 ${member} è ritornato.`, false);
+            }
+        }
+        return;
+    }
+
+    // --- KNOCK ---
+    if (queueItem.type === 'KNOCK') {
+        const { targetChannelId, mode } = queueItem.details;
+        const targetCh = guild.channels.cache.get(targetChannelId);
+        const fromCh = guild.channels.cache.get(fromChannelId);
+
+        if (!targetCh) return;
+        if (fromCh && fromCh.id === targetCh.id) return;
+
+        // FIX: Aggiungi ReadMessageHistory al targetCh prima di entrare
+        await targetCh.permissionOverwrites.edit(member.id, {
+             ViewChannel: true, 
+             SendMessages: true, 
+             ReadMessageHistory: true // <--- FIX CRONOLOGIA
+        });
+
+        if (mode === 'mode_forced' || mode === 'mode_hidden') {
+            // FIX MESSAGGIO SFONDAMENTO CON TAG
+            const msg = mode === 'mode_forced' 
+                ? `<@&${RUOLI.ALIVE}> <@&${RUOLI.SPONSOR}> 🧨 **${member} ha sfondato la porta ed è entrato!**` 
+                : "";
+            
+            const silent = mode === 'mode_hidden';
+            await enterHouse(member, fromCh, targetCh, msg, silent);
+            return;
+        }
+
+        // Visita Normale
+        const occupants = getOccupants(targetCh, member.id);
+        if (occupants.size === 0) {
+            await enterHouse(member, fromCh, targetCh, `👋 ${member} è entrato.`, false);
+            return;
+        }
+
+        const msg = await targetCh.send(`🔔 <@&${RUOLI.ALIVE}> <@&${RUOLI.SPONSOR}> **TOC TOC!** Qualcuno bussa.\n✅ Apri | ❌ Rifiuta`);
+        await Promise.all([msg.react('✅'), msg.react('❌')]);
+        await db.housing.setActiveKnock(member.id, targetChannelId);
+
+        const filter = (r, u) => ['✅', '❌'].includes(r.emoji.name) && occupants.has(u.id);
+        const collector = msg.createReactionCollector({ filter, time: 300000, max: 1 });
+
+        collector.on('collect', async (r) => {
+            await db.housing.clearActiveKnock(member.id);
+            if (r.emoji.name === '✅') {
+                await msg.reply("✅Qualcuno ha aperto.");
+                const currentFrom = guild.channels.cache.find(c => c.parentId === HOUSING.CATEGORIA_CASE && c.permissionOverwrites.cache.has(member.id));
+                // FIX CRONOLOGIA ANCHE QUI
+                await targetCh.permissionOverwrites.edit(member.id, { ViewChannel: true, SendMessages: true, ReadMessageHistory: true });
+                await enterHouse(member, currentFrom, targetCh, `👋 ${member} è entrato.`, false, true);
+            } else {
+                await msg.reply("❌ Qualcuno ha rifiutato.");
+                const currentFrom = guild.channels.cache.find(c => c.parentId === HOUSING.CATEGORIA_CASE && c.permissionOverwrites.cache.has(member.id));
+                if (currentFrom) currentFrom.send(`⛔ ${member}, entrata rifiutata.`).catch(()=>{});
+            }
+        });
+
+        collector.on('end', async (collected, reason) => {
+            if (reason === 'time' && collected.size === 0) {
+                await db.housing.clearActiveKnock(member.id);
+                await msg.reply("⏱️ Tempo scaduto - Apertura automatica.");
+                const currentFrom = guild.channels.cache.find(c => c.parentId === HOUSING.CATEGORIA_CASE && c.permissionOverwrites.cache.has(member.id));
+                 // FIX CRONOLOGIA ANCHE QUI
+                await targetCh.permissionOverwrites.edit(member.id, { ViewChannel: true, SendMessages: true, ReadMessageHistory: true });
+                await enterHouse(member, currentFrom, targetCh, `👋 ${member} è entrato.`, false, true);
+            }
+        });
+    }
 }
-
 
 async function notifyUser(userId, text) {
 
