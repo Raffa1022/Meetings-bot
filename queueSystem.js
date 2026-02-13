@@ -254,6 +254,7 @@ async function executeHousingAction(queueItem) {
         fromChannelId = queueItem.details.fromChannelId;
     }
     
+    // Fallback: cerca dove si trova ora
     if (!fromChannelId) {
         const currentHome = guild.channels.cache.find(c =>
             c.parentId === HOUSING.CATEGORIA_CASE &&
@@ -276,7 +277,18 @@ async function executeHousingAction(queueItem) {
                 c.permissionOverwrites.cache.has(member.id)
             );
 
-            // FIX: ReadMessageHistory true
+            // 1. Identifica se stiamo lasciando una casa "ospite" (non home)
+            const guestHouse = housesWithPerms.find(h => h.id !== homeId);
+
+            // 2. Se stiamo lasciando una casa ospite, manda il messaggio LÌ prima di togliere i permessi
+            if (guestHouse) {
+                await guestHouse.send({
+                    content: `🚪 ${member} è uscito.`,
+                    allowedMentions: { parse: [] }
+                }).catch(() => {});
+            }
+
+            // 3. Imposta permessi Home (con ReadHistory)
             if (homeCh) {
                 await homeCh.permissionOverwrites.edit(member.id, { 
                     ViewChannel: true, 
@@ -285,21 +297,17 @@ async function executeHousingAction(queueItem) {
                 });
             }
 
-            // Rimuovi i permessi da TUTTE le case tranne la home
+            // 4. Rimuovi i permessi da TUTTE le case tranne la home
             for (const [houseId, house] of housesWithPerms) {
                 if (houseId !== homeId) {
                     await house.permissionOverwrites.delete(member.id).catch(() => {});
                 }
             }
 
-            const fromCh = Array.from(housesWithPerms.values()).find(h => h.id !== homeId);
-
-            // FIX: Usa ${member} per il tag, ma la funzione movePlayer dovrà gestire la notifica se possibile.
-            // Nota: Se 'movePlayer' invia solo una stringa, pingherà. 
-            // Qui gestiamo i messaggi di uscita diretti con { allowedMentions: { parse: [] } } per evitare ghost ping locali.
-            if (homeCh && fromCh) {
-                await movePlayer(member, fromCh, homeCh, `🏠 ${member} è ritornato.`, false);
-            } else if (homeCh && !fromCh) {
+            // MovePlayer gestisce l'entrata nella Home
+            if (homeCh && guestHouse) {
+                await movePlayer(member, guestHouse, homeCh, `🏠 ${member} è ritornato.`, false);
+            } else if (homeCh && !guestHouse) {
                 await movePlayer(member, null, homeCh, `🏠 ${member} è ritornato.`, false);
             }
         }
@@ -317,19 +325,29 @@ async function executeHousingAction(queueItem) {
         if (!targetCh) return;
         if (fromCh && fromCh.id === targetCh.id) return;
 
+        // Recupera l'ID della Home per distinguere tra "Sono a casa" e "Sono in visita"
+        const myHomeId = await db.housing.getHome(member.id);
+
         // --- FORZATA / NASCOSTA ---
         if (mode === 'mode_forced' || mode === 'mode_hidden') {
-            const oldHouse = guild.channels.cache.find(c => 
+            
+            // Cerca le case dove ho i permessi (escludendo quella dove sto andando)
+            const candidates = guild.channels.cache.filter(c => 
                 c.parentId === HOUSING.CATEGORIA_CASE && 
                 c.permissionOverwrites.cache.has(member.id) &&
                 c.id !== targetCh.id
             );
+
+            // PRIORITÀ: Se c'è una casa che NON è la mia home, vuol dire che sono in visita lì. 
+            // Altrimenti, prendo la mia home (se c'è).
+            let oldHouse = candidates.find(c => c.id !== myHomeId);
+            if (!oldHouse) oldHouse = candidates.find(c => c.id === myHomeId);
             
-            // FIX: Mostra uscita (se non è hidden) e sopprimi notifica (allowedMentions)
+            // Messaggio uscita (se non è hidden)
             if (oldHouse && mode !== 'mode_hidden') {
                 await oldHouse.send({
                     content: `🚪 ${member} è uscito.`,
-                    allowedMentions: { parse: [] } // Tagga ma non notifica
+                    allowedMentions: { parse: [] } 
                 }).catch(() => {});
             }
             
@@ -355,13 +373,16 @@ async function executeHousingAction(queueItem) {
         
         // Se casa vuota, entra subito
         if (occupants.size === 0) {
-            const oldHouse = guild.channels.cache.find(c => 
+            const candidates = guild.channels.cache.filter(c => 
                 c.parentId === HOUSING.CATEGORIA_CASE && 
                 c.permissionOverwrites.cache.has(member.id) &&
                 c.id !== targetCh.id
             );
             
-            // FIX: Mostra uscita e sopprimi notifica
+            // Priorità alla casa ospite, fallback su home
+            let oldHouse = candidates.find(c => c.id !== myHomeId);
+            if (!oldHouse) oldHouse = candidates.find(c => c.id === myHomeId);
+            
             if (oldHouse) {
                 await oldHouse.send({
                     content: `🚪 ${member} è uscito.`,
@@ -382,7 +403,6 @@ async function executeHousingAction(queueItem) {
         }
 
         // --- TOC TOC (Richiede approvazione) ---
-        // Qui lasciamo i ping ai ruoli (Alive/Sponsor)
         const msg = await targetCh.send(`🔔 <@&${RUOLI.ALIVE}> <@&${RUOLI.SPONSOR}> **TOC TOC!** Qualcuno bussa.\n✅ Apri | ❌ Rifiuta`);
         await Promise.all([msg.react('✅'), msg.react('❌')]);
         await db.housing.setActiveKnock(member.id, targetChannelId);
@@ -395,10 +415,19 @@ async function executeHousingAction(queueItem) {
                 await db.housing.clearActiveKnock(member.id);
                 if (r.emoji.name === '✅') {
                     await msg.reply({ content: "✅ Qualcuno ha aperto.", allowedMentions: { parse: [] } });
-                    const currentFrom = guild.channels.cache.find(c => c.parentId === HOUSING.CATEGORIA_CASE && c.permissionOverwrites.cache.has(member.id));
                     
-                    // FIX: Uscita con soppressione notifica
-                    if (currentFrom && currentFrom.id !== targetCh.id) {
+                    // Identifica la casa di provenienza CORRETTA per l'uscita
+                    const currentFromCandidates = guild.channels.cache.filter(c => 
+                        c.parentId === HOUSING.CATEGORIA_CASE && 
+                        c.permissionOverwrites.cache.has(member.id) &&
+                        c.id !== targetCh.id
+                    );
+                    
+                    // Priorità casa ospite
+                    let currentFrom = currentFromCandidates.find(c => c.id !== myHomeId);
+                    if (!currentFrom) currentFrom = currentFromCandidates.find(c => c.id === myHomeId);
+                    
+                    if (currentFrom) {
                         await currentFrom.send({
                             content: `🚪 ${member} è uscito.`,
                             allowedMentions: { parse: [] }
@@ -409,8 +438,13 @@ async function executeHousingAction(queueItem) {
                     await enterHouse(member, currentFrom, targetCh, `👋 ${member} è entrato.`, false, true);
                 } else {
                     await msg.reply({ content: "❌ Qualcuno ha rifiutato.", allowedMentions: { parse: [] } });
-                    const currentFrom = guild.channels.cache.find(c => c.parentId === HOUSING.CATEGORIA_CASE && c.permissionOverwrites.cache.has(member.id));
-                    // Messaggio di rifiuto all'utente (sopprimi ping)
+                    // Notifica rifiuto
+                    const currentFromCandidates = guild.channels.cache.filter(c => 
+                        c.parentId === HOUSING.CATEGORIA_CASE && 
+                        c.permissionOverwrites.cache.has(member.id)
+                    );
+                     let currentFrom = currentFromCandidates.find(c => c.id !== myHomeId) || currentFromCandidates.first();
+
                     if (currentFrom) {
                         currentFrom.send({
                             content: `⛔ ${member}, entrata rifiutata.`,
@@ -428,9 +462,17 @@ async function executeHousingAction(queueItem) {
                 if (reason === 'time' && collected.size === 0) {
                     await db.housing.clearActiveKnock(member.id);
                     await msg.reply("⏱️ Tempo scaduto - Apertura automatica.");
-                    const currentFrom = guild.channels.cache.find(c => c.parentId === HOUSING.CATEGORIA_CASE && c.permissionOverwrites.cache.has(member.id));
                     
-                    if (currentFrom && currentFrom.id !== targetCh.id) {
+                    const currentFromCandidates = guild.channels.cache.filter(c => 
+                        c.parentId === HOUSING.CATEGORIA_CASE && 
+                        c.permissionOverwrites.cache.has(member.id) &&
+                        c.id !== targetCh.id
+                    );
+                    
+                    let currentFrom = currentFromCandidates.find(c => c.id !== myHomeId);
+                    if (!currentFrom) currentFrom = currentFromCandidates.find(c => c.id === myHomeId);
+                    
+                    if (currentFrom) {
                         await currentFrom.send({
                             content: `🚪 ${member} è uscito.`,
                             allowedMentions: { parse: [] }
