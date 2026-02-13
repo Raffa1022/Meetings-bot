@@ -249,20 +249,6 @@ async function executeHousingAction(queueItem) {
     const member = await guild.members.fetch(queueItem.userId).catch(() => null);
     if (!member) return;
 
-    let fromChannelId = null;
-    if (queueItem.details && queueItem.details.fromChannelId) {
-        fromChannelId = queueItem.details.fromChannelId;
-    }
-    
-    // Fallback: cerca dove si trova ora
-    if (!fromChannelId) {
-        const currentHome = guild.channels.cache.find(c =>
-            c.parentId === HOUSING.CATEGORIA_CASE &&
-            c.permissionOverwrites.cache.has(member.id)
-        );
-        if (currentHome) fromChannelId = currentHome.id;
-    }
-
   // --- RETURN ---
     if (queueItem.type === 'RETURN') {
         const homeId = await db.housing.getHome(member.id);
@@ -277,10 +263,10 @@ async function executeHousingAction(queueItem) {
                 c.permissionOverwrites.cache.has(member.id)
             );
 
-            // 1. Identifica se stiamo lasciando una casa "ospite" (non home)
+            // LOGICA: Se ho permessi in una casa diversa dalla mia HOME, sono lì.
             const guestHouse = housesWithPerms.find(h => h.id !== homeId);
 
-            // 2. Se stiamo lasciando una casa ospite, manda il messaggio LÌ prima di togliere i permessi
+            // Messaggio uscita PRIMA di togliere i permessi
             if (guestHouse) {
                 await guestHouse.send({
                     content: `🚪 ${member} è uscito.`,
@@ -288,7 +274,7 @@ async function executeHousingAction(queueItem) {
                 }).catch(() => {});
             }
 
-            // 3. Imposta permessi Home (con ReadHistory)
+            // Assegna permessi HOME
             if (homeCh) {
                 await homeCh.permissionOverwrites.edit(member.id, { 
                     ViewChannel: true, 
@@ -297,7 +283,7 @@ async function executeHousingAction(queueItem) {
                 });
             }
 
-            // 4. Rimuovi i permessi da TUTTE le case tranne la home
+            // Rimuovi permessi da tutte le case tranne home
             for (const [houseId, house] of housesWithPerms) {
                 if (houseId !== homeId) {
                     await house.permissionOverwrites.delete(member.id).catch(() => {});
@@ -320,12 +306,11 @@ async function executeHousingAction(queueItem) {
         
         const { targetChannelId, mode } = queueItem.details;
         const targetCh = guild.channels.cache.get(targetChannelId);
-        const fromCh = guild.channels.cache.get(fromChannelId);
+        // NOTA: Ignoriamo fromChannelId del comando per l'uscita, usiamo i permessi
 
         if (!targetCh) return;
-        if (fromCh && fromCh.id === targetCh.id) return;
-
-        // Recupera l'ID della Home per distinguere tra "Sono a casa" e "Sono in visita"
+        
+        // Recupera Home ID
         const myHomeId = await db.housing.getHome(member.id);
 
         // --- FORZATA / NASCOSTA ---
@@ -338,13 +323,16 @@ async function executeHousingAction(queueItem) {
                 c.id !== targetCh.id
             );
 
-            // PRIORITÀ: Se c'è una casa che NON è la mia home, vuol dire che sono in visita lì. 
-            // Altrimenti, prendo la mia home (se c'è).
+            // LOGICA DI USCITA DEDUTTIVA:
+            // 1. Priorità: Se sono in una casa che NON è la mia Home, esco da lì.
             let oldHouse = candidates.find(c => c.id !== myHomeId);
+            
+            // 2. Fallback: Se non sono in giro, sono a casa mia.
             if (!oldHouse) oldHouse = candidates.find(c => c.id === myHomeId);
             
-            // Messaggio uscita (se non è hidden)
-            if (oldHouse && mode !== 'mode_hidden') {
+            
+            // Invia messaggio di uscita (anche se è hidden mode, l'uscita si vede)
+            if (oldHouse) {
                 await oldHouse.send({
                     content: `🚪 ${member} è uscito.`,
                     allowedMentions: { parse: [] } 
@@ -364,7 +352,9 @@ async function executeHousingAction(queueItem) {
                 : "";
             
             const silent = mode === 'mode_hidden';
-            await enterHouse(member, fromCh, targetCh, msg, silent);
+            
+            // Passiamo oldHouse a movePlayer/enterHouse solo per riferimento interno, ma il msg è già mandato
+            await enterHouse(member, oldHouse, targetCh, msg, silent);
             return;
         }
 
@@ -379,7 +369,7 @@ async function executeHousingAction(queueItem) {
                 c.id !== targetCh.id
             );
             
-            // Priorità alla casa ospite, fallback su home
+            // LOGICA DEDUTTIVA
             let oldHouse = candidates.find(c => c.id !== myHomeId);
             if (!oldHouse) oldHouse = candidates.find(c => c.id === myHomeId);
             
@@ -398,7 +388,7 @@ async function executeHousingAction(queueItem) {
             
             if (oldHouse) await oldHouse.permissionOverwrites.delete(member.id).catch(() => {});
 
-            await enterHouse(member, fromCh, targetCh, `👋 ${member} è entrato.`, false);
+            await enterHouse(member, oldHouse, targetCh, `👋 ${member} è entrato.`, false);
             return;
         }
 
@@ -416,16 +406,15 @@ async function executeHousingAction(queueItem) {
                 if (r.emoji.name === '✅') {
                     await msg.reply({ content: "✅ Qualcuno ha aperto.", allowedMentions: { parse: [] } });
                     
-                    // Identifica la casa di provenienza CORRETTA per l'uscita
-                    const currentFromCandidates = guild.channels.cache.filter(c => 
+                    const candidates = guild.channels.cache.filter(c => 
                         c.parentId === HOUSING.CATEGORIA_CASE && 
                         c.permissionOverwrites.cache.has(member.id) &&
                         c.id !== targetCh.id
                     );
-                    
-                    // Priorità casa ospite
-                    let currentFrom = currentFromCandidates.find(c => c.id !== myHomeId);
-                    if (!currentFrom) currentFrom = currentFromCandidates.find(c => c.id === myHomeId);
+
+                    // LOGICA DEDUTTIVA
+                    let currentFrom = candidates.find(c => c.id !== myHomeId);
+                    if (!currentFrom) currentFrom = candidates.find(c => c.id === myHomeId);
                     
                     if (currentFrom) {
                         await currentFrom.send({
@@ -438,12 +427,15 @@ async function executeHousingAction(queueItem) {
                     await enterHouse(member, currentFrom, targetCh, `👋 ${member} è entrato.`, false, true);
                 } else {
                     await msg.reply({ content: "❌ Qualcuno ha rifiutato.", allowedMentions: { parse: [] } });
-                    // Notifica rifiuto
-                    const currentFromCandidates = guild.channels.cache.filter(c => 
+                    
+                    const candidates = guild.channels.cache.filter(c => 
                         c.parentId === HOUSING.CATEGORIA_CASE && 
                         c.permissionOverwrites.cache.has(member.id)
                     );
-                     let currentFrom = currentFromCandidates.find(c => c.id !== myHomeId) || currentFromCandidates.first();
+                    
+                    // Notifica rifiuto dove si trova l'utente realmente
+                    let currentFrom = candidates.find(c => c.id !== myHomeId);
+                    if (!currentFrom) currentFrom = candidates.find(c => c.id === myHomeId);
 
                     if (currentFrom) {
                         currentFrom.send({
@@ -463,14 +455,14 @@ async function executeHousingAction(queueItem) {
                     await db.housing.clearActiveKnock(member.id);
                     await msg.reply("⏱️ Tempo scaduto - Apertura automatica.");
                     
-                    const currentFromCandidates = guild.channels.cache.filter(c => 
+                    const candidates = guild.channels.cache.filter(c => 
                         c.parentId === HOUSING.CATEGORIA_CASE && 
                         c.permissionOverwrites.cache.has(member.id) &&
                         c.id !== targetCh.id
                     );
                     
-                    let currentFrom = currentFromCandidates.find(c => c.id !== myHomeId);
-                    if (!currentFrom) currentFrom = currentFromCandidates.find(c => c.id === myHomeId);
+                    let currentFrom = candidates.find(c => c.id !== myHomeId);
+                    if (!currentFrom) currentFrom = candidates.find(c => c.id === myHomeId);
                     
                     if (currentFrom) {
                         await currentFrom.send({
