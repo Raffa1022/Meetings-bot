@@ -349,6 +349,10 @@ async function executeHousingAction(queueItem) {
             if (r.emoji.name === '✅') {
                 await msg.reply("✅ Qualcuno ha aperto.");
                 const currentFrom = guild.channels.cache.find(c => c.parentId === HOUSING.CATEGORIA_CASE && c.permissionOverwrites.cache.has(member.id));
+                                if (currentFrom && currentFrom.id !== targetCh.id) {
+                    await currentFrom.permissionOverwrites.delete(member.id).catch(() => {});
+                }
+                
                 // ✅ ORA i permessi vengono dati da enterHouse, non prima
                 await enterHouse(member, currentFrom, targetCh, `👋 ${member} è entrato.`, false, true);
             } else {
@@ -363,6 +367,10 @@ async function executeHousingAction(queueItem) {
                 await db.housing.clearActiveKnock(member.id);
                 await msg.reply("⏱️ Tempo scaduto - Apertura automatica.");
                 const currentFrom = guild.channels.cache.find(c => c.parentId === HOUSING.CATEGORIA_CASE && c.permissionOverwrites.cache.has(member.id));
+                                if (currentFrom && currentFrom.id !== targetCh.id) {
+                    await currentFrom.permissionOverwrites.delete(member.id).catch(() => {});
+                }
+
                 // ✅ ORA i permessi vengono dati da enterHouse, non prima
                 await enterHouse(member, currentFrom, targetCh, `👋 ${member} è entrato.`, false, true);
             }
