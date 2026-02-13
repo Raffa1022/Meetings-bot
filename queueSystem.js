@@ -331,12 +331,24 @@ async function executeHousingAction(queueItem) {
             if (!oldHouse) oldHouse = candidates.find(c => c.id === myHomeId);
             
             
-            // Invia messaggio di uscita (anche se è hidden mode, l'uscita si vede)
+            // GESTIONE MESSAGGIO USCITA
             if (oldHouse) {
-                await oldHouse.send({
-                    content: `🚪 ${member} è uscito.`,
-                    allowedMentions: { parse: [] } 
-                }).catch(() => {});
+                let sendExitMsg = true;
+
+                // Se è HIDDEN, invia il messaggio SOLO se sta uscendo dalla propria casa.
+                // Se esce da una casa ospite in modalità nascosta, non invia nulla (fantasma).
+                if (mode === 'mode_hidden') {
+                    if (oldHouse.id !== myHomeId) {
+                        sendExitMsg = false;
+                    }
+                }
+
+                if (sendExitMsg) {
+                    await oldHouse.send({
+                        content: `🚪 ${member} è uscito.`,
+                        allowedMentions: { parse: [] } 
+                    }).catch(() => {});
+                }
             }
             
             await targetCh.permissionOverwrites.edit(member.id, {
