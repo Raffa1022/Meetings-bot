@@ -76,22 +76,22 @@ async function processQueue() {
                     : "🚫 **Azione fallita:** Sei in Visitblock.";
 
                 await notifyUserInCategory(currentItem.userId, msg);
-                
-                // ✅ FIX: Se era KNOCK, pulisci lo stato pending
+
+                // Se era KNOCK, pulisci lo stato pending
                 // ma NON scalare visite dal DB
-                if (currentItem.type === 'KNOCK') {
+                if (currentItem.type === "KNOCK") {
                     await db.housing.removePendingKnock(currentItem.userId);
                 }
-                
+
                 await db.queue.remove(currentItem._id);
             } else {
-                // ✅ FIX: Se NON è bloccato, scala la visita ORA
+                // Se NON è bloccato, scala la visita ORA
                 // (solo per KNOCK) con +1 e -1
-                if (currentItem.type === 'KNOCK') {
+                if (currentItem.type === "KNOCK") {
                     const mode = currentItem.details.mode;
-                    if (mode === 'mode_forced') {
+                    if (mode === "mode_forced") {
                         await db.housing.decrementForced(currentItem.userId);
-                    } else if (mode === 'mode_hidden') {
+                    } else if (mode === "mode_hidden") {
                         await db.housing.decrementHidden(currentItem.userId);
                     } else {
                         await db.housing.incrementVisit(currentItem.userId);
@@ -104,16 +104,12 @@ async function processQueue() {
             }
             processing = false;
             return processQueue();
-            processing = false;
-            return processQueue();
         }
-                // 3. Esegui azione
-                await executeHousingAction(currentItem);
-                await db.queue.remove(currentItem._id);
-            }
-            processing = false;
-            return processQueue();
-        }
+
+        // ======= SHOP =======
+        if (currentItem.type === 'SHOP') {
+            const subType = currentItem.details ? currentItem.details.subType : undefined;
+            if (subType && subType !== 'acquisto') {
 
         // ======= SHOP =======
         if (currentItem.type === 'SHOP') {
