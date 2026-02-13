@@ -65,32 +65,45 @@ async function processQueue() {
             if (isVB) {
                 // Controllo se è "Catene" (VB + RB + Unprotectable)
                 const isRB = await db.moderation.isBlockedRB(currentItem.userId);
-                const isUnprot = await db.moderation.isUnprotectable(currentItem.userId);
+                const isUnprot = await db.moderation.isUnprotectable(
+                    currentItem.userId
+                );
                 const isCatene = isRB && isUnprot;
 
-                const msg = isCatene 
-                    ? "⛓️ **Azione fallita:** Sei incatenato! (Visitblock + Roleblock attivo)"
+                const msg = isCatene
+                    ? "⛓️ **Azione fallita:** Sei incatenato! " +
+                      "(Visitblock + Roleblock attivo)"
                     : "🚫 **Azione fallita:** Sei in Visitblock.";
 
                 await notifyUserInCategory(currentItem.userId, msg);
                 
-                // ✅ FIX: Se era KNOCK, pulisci lo stato pending ma NON scalare visite dal DB
-                if (currentItem.type === 'KNOCK') await db.housing.removePendingKnock(currentItem.userId);
+                // ✅ FIX: Se era KNOCK, pulisci lo stato pending
+                // ma NON scalare visite dal DB
+                if (currentItem.type === 'KNOCK') {
+                    await db.housing.removePendingKnock(currentItem.userId);
+                }
                 
                 await db.queue.remove(currentItem._id);
             } else {
-                // ✅ FIX: Se NON è bloccato, scala la visita ORA (solo per KNOCK) con +1 e -1
+                // ✅ FIX: Se NON è bloccato, scala la visita ORA
+                // (solo per KNOCK) con +1 e -1
                 if (currentItem.type === 'KNOCK') {
-                    currentItem.details.mode
-                    if (mode === 'mode_forced') await db.housing.decrementForced(currentItem.userId);
-                    else if (mode === 'mode_hidden') await db.housing.decrementHidden(currentItem.userId);
-                    else await db.housing.incrementVisit(currentItem.userId); // +1 invece di +2
+                    const mode = currentItem.details.mode;
+                    if (mode === 'mode_forced') {
+                        await db.housing.decrementForced(currentItem.userId);
+                    } else if (mode === 'mode_hidden') {
+                        await db.housing.decrementHidden(currentItem.userId);
+                    } else {
+                        await db.housing.incrementVisit(currentItem.userId);
+                    }
                 }
 
                 // 3. Esegui azione
                 await executeHousingAction(currentItem);
                 await db.queue.remove(currentItem._id);
             }
+            processing = false;
+            return processQueue();
             processing = false;
             return processQueue();
         }
