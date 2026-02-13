@@ -319,9 +319,7 @@ async function executeHousingAction(queueItem) {
                 c.permissionOverwrites.cache.has(member.id) &&
                 c.id !== targetCh.id
             );
-            if (oldHouse) await oldHouse.permissionOverwrites.delete(member.id).catch(() => {});
-
-            }
+            if (oldHouse) await oldHouse.permissionOverwrites.delete(member.id).catch(() => {})
 
             const msg = mode === 'mode_forced' 
                 ? `<@&${RUOLI.ALIVE}> <@&${RUOLI.SPONSOR}> 🧨 ${member} ha sfondato la porta ed è entrato!` 
@@ -352,7 +350,6 @@ async function executeHousingAction(queueItem) {
 
             await enterHouse(member, fromCh, targetCh, `👋 ${member} è entrato.`, false);
             return;
-        }
 
         // ✅ FIX: NON dare permessi prima del TOC TOC - li darà enterHouse DOPO l'accettazione
         const msg = await targetCh.send(`🔔 <@&${RUOLI.ALIVE}> <@&${RUOLI.SPONSOR}> **TOC TOC!** Qualcuno bussa.\n✅ Apri | ❌ Rifiuta`);
