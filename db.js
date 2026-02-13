@@ -177,6 +177,20 @@ const housing = {
         return HousingModel.updateOne(H_ID, { $inc: { [`hiddenVisits.${userId}`]: -1 } }); // ✅ FIX: -1 invece di -2
     },
 
+    // --- Gestione entrate nascoste ---
+    async setHiddenEntry(userId, channelId) {
+        return HousingModel.updateOne(H_ID, { $set: { [`hiddenEntries.${userId}.${channelId}`]: true } });
+    },
+
+    async isHiddenEntry(userId, channelId) {
+        const doc = await HousingModel.findOne(H_ID, { [`hiddenEntries.${userId}.${channelId}`]: 1 }).lean();
+        return doc?.hiddenEntries?.[userId]?.[channelId] || false;
+    },
+
+    async clearHiddenEntry(userId, channelId) {
+        return HousingModel.updateOne(H_ID, { $unset: { [`hiddenEntries.${userId}.${channelId}`]: '' } });
+    },
+
     // 🔥 NUOVO: Decrementa visite per la fase SUCCESSIVA (per preset)
     async decrementNextPhaseForcedLimit(userId) {
         const mode = await housing.getMode();
