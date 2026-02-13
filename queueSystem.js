@@ -81,7 +81,7 @@ async function processQueue() {
             } else {
                 // ✅ FIX: Se NON è bloccato, scala la visita ORA (solo per KNOCK) con +1 e -1
                 if (currentItem.type === 'KNOCK') {
-                    const mode = currentItem.details.mode;
+                    currentItem.details.mode
                     if (mode === 'mode_forced') await db.housing.decrementForced(currentItem.userId);
                     else if (mode === 'mode_hidden') await db.housing.decrementHidden(currentItem.userId);
                     else await db.housing.incrementVisit(currentItem.userId); // +1 invece di +2
