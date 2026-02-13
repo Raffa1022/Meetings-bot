@@ -104,7 +104,7 @@ async function processQueue() {
 
         // ======= SHOP =======
         if (currentItem.type === 'SHOP') {
-            const subType = currentItem.details?.subType;
+            const subType = currentItem.details ? currentItem.details.subType : undefined;
             if (subType && subType !== 'acquisto') {
                 const { shopEffects } = require('./economySystem');
                 const handler = shopEffects[subType];
