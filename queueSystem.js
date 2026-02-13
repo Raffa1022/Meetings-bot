@@ -289,7 +289,7 @@ async function executeHousingAction(queueItem) {
             }
 
             // ✅ FIX: Usa la prima casa NON-home come fromCh (quella da cui esce)
-            const fromCh = housesWithPerms.find(h => h.id !== homeId);
+            const fromCh = Array.from(housesWithPerms.values()).find(h => h.id !== homeId);
 
             if (homeCh && fromCh) {
                 await movePlayer(member, fromCh, homeCh, `🏠 ${member} è ritornato.`, false);
@@ -318,9 +318,12 @@ async function executeHousingAction(queueItem) {
                 c.id !== targetCh.id
             );
             
-            // NARRAZIONE DI USCITA (solo per forzata, non per nascosta)
-            if (oldHouse && mode === 'mode_forced') {
-                await oldHouse.send(`🚪 ${member} è uscito.`).catch(() => {});
+            // NARRAZIONE DI USCITA solo se esco dalla mia HOME (non da case visitate)
+            if (oldHouse) {
+                const myHomeId = await db.housing.getHome(member.id);
+                if (oldHouse.id === myHomeId) {
+                    await oldHouse.send(`🚪 ${member} è uscito.`).catch(() => {});
+                }
             }
             
             await targetCh.permissionOverwrites.edit(member.id, {
@@ -350,9 +353,12 @@ async function executeHousingAction(queueItem) {
                 c.id !== targetCh.id
             );
             
-            // NARRAZIONE DI USCITA
+            // NARRAZIONE DI USCITA solo se esco dalla mia HOME
             if (oldHouse) {
-                await oldHouse.send(`🚪 ${member} è uscito.`).catch(() => {});
+                const myHomeId = await db.housing.getHome(member.id);
+                if (oldHouse.id === myHomeId) {
+                    await oldHouse.send(`🚪 ${member} è uscito.`).catch(() => {});
+                }
             }
             
             // Casa vuota: dai permessi e entra subito
@@ -383,9 +389,12 @@ async function executeHousingAction(queueItem) {
                 await msg.reply("✅ Qualcuno ha aperto.");
                 const currentFrom = guild.channels.cache.find(c => c.parentId === HOUSING.CATEGORIA_CASE && c.permissionOverwrites.cache.has(member.id));
                 
-                // NARRAZIONE DI USCITA
+                // NARRAZIONE DI USCITA solo se esco dalla mia HOME
                 if (currentFrom && currentFrom.id !== targetCh.id) {
-                    await currentFrom.send(`🚪 ${member} è uscito.`).catch(() => {});
+                    const myHomeId = await db.housing.getHome(member.id);
+                    if (currentFrom.id === myHomeId) {
+                        await currentFrom.send(`🚪 ${member} è uscito.`).catch(() => {});
+                    }
                     await currentFrom.permissionOverwrites.delete(member.id).catch(() => {});
                 }
                 
@@ -404,9 +413,12 @@ async function executeHousingAction(queueItem) {
                 await msg.reply("⏱️ Tempo scaduto - Apertura automatica.");
                 const currentFrom = guild.channels.cache.find(c => c.parentId === HOUSING.CATEGORIA_CASE && c.permissionOverwrites.cache.has(member.id));
                 
-                // NARRAZIONE DI USCITA
+                // NARRAZIONE DI USCITA solo se esco dalla mia HOME
                 if (currentFrom && currentFrom.id !== targetCh.id) {
-                    await currentFrom.send(`🚪 ${member} è uscito.`).catch(() => {});
+                    const myHomeId = await db.housing.getHome(member.id);
+                    if (currentFrom.id === myHomeId) {
+                        await currentFrom.send(`🚪 ${member} è uscito.`).catch(() => {});
+                    }
                     await currentFrom.permissionOverwrites.delete(member.id).catch(() => {});
                 }
 
