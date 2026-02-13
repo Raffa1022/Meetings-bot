@@ -45,9 +45,14 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
         const hasPersonalPerms = channelToLeave.permissionOverwrites.cache.has(member.id);
         if (hasPersonalPerms) {
             const prevMode = await db.housing.getPlayerMode(member.id);
-            // FIX: Narrazione uscita solo per giocatore principale
+            console.log(`🔍 [DEBUG] User ${member.id} esce da ${channelToLeave.name}: prevMode=${prevMode}, isMainPlayer=${isMainPlayer}`);
+            
+            // FIX: Narrazione uscita solo per giocatore principale E NON in modalità nascosta
             if (prevMode !== 'HIDDEN' && isMainPlayer) {
+                console.log(`✅ [DEBUG] Mostro narrazione uscita per ${member.displayName}`);
                 await channelToLeave.send(`🚪 ${member} è uscito.`);
+            } else {
+                console.log(`❌ [DEBUG] SALTO narrazione uscita per ${member.displayName} (hidden=${prevMode === 'HIDDEN'}, isMainPlayer=${isMainPlayer})`);
             }
             // ✅ FIX NASCOSTA: Rimuovi sempre i permessi quando esci (anche se hidden)
             await channelToLeave.permissionOverwrites.delete(member.id).catch(() => {});
