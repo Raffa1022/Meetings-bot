@@ -270,13 +270,13 @@ async function executeHousingAction(queueItem) {
         if (homeId && !destroyed.includes(homeId)) {
             const homeCh = guild.channels.cache.get(homeId);
             
-            // ✅ FIX: Trova TUTTE le case dove il player ha permessi (potrebbero essere 2!)
+            // Trova TUTTE le case dove il player ha permessi
             const housesWithPerms = guild.channels.cache.filter(c =>
                 c.parentId === HOUSING.CATEGORIA_CASE &&
                 c.permissionOverwrites.cache.has(member.id)
             );
 
-            // FIX: Aggiungi ReadMessageHistory: true per vedere i messaggi vecchi
+            // FIX: ReadMessageHistory true
             if (homeCh) {
                 await homeCh.permissionOverwrites.edit(member.id, { 
                     ViewChannel: true, 
@@ -285,16 +285,18 @@ async function executeHousingAction(queueItem) {
                 });
             }
 
-            // ✅ FIX: Rimuovi i permessi da TUTTE le case tranne la home
+            // Rimuovi i permessi da TUTTE le case tranne la home
             for (const [houseId, house] of housesWithPerms) {
                 if (houseId !== homeId) {
                     await house.permissionOverwrites.delete(member.id).catch(() => {});
                 }
             }
 
-            // ✅ FIX: Usa la prima casa NON-home come fromCh (quella da cui esce)
             const fromCh = Array.from(housesWithPerms.values()).find(h => h.id !== homeId);
 
+            // FIX: Usa ${member} per il tag, ma la funzione movePlayer dovrà gestire la notifica se possibile.
+            // Nota: Se 'movePlayer' invia solo una stringa, pingherà. 
+            // Qui gestiamo i messaggi di uscita diretti con { allowedMentions: { parse: [] } } per evitare ghost ping locali.
             if (homeCh && fromCh) {
                 await movePlayer(member, fromCh, homeCh, `🏠 ${member} è ritornato.`, false);
             } else if (homeCh && !fromCh) {
@@ -315,21 +317,20 @@ async function executeHousingAction(queueItem) {
         if (!targetCh) return;
         if (fromCh && fromCh.id === targetCh.id) return;
 
-        // ✅ FIX: Per FORZATA e NASCOSTA, dai permessi subito (perché entrano direttamente)
+        // --- FORZATA / NASCOSTA ---
         if (mode === 'mode_forced' || mode === 'mode_hidden') {
-            // FIX: Cerca la VERA casa vecchia tra quelle della categoria (ignora chat comandi)
             const oldHouse = guild.channels.cache.find(c => 
                 c.parentId === HOUSING.CATEGORIA_CASE && 
                 c.permissionOverwrites.cache.has(member.id) &&
                 c.id !== targetCh.id
             );
             
-            // NARRAZIONE DI USCITA solo se esco dalla mia HOME (non da case visitate)
-            if (oldHouse) {
-                const myHomeId = await db.housing.getHome(member.id);
-                if (oldHouse.id === myHomeId) {
-                    await oldHouse.send(`🚪 ${member} è uscito.`).catch(() => {});
-                }
+            // FIX: Mostra uscita (se non è hidden) e sopprimi notifica (allowedMentions)
+            if (oldHouse && mode !== 'mode_hidden') {
+                await oldHouse.send({
+                    content: `🚪 ${member} è uscito.`,
+                    allowedMentions: { parse: [] } // Tagga ma non notifica
+                }).catch(() => {});
             }
             
             await targetCh.permissionOverwrites.edit(member.id, {
@@ -349,25 +350,25 @@ async function executeHousingAction(queueItem) {
             return;
         }
 
-        // Visita Normale
+        // --- VISITA NORMALE ---
         const occupants = getOccupants(targetCh, member.id);
+        
+        // Se casa vuota, entra subito
         if (occupants.size === 0) {
-            // FIX: Cerca la VERA casa vecchia tra quelle della categoria (ignora chat comandi)
             const oldHouse = guild.channels.cache.find(c => 
                 c.parentId === HOUSING.CATEGORIA_CASE && 
                 c.permissionOverwrites.cache.has(member.id) &&
                 c.id !== targetCh.id
             );
             
-            // NARRAZIONE DI USCITA solo se esco dalla mia HOME
+            // FIX: Mostra uscita e sopprimi notifica
             if (oldHouse) {
-                const myHomeId = await db.housing.getHome(member.id);
-                if (oldHouse.id === myHomeId) {
-                    await oldHouse.send(`🚪 ${member} è uscito.`).catch(() => {});
-                }
+                await oldHouse.send({
+                    content: `🚪 ${member} è uscito.`,
+                    allowedMentions: { parse: [] }
+                }).catch(() => {});
             }
             
-            // Casa vuota: dai permessi e entra subito
             await targetCh.permissionOverwrites.edit(member.id, {
                 ViewChannel: true, 
                 SendMessages: true, 
@@ -376,12 +377,12 @@ async function executeHousingAction(queueItem) {
             
             if (oldHouse) await oldHouse.permissionOverwrites.delete(member.id).catch(() => {});
 
-
             await enterHouse(member, fromCh, targetCh, `👋 ${member} è entrato.`, false);
             return;
         }
 
-        // ✅ FIX: NON dare permessi prima del TOC TOC - li darà enterHouse DOPO l'accettazione
+        // --- TOC TOC (Richiede approvazione) ---
+        // Qui lasciamo i ping ai ruoli (Alive/Sponsor)
         const msg = await targetCh.send(`🔔 <@&${RUOLI.ALIVE}> <@&${RUOLI.SPONSOR}> **TOC TOC!** Qualcuno bussa.\n✅ Apri | ❌ Rifiuta`);
         await Promise.all([msg.react('✅'), msg.react('❌')]);
         await db.housing.setActiveKnock(member.id, targetChannelId);
@@ -393,24 +394,29 @@ async function executeHousingAction(queueItem) {
             try {
                 await db.housing.clearActiveKnock(member.id);
                 if (r.emoji.name === '✅') {
-                    await msg.reply("✅ Qualcuno ha aperto.");
+                    await msg.reply({ content: "✅ Qualcuno ha aperto.", allowedMentions: { parse: [] } });
                     const currentFrom = guild.channels.cache.find(c => c.parentId === HOUSING.CATEGORIA_CASE && c.permissionOverwrites.cache.has(member.id));
                     
-                    // NARRAZIONE DI USCITA solo se esco dalla mia HOME
+                    // FIX: Uscita con soppressione notifica
                     if (currentFrom && currentFrom.id !== targetCh.id) {
-                        const myHomeId = await db.housing.getHome(member.id);
-                        if (currentFrom.id === myHomeId) {
-                            await currentFrom.send(`🚪 ${member} è uscito.`).catch(() => {});
-                        }
+                        await currentFrom.send({
+                            content: `🚪 ${member} è uscito.`,
+                            allowedMentions: { parse: [] }
+                        }).catch(() => {});
                         await currentFrom.permissionOverwrites.delete(member.id).catch(() => {});
                     }
                     
-                    // ✅ ORA i permessi vengono dati da enterHouse, non prima
                     await enterHouse(member, currentFrom, targetCh, `👋 ${member} è entrato.`, false, true);
                 } else {
-                    await msg.reply("❌ Qualcuno ha rifiutato.");
+                    await msg.reply({ content: "❌ Qualcuno ha rifiutato.", allowedMentions: { parse: [] } });
                     const currentFrom = guild.channels.cache.find(c => c.parentId === HOUSING.CATEGORIA_CASE && c.permissionOverwrites.cache.has(member.id));
-                    if (currentFrom) currentFrom.send(`⛔ ${member}, entrata rifiutata.`).catch(()=>{});
+                    // Messaggio di rifiuto all'utente (sopprimi ping)
+                    if (currentFrom) {
+                        currentFrom.send({
+                            content: `⛔ ${member}, entrata rifiutata.`,
+                            allowedMentions: { parse: [] }
+                        }).catch(()=>{});
+                    }
                 }
             } catch (err) {
                 console.error("❌ Errore nel collector.on('collect'):", err);
@@ -424,16 +430,14 @@ async function executeHousingAction(queueItem) {
                     await msg.reply("⏱️ Tempo scaduto - Apertura automatica.");
                     const currentFrom = guild.channels.cache.find(c => c.parentId === HOUSING.CATEGORIA_CASE && c.permissionOverwrites.cache.has(member.id));
                     
-                    // NARRAZIONE DI USCITA solo se esco dalla mia HOME
                     if (currentFrom && currentFrom.id !== targetCh.id) {
-                        const myHomeId = await db.housing.getHome(member.id);
-                        if (currentFrom.id === myHomeId) {
-                            await currentFrom.send(`🚪 ${member} è uscito.`).catch(() => {});
-                        }
+                        await currentFrom.send({
+                            content: `🚪 ${member} è uscito.`,
+                            allowedMentions: { parse: [] }
+                        }).catch(() => {});
                         await currentFrom.permissionOverwrites.delete(member.id).catch(() => {});
                     }
 
-                    // ✅ ORA i permessi vengono dati da enterHouse, non prima
                     await enterHouse(member, currentFrom, targetCh, `👋 ${member} è entrato.`, false, true);
                 }
             } catch (err) {
