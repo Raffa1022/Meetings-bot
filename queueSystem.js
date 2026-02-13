@@ -368,6 +368,7 @@ async function executeHousingAction(queueItem) {
             }
         });
     }
+  } 
 async function notifyUser(userId, text) {
     const user = await clientRef.users.fetch(userId).catch(() => null);
     if (user) user.send(text).catch(() => {});
