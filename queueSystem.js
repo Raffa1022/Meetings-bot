@@ -80,29 +80,12 @@ async function processQueue() {
             } else {
                 if (currentItem.type === "KNOCK") {
                     const mode = currentItem.details.mode;
-                    
-                    // Controllo visite esaurite PRIMA di processare
-                    const playerData = await db.housing.getPlayerData(currentItem.userId);
-                    let hasVisitsLeft = false;
-                    
                     if (mode === "mode_forced") {
-                        hasVisitsLeft = playerData && playerData.forcedLeft > 0;
-                        if (hasVisitsLeft) await db.housing.decrementForced(currentItem.userId);
+                        await db.housing.decrementForced(currentItem.userId);
                     } else if (mode === "mode_hidden") {
-                        hasVisitsLeft = playerData && playerData.hiddenLeft > 0;
-                        if (hasVisitsLeft) await db.housing.decrementHidden(currentItem.userId);
+                        await db.housing.decrementHidden(currentItem.userId);
                     } else {
-                        hasVisitsLeft = true; // Le visite normali non hanno limite
                         await db.housing.incrementVisit(currentItem.userId);
-                    }
-                    
-                    // Se visite esaurite, rimuovi knock pendente e cancella dalla coda
-                    if (!hasVisitsLeft) {
-                        await db.housing.removePendingKnock(currentItem.userId);
-                        await notifyUserInCategory(currentItem.userId, "🚫 **Azione fallita:** Visite esaurite per questa modalità.");
-                        await db.queue.remove(currentItem._id);
-                        processing = false;
-                        return processQueue();
                     }
                 }
 
