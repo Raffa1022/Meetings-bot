@@ -367,7 +367,7 @@ async function executeHousingAction(queueItem) {
                 await enterHouse(member, currentFrom, targetCh, `👋 ${member} è entrato.`, false, true);
             }
         });
-    
+    }
 async function notifyUser(userId, text) {
     const user = await clientRef.users.fetch(userId).catch(() => null);
     if (user) user.send(text).catch(() => {});
