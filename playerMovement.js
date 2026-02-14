@@ -44,17 +44,24 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
     if (channelToLeave && channelToLeave.id !== newChannel.id && channelToLeave.parentId === HOUSING.CATEGORIA_CASE) {
         const hasPersonalPerms = channelToLeave.permissionOverwrites.cache.has(member.id);
         if (hasPersonalPerms) {
-            const prevMode = await db.housing.getPlayerMode(member.id);
-            console.log(`🔍 [DEBUG] User ${member.id} esce da ${channelToLeave.name}: prevMode=${prevMode}, isMainPlayer=${isMainPlayer}`);
+            // ✅ FIX: Controlla se eri entrato NASCOSTO in QUESTA casa specifica
+            const wasHiddenEntry = await db.housing.isHiddenEntry(member.id, channelToLeave.id);
+            console.log(`🔍 [DEBUG] User ${member.id} esce da ${channelToLeave.name}: wasHiddenEntry=${wasHiddenEntry}, isMainPlayer=${isMainPlayer}`);
             
-            // FIX: Narrazione uscita solo per giocatore principale E NON in modalità nascosta
-            if (prevMode !== 'HIDDEN' && isMainPlayer) {
+            // FIX: Narrazione uscita solo per giocatore principale E NON se era entrato nascosto
+            if (!wasHiddenEntry && isMainPlayer) {
                 console.log(`✅ [DEBUG] Mostro narrazione uscita per ${member.displayName}`);
                 await channelToLeave.send(`🚪 ${member} è uscito.`);
             } else {
-                console.log(`❌ [DEBUG] SALTO narrazione uscita per ${member.displayName} (hidden=${prevMode === 'HIDDEN'}, isMainPlayer=${isMainPlayer})`);
+                console.log(`❌ [DEBUG] SALTO narrazione uscita per ${member.displayName} (wasHiddenEntry=${wasHiddenEntry}, isMainPlayer=${isMainPlayer})`);
             }
-            // ✅ FIX NASCOSTA: Rimuovi sempre i permessi quando esci (anche se hidden)
+            
+            // Pulisci il flag hidden per questa casa
+            if (wasHiddenEntry) {
+                await db.housing.clearHiddenEntry(member.id, channelToLeave.id);
+            }
+            
+            // ✅ Rimuovi sempre i permessi quando esci
             await channelToLeave.permissionOverwrites.delete(member.id).catch(() => {});
         }
         // Rimuovi sponsor dalla vecchia casa (senza narrazione)
