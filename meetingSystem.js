@@ -347,7 +347,7 @@ module.exports = function initMeetingSystem(client) {
                     if (slot.sponsor) {
                         const houseChannel = message.guild.channels.cache.get(slot.houseId);
                         if (houseChannel) {
-                            await houseChannel.permissionOverwrites.create(slot.sponsor, { ViewChannel: true, SendMessages: true });
+                            await houseChannel.permissionOverwrites.create(slot.sponsor, { ViewChannel: true, SendMessages: true, ReadMessageHistory: true });
                             await db.housing.setHome(slot.sponsor, slot.houseId);
                         }
                     }
@@ -365,7 +365,7 @@ module.exports = function initMeetingSystem(client) {
 
                 // Player: proprietario + permessi
                 await db.housing.setHome(slot.player, house.id);
-                await house.permissionOverwrites.create(slot.player, { ViewChannel: true, SendMessages: true });
+                await house.permissionOverwrites.create(slot.player, { ViewChannel: true, SendMessages: true, ReadMessageHistory: true });
 
                 const playerMember = await message.guild.members.fetch(slot.player).catch(() => null);
                 if (playerMember) {
@@ -376,7 +376,7 @@ module.exports = function initMeetingSystem(client) {
                 // Sponsor: proprietario + permessi
                 if (slot.sponsor) {
                     await db.housing.setHome(slot.sponsor, house.id);
-                    await house.permissionOverwrites.create(slot.sponsor, { ViewChannel: true, SendMessages: true });
+                    await house.permissionOverwrites.create(slot.sponsor, { ViewChannel: true, SendMessages: true, ReadMessageHistory: true });
                 }
 
                 caseAssegnate++;
@@ -450,7 +450,7 @@ module.exports = function initMeetingSystem(client) {
                     if (houseId) {
                         const houseChannel = message.guild.channels.cache.get(houseId);
                         if (houseChannel) {
-                            await houseChannel.permissionOverwrites.create(slot.sponsor, { ViewChannel: true, SendMessages: true });
+                            await houseChannel.permissionOverwrites.create(slot.sponsor, { ViewChannel: true, SendMessages: true, ReadMessageHistory: true });
                             await db.housing.setHome(slot.sponsor, houseId);
                         }
                     }
