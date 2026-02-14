@@ -341,44 +341,18 @@ async function executeHousingAction(queueItem) {
             // 2. Fallback: Se non sono in giro, sono a casa mia.
             if (!oldHouse) oldHouse = candidates.find(c => c.id === myHomeId);
             
-            
-            // GESTIONE MESSAGGIO USCITA
-            if (oldHouse) {
-                // Controlla se era entrato in modalità hidden in questa casa
-                const wasHidden = await db.housing.isHiddenEntry(member.id, oldHouse.id);
-                
-                if (!wasHidden) {
-                    await oldHouse.send({
-                        content: `🚪 ${member} è uscito.`,
-                        allowedMentions: { parse: [] } 
-                    }).catch(() => {});
-                } else {
-                    // Pulisco il flag hidden
-                    await db.housing.clearHiddenEntry(member.id, oldHouse.id);
-                }
-            }
-            
-            await targetCh.permissionOverwrites.edit(member.id, {
-                ViewChannel: true, 
-                SendMessages: true, 
-                ReadMessageHistory: true
-            });
-            
-            // Rimuovi permessi dalla vecchia posizione reale
-            if (oldHouse) await oldHouse.permissionOverwrites.delete(member.id).catch(() => {});
-
             const msg = mode === 'mode_forced' 
                 ? `<@&${RUOLI.ALIVE}> <@&${RUOLI.SPONSOR}> 🧨 ${member} ha sfondato la porta ed è entrato!` 
                 : "";
             
             const silent = mode === 'mode_hidden';
             
-            // Salva che è entrato in modalità hidden
+            // ✅ Salva che è entrato in modalità hidden PRIMA di chiamare enterHouse
             if (mode === 'mode_hidden') {
                 await db.housing.setHiddenEntry(member.id, targetCh.id);
             }
             
-            // Passiamo oldHouse a movePlayer/enterHouse solo per riferimento interno, ma il msg è già mandato
+            // ✅ enterHouse gestisce TUTTO: uscita (con controllo hidden), ingresso, permessi
             await enterHouse(member, oldHouse, targetCh, msg, silent);
             return;
         }
@@ -397,8 +371,30 @@ async function executeHousingAction(queueItem) {
             // LOGICA DEDUTTIVA
             let oldHouse = candidates.find(c => c.id !== myHomeId);
             if (!oldHouse) oldHouse = candidates.find(c => c.id === myHomeId);
+            
+            if (oldHouse) {
+                // Controlla se era entrato in modalità hidden
+                const wasHidden = await db.housing.isHiddenEntry(member.id, oldHouse.id);
+                
+                if (!wasHidden) {
+                    await oldHouse.send({
+                        content: `🚪 ${member} è uscito.`,
+                        allowedMentions: { parse: [] }
+                    }).catch(() => {});
+                } else {
+                    // Pulisco il flag hidden
+                    await db.housing.clearHiddenEntry(member.id, oldHouse.id);
+                }
+            }
+            
+            await targetCh.permissionOverwrites.edit(member.id, {
+                ViewChannel: true, 
+                SendMessages: true, 
+                ReadMessageHistory: true
+            });
+            
+            if (oldHouse) await oldHouse.permissionOverwrites.delete(member.id).catch(() => {});
 
-            // ✅ enterHouse gestisce automaticamente l'uscita (incluso controllo hidden)
             await enterHouse(member, oldHouse, targetCh, `👋 ${member} è entrato.`, false);
             return;
         }
@@ -427,7 +423,22 @@ async function executeHousingAction(queueItem) {
                     let currentFrom = candidates.find(c => c.id !== myHomeId);
                     if (!currentFrom) currentFrom = candidates.find(c => c.id === myHomeId);
                     
-                    // ✅ enterHouse gestisce automaticamente l'uscita (incluso controllo hidden)
+                    if (currentFrom) {
+                        // Controlla se era entrato in modalità hidden
+                        const wasHidden = await db.housing.isHiddenEntry(member.id, currentFrom.id);
+                        
+                        if (!wasHidden) {
+                            await currentFrom.send({
+                                content: `🚪 ${member} è uscito.`,
+                                allowedMentions: { parse: [] }
+                            }).catch(() => {});
+                        } else {
+                            // Pulisco il flag hidden
+                            await db.housing.clearHiddenEntry(member.id, currentFrom.id);
+                        }
+                        await currentFrom.permissionOverwrites.delete(member.id).catch(() => {});
+                    }
+                    
                     await enterHouse(member, currentFrom, targetCh, `👋 ${member} è entrato.`, false, true);
                 } else {
                     await msg.reply({ content: "❌ Qualcuno ha rifiutato.", allowedMentions: { parse: [] } });
@@ -468,7 +479,22 @@ async function executeHousingAction(queueItem) {
                     let currentFrom = candidates.find(c => c.id !== myHomeId);
                     if (!currentFrom) currentFrom = candidates.find(c => c.id === myHomeId);
                     
-                    // ✅ enterHouse gestisce automaticamente l'uscita (incluso controllo hidden)
+                    if (currentFrom) {
+                        // Controlla se era entrato in modalità hidden
+                        const wasHidden = await db.housing.isHiddenEntry(member.id, currentFrom.id);
+                        
+                        if (!wasHidden) {
+                            await currentFrom.send({
+                                content: `🚪 ${member} è uscito.`,
+                                allowedMentions: { parse: [] }
+                            }).catch(() => {});
+                        } else {
+                            // Pulisco il flag hidden
+                            await db.housing.clearHiddenEntry(member.id, currentFrom.id);
+                        }
+                        await currentFrom.permissionOverwrites.delete(member.id).catch(() => {});
+                    }
+
                     await enterHouse(member, currentFrom, targetCh, `👋 ${member} è entrato.`, false, true);
                 }
             } catch (err) {
