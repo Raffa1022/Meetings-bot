@@ -409,6 +409,14 @@ async function executeHousingAction(queueItem) {
 
         collector.on('collect', async (r) => {
             try {
+                // ✅ FIX: Controlla se il giocatore è stato VB nel frattempo
+                const isVBNow = await db.moderation.isBlockedVB(member.id);
+                if (isVBNow) {
+                    await db.housing.clearActiveKnock(member.id);
+                    await msg.reply({ content: "🚫 La bussata è stata annullata (Visitblock).", allowedMentions: { parse: [] } });
+                    return;
+                }
+                
                 await db.housing.clearActiveKnock(member.id);
                 if (r.emoji.name === '✅') {
                     await msg.reply({ content: "✅ Qualcuno ha aperto.", allowedMentions: { parse: [] } });
@@ -482,6 +490,14 @@ async function executeHousingAction(queueItem) {
         collector.on('end', async (collected, reason) => {
             try {
                 if (reason === 'time' && collected.size === 0) {
+                    // ✅ FIX: Controlla se il giocatore è stato VB nel frattempo
+                    const isVBNow = await db.moderation.isBlockedVB(member.id);
+                    if (isVBNow) {
+                        await db.housing.clearActiveKnock(member.id);
+                        await msg.reply("🚫 La bussata è stata annullata (Visitblock).");
+                        return;
+                    }
+                    
                     await db.housing.clearActiveKnock(member.id);
                     await msg.reply("⏱️ Tempo scaduto - Apertura automatica.");
                     
@@ -553,6 +569,42 @@ module.exports = function initQueueSystem(client) {
     });
 
     eventBus.on('queue:process', () => processQueue());
+
+    // ✅ FIX: Ascolta evento vb:applied per cancellare knock attivi/in coda
+    eventBus.on('vb:applied', async (userId) => {
+        try {
+            // 1. Rimuovi knock dalla coda (non ancora processati = visita NON consumata)
+            const pendingKnock = await db.queue.getUserPending(userId, ['KNOCK']);
+            if (pendingKnock) {
+                await db.queue.removeUserPending(userId, 'KNOCK');
+                await db.housing.removePendingKnock(userId);
+                await notifyUserInCategory(userId, "⛔ La tua bussata è stata annullata perché sei stato visitbloccato. La visita non è stata scalata.");
+                console.log(`🚫 [VB] Knock in coda rimosso per ${userId} (visita NON scalata)`);
+            }
+            
+            // 2. Se ha un activeKnock (collector in corso), la visita è già stata consumata → refund
+            const doc = await db.housing.getActiveKnock(userId);
+            if (doc) {
+                // Determina il tipo di visita per il refund
+                const knockDetails = pendingKnock?.details;
+                const mode = knockDetails?.mode || 'normal';
+                
+                if (mode === 'mode_forced') {
+                    await db.housing.refundForcedVisit(userId);
+                } else if (mode === 'mode_hidden') {
+                    await db.housing.refundHiddenVisit(userId);
+                } else {
+                    await db.housing.refundNormalVisit(userId);
+                }
+                
+                await db.housing.clearActiveKnock(userId);
+                await notifyUserInCategory(userId, "⛔ La tua bussata è stata annullata perché sei stato visitbloccato. La visita non è stata scalata.");
+                console.log(`🚫 [VB] ActiveKnock cancellato per ${userId} (visita rimborsata)`);
+            }
+        } catch (err) {
+            console.error(`❌ [VB] Errore cancellazione knock per ${userId}:`, err);
+        }
+    });
 
     client.on('interactionCreate', async i => {
         if (!i.isButton() || !i.customId.startsWith('q_done_')) return;
