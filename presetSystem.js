@@ -402,12 +402,49 @@ function registerPresetInteractions(client) {
                 });
             }
             
+            const mode = session.knockMode;
+            
+            // 🔥 FIX: Per TIMER, controlla le visite CORRENTI (non della fase successiva)
+            if (session.presetType === 'scheduled') {
+                const currentInfo = await db.housing.getVisitInfo(userId);
+                if (!currentInfo) return interaction.reply({ content: "❌ Errore dati visite.", ephemeral: true });
+                
+                // Conta anche i preset timer GIÀ salvati come visite usate
+                const scheduledPresets = await presetDb.getUserScheduledPresets(userId);
+                const scheduledKnocks = scheduledPresets.filter(p => p.type === 'KNOCK');
+                const usedForcedScheduled = scheduledKnocks.filter(p => p.details.mode === 'mode_forced').length;
+                const usedHiddenScheduled = scheduledKnocks.filter(p => p.details.mode === 'mode_hidden').length;
+                const usedTotalScheduled = scheduledKnocks.length;
+                
+                if (mode === 'mode_forced') {
+                    if (currentInfo.forced - usedForcedScheduled <= 0) {
+                        return interaction.reply({ 
+                            content: `⛔ **Non hai visite forzate disponibili!**\nDisponibili: ${currentInfo.forced}\nGià programmate (timer): ${usedForcedScheduled}`, 
+                            ephemeral: true 
+                        });
+                    }
+                } else if (mode === 'mode_hidden') {
+                    if (currentInfo.hidden - usedHiddenScheduled <= 0) {
+                        return interaction.reply({ 
+                            content: `⛔ **Non hai visite nascoste disponibili!**\nDisponibili: ${currentInfo.hidden}\nGià programmate (timer): ${usedHiddenScheduled}`, 
+                            ephemeral: true 
+                        });
+                    }
+                } else {
+                    const remainingNormal = currentInfo.totalLimit - currentInfo.used;
+                    if (remainingNormal - usedTotalScheduled <= 0) {
+                        return interaction.reply({ 
+                            content: `⛔ **Non hai visite normali disponibili!**\nRimanenti: ${remainingNormal}\nGià programmate (timer): ${usedTotalScheduled}`, 
+                            ephemeral: true 
+                        });
+                    }
+                }
+            } else {
+            // Logica originale per preset notturno/diurno
             // 1. Recupera info limiti fase successiva
-            // Se siamo in Giorno, ci darà i limiti della Notte. Se siamo in Notte, quelli del Giorno.
             const nextPhaseInfo = await db.housing.getNextPhaseVisitInfo(userId);
             if (!nextPhaseInfo) return interaction.reply({ content: "❌ Errore dati visite.", ephemeral: true });
             
-            const mode = session.knockMode;
             const nextPhaseLabel = nextPhaseInfo.nextMode === 'DAY' ? 'diurne' : 'notturne';
             
             // 2. Conta i preset GIÀ salvati per la fase di destinazione
@@ -425,14 +462,12 @@ function registerPresetInteractions(client) {
 
             // 3. Verifica disponibilità MATEMATICA (Limite Permanente - Preset Già Fatti)
             if (mode === 'mode_forced') {
-                // Esempio: Limite 1 - Usate 1 = 0 (Errore se provi a farne un'altra)
                 if (nextPhaseInfo.forcedLimit - usedForced <= 0) {
                     return interaction.reply({ 
                         content: `⛔ **Non hai visite forzate ${nextPhaseLabel} disponibili!**\nLimite totale: ${nextPhaseInfo.forcedLimit}\nGià programmate: ${usedForced}`, 
                         ephemeral: true 
                     });
                 }
-                // NON scaliamo nulla dal DB
             } else if (mode === 'mode_hidden') {
                 if (nextPhaseInfo.hiddenLimit - usedHidden <= 0) {
                     return interaction.reply({ 
@@ -440,9 +475,7 @@ function registerPresetInteractions(client) {
                         ephemeral: true 
                     });
                 }
-                // NON scaliamo nulla dal DB
             } else {
-                // Visita normale (controlla il totale generale base+extra)
                 if (nextPhaseInfo.totalLimit - usedTotal <= 0) {
                     return interaction.reply({ 
                         content: `⛔ **Non hai visite normali ${nextPhaseLabel} disponibili!**\nLimite totale: ${nextPhaseInfo.totalLimit}\nGià programmate: ${usedTotal}`, 
@@ -450,6 +483,7 @@ function registerPresetInteractions(client) {
                     });
                 }
             }
+            } // fine else (notturno/diurno)
             
             const details = { targetChannelId, mode: session.knockMode };
             // Salviamo il preset SENZA toccare i contatori permanenti e SENZA salvare visitPhaseScaled
