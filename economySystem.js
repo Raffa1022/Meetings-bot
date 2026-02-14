@@ -267,6 +267,17 @@ module.exports = function initEconomySystem(client) {
         const args = message.content.slice(PREFIX.length).trim().split(/ +/);
         const command = args.shift().toLowerCase();
 
+        // ✅ FIX: BLOCCO LISTA MORTI - Impedisce ai giocatori nella lista morti di usare QUALSIASI comando economy
+        const economyCommands = ['pagamento', 'bilancio', 'inventario', 'paga', 'mercato', 'compra', 'usa', 'classifica', 'ritira', 'regala'];
+        if (economyCommands.includes(command)) {
+            if (!isAdmin(message.member)) {
+                const markedForDeath = await db.moderation.isMarkedForDeath(message.author.id);
+                if (markedForDeath) {
+                    return message.reply("☠️ **Sei nella lista morti!** Non puoi utilizzare comandi del bot fino al processamento.");
+                }
+            }
+        }
+
         try {
             switch (command) {
                 case 'pagamento':   return await handlePagamento(message, args);
@@ -1182,6 +1193,8 @@ const shopEffects = {
         if (!alreadyVB) {
             await db.moderation.addBlockedVB(details.targetUserId, target.user.tag);
             results.push(`🚫 **${target.user.tag}** → Visitblock`);
+            // ✅ FIX: Emetti evento per cancellare knock attivi
+            eventBus.emit('vb:applied', details.targetUserId);
         }
         if (!alreadyRB) {
             await db.moderation.addBlockedRB(details.targetUserId, target.user.tag);
@@ -1198,6 +1211,8 @@ const shopEffects = {
             if (!(await db.moderation.isBlockedVB(partner.id))) {
                 await db.moderation.addBlockedVB(partner.id, partner.user.tag);
                 results.push(`🚫 **${partner.user.tag}** (partner) → Visitblock`);
+                // ✅ FIX: Emetti evento anche per il partner
+                eventBus.emit('vb:applied', partner.id);
             }
             if (!(await db.moderation.isBlockedRB(partner.id))) {
                 await db.moderation.addBlockedRB(partner.id, partner.user.tag);
@@ -1396,10 +1411,24 @@ const shopEffects = {
             new ButtonBuilder().setCustomId(`tenda_no_${userId}`).setLabel('❌ Rifiuta').setStyle(ButtonStyle.Danger),
         );
 
-        const requestMsg = await newHomeChannel.send({
+        // ✅ FIX: Controlla se il proprietario è fisicamente presente nella casa
+        const ownerIsInHouse = newHomeChannel.permissionOverwrites.cache.has(ownerId);
+
+        // Se il proprietario NON è in casa, manda la richiesta nella sua chat privata
+        let requestChannel = newHomeChannel;
+        if (!ownerIsInHouse) {
+            const catPriv = guild.channels.cache.get(HOUSING.CATEGORIA_CHAT_PRIVATE);
+            const ownerPrivateChannel = catPriv?.children.cache.find(ch =>
+                ch.type === ChannelType.GuildText &&
+                ch.permissionOverwrites.cache.some(p => p.id === ownerId && p.allow.has(PermissionsBitField.Flags.ViewChannel))
+            );
+            if (ownerPrivateChannel) requestChannel = ownerPrivateChannel;
+        }
+
+        const requestMsg = await requestChannel.send({
             content: `🔔 <@${owner.id}>`,
             embeds: [new EmbedBuilder().setColor('Blue').setTitle('⛺ Richiesta Trasferimento')
-                .setDescription(`${member} vuole trasferirsi qui con una tenda.\nAccetti?`)],
+                .setDescription(`${member} vuole trasferirsi in **${newHomeChannel.name}** con una tenda.\nAccetti?`)],
             components: [row]
         });
 
