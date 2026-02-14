@@ -293,9 +293,9 @@ module.exports = function initMeetingSystem(client) {
                         const playerMember = await message.guild.members.fetch(slot.player);
                         const sponsorMember = await message.guild.members.fetch(slot.sponsor);
                         
-                        // Usa il nome attuale (nickname se presente, altrimenti username)
-                        const playerCurrentName = playerMember.nickname || playerMember.user.username;
-                        const sponsorCurrentName = sponsorMember.nickname || sponsorMember.user.username;
+                        // ✅ FIX: Usa displayName che restituisce nickname se presente, altrimenti display name globale, poi username
+                        const playerCurrentName = playerMember.displayName;
+                        const sponsorCurrentName = sponsorMember.displayName;
                         
                         // Rimuovi eventuale vecchio pattern (xxx) se esiste
                         const cleanPlayerName = playerCurrentName.replace(/\s*\([^)]*\)\s*$/g, '').trim();
