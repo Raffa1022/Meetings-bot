@@ -1,3 +1,4 @@
+
 // ==========================================
 // ✨ ABILITY SYSTEM
 // ==========================================
@@ -19,6 +20,12 @@ module.exports = function initAbilitySystem(client) {
             message.channel.parentId !== HOUSING.CATEGORIA_CHAT_PRIVATE) return;
         if (!message.member.roles.cache.has(RUOLI.ABILITA))
             return message.reply("⛔ Non possiedi l'abilità necessaria.");
+
+        // ✅ FIX: BLOCCO LISTA MORTI
+        const markedForDeath = await db.moderation.isMarkedForDeath(message.author.id);
+        if (markedForDeath) {
+            return message.reply("☠️ **Sei nella lista morti!** Non puoi utilizzare comandi del bot fino al processamento.");
+        }
 
         // 🔥 CHECK BLOCCO FASE PRESET
         const isPresetActive = await db.moderation.isPresetPhaseActive();
