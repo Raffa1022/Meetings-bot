@@ -207,7 +207,7 @@ module.exports = function registerPlayerCommands(client) {
                 await db.housing.setHome(message.author.id, newHomeChannel.id);
                 for (const s of sponsors) await db.housing.setHome(s.id, newHomeChannel.id);
                 
-                await newHomeChannel.permissionOverwrites.edit(message.author.id, { ViewChannel: true, SendMessages: true });
+                await newHomeChannel.permissionOverwrites.edit(message.author.id, { ViewChannel: true, SendMessages: true, ReadMessageHistory: true });
                 const pinnedMsg = await newHomeChannel.send(`🔑 **${message.author}**, questa è la tua dimora privata.`);
                 await pinnedMsg.pin();
                 return message.reply("✅ Trasferimento completato!");
@@ -252,7 +252,7 @@ module.exports = function registerPlayerCommands(client) {
                     for (const s of sponsors) await cleanOldHome(s.id, message.guild);
                     await db.housing.setHome(message.author.id, newHomeChannel.id);
                     for (const s of sponsors) await db.housing.setHome(s.id, newHomeChannel.id);
-                    await newHomeChannel.permissionOverwrites.edit(message.author.id, { ViewChannel: true, SendMessages: true });
+                    await newHomeChannel.permissionOverwrites.edit(message.author.id, { ViewChannel: true, SendMessages: true, ReadMessageHistory: true });
                     const newKeyMsg = await newHomeChannel.send(`🔑 ${message.author}, dimora assegnata (Comproprietario).`);
                     await newKeyMsg.pin();
                 } else {
