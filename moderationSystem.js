@@ -11,6 +11,7 @@ const {
 const { HOUSING, RUOLI } = require('./config');
 const db = require('./db');
 const { isAdmin } = require('./helpers');
+const eventBus = require('./eventBus');
 
 const PREFIX = '!';
 
@@ -126,6 +127,8 @@ module.exports = function initModerationSystem(client) {
             // Aggiungi player
             await db.moderation.addBlockedVB(mention.id, mention.user.tag);
             let response = `🚫 **${mention.user.tag}** messo in Visitblock (no !bussa/!torna).`;
+            // ✅ FIX: Emetti evento per cancellare knock attivi
+            eventBus.emit('vb:applied', mention.id);
 
             // Aggiungi anche il partner
             const partner = await findPartner(mention, message.guild);
@@ -134,6 +137,8 @@ module.exports = function initModerationSystem(client) {
                 if (!partnerVB) {
                     await db.moderation.addBlockedVB(partner.id, partner.user.tag);
                     response += `\n🚫 Anche **${partner.user.tag}** (partner) messo in Visitblock.`;
+                    // ✅ FIX: Emetti evento anche per il partner
+                    eventBus.emit('vb:applied', partner.id);
                 }
             }
 
@@ -485,15 +490,17 @@ module.exports = function initModerationSystem(client) {
                 if (targetMember.roles.cache.has(RUOLI.ALIVE)) {
                     roleOps.push(targetMember.roles.remove(RUOLI.ALIVE).catch(() => {}));
                     roleOps.push(targetMember.roles.add(RUOLI.DEAD).catch(() => {}));
-                    // ✅ FIX: Imposta visite a 0 per DEAD
+                    // ✅ FIX: Imposta visite a 0 per DEAD (incluse dayLimits)
                     await db.housing.setVisitLimits(targetMember.id, 0, 0, 0);
+                    await db.housing.setDayLimits(targetMember.id, 0, 0, 0);
                     await db.housing.resetPlayerVisits(targetMember.id);
                     results.push(`☠️ ${targetMember.displayName} → <@&${RUOLI.DEAD}> (0 visite)`);
                 } else if (targetMember.roles.cache.has(RUOLI.SPONSOR)) {
                     roleOps.push(targetMember.roles.remove(RUOLI.SPONSOR).catch(() => {}));
                     roleOps.push(targetMember.roles.add(RUOLI.SPONSOR_DEAD).catch(() => {}));
-                    // ✅ FIX: Imposta visite a 0 per SPONSOR_DEAD
+                    // ✅ FIX: Imposta visite a 0 per SPONSOR_DEAD (incluse dayLimits)
                     await db.housing.setVisitLimits(targetMember.id, 0, 0, 0);
+                    await db.housing.setDayLimits(targetMember.id, 0, 0, 0);
                     await db.housing.resetPlayerVisits(targetMember.id);
                     results.push(`💀 ${targetMember.displayName} (sponsor) → <@&${RUOLI.SPONSOR_DEAD}> (0 visite)`);
                 }
@@ -503,15 +510,17 @@ module.exports = function initModerationSystem(client) {
                     if (partner.roles.cache.has(RUOLI.SPONSOR)) {
                         roleOps.push(partner.roles.remove(RUOLI.SPONSOR).catch(() => {}));
                         roleOps.push(partner.roles.add(RUOLI.SPONSOR_DEAD).catch(() => {}));
-                        // ✅ FIX: Imposta visite a 0 per partner SPONSOR_DEAD
+                        // ✅ FIX: Imposta visite a 0 per partner SPONSOR_DEAD (incluse dayLimits)
                         await db.housing.setVisitLimits(partner.id, 0, 0, 0);
+                        await db.housing.setDayLimits(partner.id, 0, 0, 0);
                         await db.housing.resetPlayerVisits(partner.id);
                         results.push(`💀 ${partner.displayName} (partner) → <@&${RUOLI.SPONSOR_DEAD}> (0 visite)`);
                     } else if (partner.roles.cache.has(RUOLI.ALIVE)) {
                         roleOps.push(partner.roles.remove(RUOLI.ALIVE).catch(() => {}));
                         roleOps.push(partner.roles.add(RUOLI.DEAD).catch(() => {}));
-                        // ✅ FIX: Imposta visite a 0 per partner DEAD
+                        // ✅ FIX: Imposta visite a 0 per partner DEAD (incluse dayLimits)
                         await db.housing.setVisitLimits(partner.id, 0, 0, 0);
+                        await db.housing.setDayLimits(partner.id, 0, 0, 0);
                         await db.housing.resetPlayerVisits(partner.id);
                         results.push(`☠️ ${partner.displayName} (partner) → <@&${RUOLI.DEAD}> (0 visite)`);
                     }
