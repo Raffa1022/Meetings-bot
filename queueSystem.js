@@ -443,20 +443,35 @@ async function executeHousingAction(queueItem) {
                 } else {
                     await msg.reply({ content: "❌ Qualcuno ha rifiutato.", allowedMentions: { parse: [] } });
                     
-                    const candidates = guild.channels.cache.filter(c => 
-                        c.parentId === HOUSING.CATEGORIA_CASE && 
-                        c.permissionOverwrites.cache.has(member.id)
-                    );
+                    // Recupera i giocatori fisicamente presenti nella casa (esclusi quelli da !pubblico)
+                    const presentPlayers = [];
+                    for (const [id, overwrite] of targetCh.permissionOverwrites.cache) {
+                        if (overwrite.type !== 1) continue; // Solo Member, non Role
+                        if (id === member.id) continue; // Escludi chi ha bussato
+                        try {
+                            const m = await guild.members.fetch(id);
+                            if (m && !m.user.bot && m.roles.cache.has(RUOLI.ALIVE)) {
+                                presentPlayers.push(m);
+                            }
+                        } catch {}
+                    }
                     
-                    // Notifica rifiuto dove si trova l'utente realmente
-                    let currentFrom = candidates.find(c => c.id !== myHomeId);
-                    if (!currentFrom) currentFrom = candidates.find(c => c.id === myHomeId);
-
-                    if (currentFrom) {
-                        currentFrom.send({
-                            content: `⛔ ${member}, entrata rifiutata.`,
-                            allowedMentions: { parse: [] }
-                        }).catch(()=>{});
+                    const playerList = presentPlayers.length > 0 
+                        ? presentPlayers.map(p => `${p}`).join(', ')
+                        : 'Nessuno';
+                    
+                    // Invia il messaggio nella chat privata dell'utente (categoria CHAT_PRIVATE)
+                    const privateCategory = guild.channels.cache.get(HOUSING.CATEGORIA_CHAT_PRIVATE);
+                    if (privateCategory) {
+                        const userPrivateChannel = privateCategory.children.cache.find(ch =>
+                            ch.type === 0 &&
+                            ch.permissionOverwrites.cache.some(p => p.id === member.id && p.allow.has('ViewChannel'))
+                        );
+                        if (userPrivateChannel) {
+                            userPrivateChannel.send({
+                                content: `⛔ ${member}, entrata rifiutata.\n👥 Giocatori presenti: ${playerList}`,
+                            }).catch(() => {});
+                        }
                     }
                 }
             } catch (err) {
