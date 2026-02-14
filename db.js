@@ -227,6 +227,17 @@ const housing = {
             } 
         });
     },
+
+    // ✅ FIX: Refund visite per cancellazione knock da VB
+    async refundNormalVisit(userId) {
+        return HousingModel.updateOne(H_ID, { $inc: { [`playerVisits.${userId}`]: -1 } });
+    },
+    async refundForcedVisit(userId) {
+        return HousingModel.updateOne(H_ID, { $inc: { [`forcedVisits.${userId}`]: 1 } });
+    },
+    async refundHiddenVisit(userId) {
+        return HousingModel.updateOne(H_ID, { $inc: { [`hiddenVisits.${userId}`]: 1 } });
+    },
 async incrementSpecificPhaseLimit(userId, field) {
         // field può essere: 'dayForcedLimit', 'nightForcedLimit', 'dayHiddenLimit', 'nightHiddenLimit', 'dayBaseLimit', 'nightBaseLimit'
         if (field === 'nightForcedLimit') {
@@ -706,7 +717,7 @@ const meeting = {
 
     async swapMeetingData(p1Id, p2Id) {
         const doc = await MeetingModel.findOne(M_ID, {
-            meetingCounts: 1, letturaCounts: 1, activeGameSlots: 1
+            meetingCounts: 1, letturaCounts: 1, activeGameSlots: 1, activeUsers: 1
         }).lean();
         if (!doc) return;
 
@@ -741,6 +752,38 @@ const meeting = {
                 }
             });
         }
+
+        // ✅ FIX: Swap activeUsers - Se p1 era attivo, ora p2 lo è (e viceversa)
+        const activeUsers = doc.activeUsers || [];
+        const p1Active = activeUsers.includes(p1Id);
+        const p2Active = activeUsers.includes(p2Id);
+        
+        if (p1Active && !p2Active) {
+            // p1 era in meeting, ora p2 prende il suo posto
+            const pullOps = { activeUsers: p1Id };
+            const pushOps = { activeUsers: p2Id };
+            const update = {};
+            if (Object.keys(setOps).length) update.$set = setOps;
+            if (Object.keys(unsetOps).length) update.$unset = unsetOps;
+            if (Object.keys(update).length) {
+                await MeetingModel.updateOne(M_ID, update);
+            }
+            await MeetingModel.updateOne(M_ID, { $pull: pullOps });
+            await MeetingModel.updateOne(M_ID, { $addToSet: pushOps });
+            return;
+        } else if (!p1Active && p2Active) {
+            // p2 era in meeting, ora p1 prende il suo posto
+            const update = {};
+            if (Object.keys(setOps).length) update.$set = setOps;
+            if (Object.keys(unsetOps).length) update.$unset = unsetOps;
+            if (Object.keys(update).length) {
+                await MeetingModel.updateOne(M_ID, update);
+            }
+            await MeetingModel.updateOne(M_ID, { $pull: { activeUsers: p2Id } });
+            await MeetingModel.updateOne(M_ID, { $addToSet: { activeUsers: p1Id } });
+            return;
+        }
+        // Se entrambi attivi o entrambi non attivi, non serve swap activeUsers
 
         const update = {};
         if (Object.keys(setOps).length) update.$set = setOps;
