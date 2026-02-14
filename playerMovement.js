@@ -73,6 +73,26 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
         await Promise.all(sponsorDeletes);
     }
 
+    // ✅ FIX 7: Pulizia TUTTE le case dove il player ha ancora permessi (eccetto la nuova destinazione e la propria home)
+    const myHomeId = await db.housing.getHome(member.id);
+    const allHouses = member.guild.channels.cache.filter(c =>
+        c.parentId === HOUSING.CATEGORIA_CASE &&
+        c.id !== newChannel.id &&
+        c.id !== myHomeId &&
+        c.permissionOverwrites.cache.has(member.id)
+    );
+    for (const [, staleHouse] of allHouses) {
+        // Pulisci eventuali flag hidden rimasti
+        await db.housing.clearHiddenEntry(member.id, staleHouse.id).catch(() => {});
+        await staleHouse.permissionOverwrites.delete(member.id).catch(() => {});
+        // Pulisci anche sponsor
+        for (const s of sponsors) {
+            if (staleHouse.permissionOverwrites.cache.has(s.id)) {
+                await staleHouse.permissionOverwrites.delete(s.id).catch(() => {});
+            }
+        }
+    }
+
     // --- INGRESSO nel nuovo canale ---
     const perms = { ViewChannel: true, SendMessages: true, ReadMessageHistory: true };
 
