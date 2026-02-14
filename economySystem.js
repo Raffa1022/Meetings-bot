@@ -1378,7 +1378,7 @@ const shopEffects = {
             await db.housing.setHome(userId, newHomeChannel.id);
             for (const s of sponsors) await db.housing.setHome(s.id, newHomeChannel.id);
 
-            await newHomeChannel.permissionOverwrites.edit(userId, { ViewChannel: true, SendMessages: true });
+            await newHomeChannel.permissionOverwrites.edit(userId, { ViewChannel: true, SendMessages: true, ReadMessageHistory: true });
             const pinnedMsg = await newHomeChannel.send(`🔑 **${member}**, questa è la tua dimora privata.`);
             await pinnedMsg.pin();
 
@@ -1417,7 +1417,7 @@ const shopEffects = {
                 await db.housing.setHome(userId, newHomeChannel.id);
                 for (const s of sponsors) await db.housing.setHome(s.id, newHomeChannel.id);
 
-                await newHomeChannel.permissionOverwrites.edit(userId, { ViewChannel: true, SendMessages: true });
+                await newHomeChannel.permissionOverwrites.edit(userId, { ViewChannel: true, SendMessages: true, ReadMessageHistory: true });
                 const pinnedMsg = await newHomeChannel.send(`🔑 ${member}, dimora assegnata (Comproprietario).`);
                 await pinnedMsg.pin();
 
