@@ -27,7 +27,7 @@ module.exports = async function handleAdminCommand(message, command, args, clien
             db.housing.setHome(targetUser.id, targetChannel.id),
             targetChannel.permissionOverwrites.set([
                 { id: message.guild.id, deny: [PermissionsBitField.Flags.ViewChannel] },
-                { id: targetUser.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages] },
+                { id: targetUser.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory] },
                 { id: client.user.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.ManageChannels] }
             ]),
         ]);
@@ -361,8 +361,14 @@ module.exports = async function handleAdminCommand(message, command, args, clien
 
         try {
             const pinned = await targetChannel.messages.fetchPinned();
-            const keyMsg = pinned.find(m => m.content.includes("questa è la tua dimora privata"));
-            if (keyMsg) await keyMsg.delete();
+            // Rimuovi TUTTI i pin relativi a dimora (sia "dimora privata" che "dimora assegnata (Comproprietario)")
+            const keyMsgs = pinned.filter(m => 
+                m.content.includes("questa è la tua dimora privata") || 
+                m.content.includes("dimora assegnata")
+            );
+            for (const [, keyMsg] of keyMsgs) {
+                await keyMsg.delete().catch(() => {});
+            }
         } catch {}
 
         const membersInside = [];
@@ -503,7 +509,7 @@ module.exports = async function handleAdminCommand(message, command, args, clien
         const annunci = message.guild.channels.cache.get(HOUSING.CANALE_ANNUNCI);
         if (annunci) {
             annunci.send({
-                content: `<@&${RUOLI.ALIVE}> <@&${RUOLI.SPONSOR}>\n🏡|${formatName(targetChannel.name)} casa è stata distrutta`,
+                content: `<@&${RUOLI.ALIVE}> <@&${RUOLI.SPONSOR}>\n🏡|${formatName(targetChannel.name)} è stata distrutta`,
                 files: [GIF.DISTRUZIONE]
             });
         }
@@ -524,7 +530,7 @@ module.exports = async function handleAdminCommand(message, command, args, clien
         const annunci = message.guild.channels.cache.get(HOUSING.CANALE_ANNUNCI);
         if (annunci) {
             annunci.send({
-                content: `<@&${RUOLI.ALIVE}> <@&${RUOLI.SPONSOR}>\n:house_with_garden:|${formatName(targetChannel.name)} casa è stata ricostruita`,
+                content: `<@&${RUOLI.ALIVE}> <@&${RUOLI.SPONSOR}>\n:house_with_garden:|${formatName(targetChannel.name)} è stata ricostruita`,
                 files: [GIF.RICOSTRUZIONE]
             });
         }
