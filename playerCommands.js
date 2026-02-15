@@ -281,9 +281,10 @@ module.exports = function registerPlayerCommands(client) {
                 if (allHomes[userId] !== targetChannel.id) continue;
                 try {
                     const member = await message.guild.members.fetch(userId);
+                    // FIX: Proprietario appare SEMPRE se è ALIVE e non è SPONSOR,
+                    // indipendentemente dalla presenza fisica in casa
                     if (member.roles.cache.has(RUOLI.ALIVE) && 
-                        !member.roles.cache.has(RUOLI.SPONSOR) &&
-                        targetChannel.permissionOverwrites.cache.has(userId)) {
+                        !member.roles.cache.has(RUOLI.SPONSOR)) {
                         ownerIds.push(userId);
                     }
                 } catch {}
