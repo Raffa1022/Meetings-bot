@@ -73,26 +73,6 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
         await Promise.all(sponsorDeletes);
     }
 
-    // ✅ FIX 7: Pulizia TUTTE le case dove il player ha ancora permessi (eccetto la nuova destinazione e la propria home)
-    const myHomeId = await db.housing.getHome(member.id);
-    const allHouses = member.guild.channels.cache.filter(c =>
-        c.parentId === HOUSING.CATEGORIA_CASE &&
-        c.id !== newChannel.id &&
-        c.id !== myHomeId &&
-        c.permissionOverwrites.cache.has(member.id)
-    );
-    for (const [, staleHouse] of allHouses) {
-        // Pulisci eventuali flag hidden rimasti
-        await db.housing.clearHiddenEntry(member.id, staleHouse.id).catch(() => {});
-        await staleHouse.permissionOverwrites.delete(member.id).catch(() => {});
-        // Pulisci anche sponsor
-        for (const s of sponsors) {
-            if (staleHouse.permissionOverwrites.cache.has(s.id)) {
-                await staleHouse.permissionOverwrites.delete(s.id).catch(() => {});
-            }
-        }
-    }
-
     // --- INGRESSO nel nuovo canale ---
     const perms = { ViewChannel: true, SendMessages: true, ReadMessageHistory: true };
 
@@ -104,6 +84,28 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
         ...sponsors.map(s => db.housing.setPlayerMode(s.id, isSilent ? 'HIDDEN' : 'NORMAL')),
     ];
     await Promise.all(enterOps);
+
+    // --- CLEANUP GLOBALE: Rimuovi permessi RESIDUI da TUTTE le case tranne destinazione ---
+    // Questo previene il bug "in due case contemporaneamente"
+    const allCaseChannels = member.guild.channels.cache.filter(c =>
+        c.parentId === HOUSING.CATEGORIA_CASE &&
+        c.id !== newChannel.id // Tieni solo la destinazione
+    );
+
+    const cleanupOps = [];
+    for (const [, house] of allCaseChannels) {
+        // Pulisci permessi residui del giocatore
+        if (house.permissionOverwrites.cache.has(member.id)) {
+            cleanupOps.push(house.permissionOverwrites.delete(member.id).catch(() => {}));
+        }
+        // Pulisci permessi residui degli sponsor
+        for (const s of sponsors) {
+            if (house.permissionOverwrites.cache.has(s.id)) {
+                cleanupOps.push(house.permissionOverwrites.delete(s.id).catch(() => {}));
+            }
+        }
+    }
+    if (cleanupOps.length > 0) await Promise.all(cleanupOps);
 
     // FIX: Narrazione ingresso solo per giocatore principale
     if (!isSilent && entryMessage && isMainPlayer) {
