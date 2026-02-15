@@ -1,3 +1,4 @@
+
 // ==========================================
 // 👤 COMANDI GIOCATORE HOUSING
 // bussa, torna, trasferimento, chi, rimaste, cambio, rimuovi, preset
@@ -70,6 +71,13 @@ module.exports = function registerPlayerCommands(client) {
             
             // ✅ FIX: Se hai permessi solo nella tua casa (e non in altre), sei già a casa
             if (housesWithPerms.size === 1 && housesWithPerms.first().id === homeId) {
+                return message.channel.send("🏠 Sei già nella tua casa! Non puoi usare !torna.");
+            }
+            
+            // ✅ FIX AGGIUNTIVO: Se non hai permessi in nessun'altra casa oltre la tua, sei già a casa
+            // Questo cattura il caso in cui la prima volta i permessi non sono sincronizzati
+            const otherHouses = housesWithPerms.filter(h => h.id !== homeId);
+            if (otherHouses.size === 0) {
                 return message.channel.send("🏠 Sei già nella tua casa! Non puoi usare !torna.");
             }
 
