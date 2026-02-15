@@ -1,4 +1,3 @@
-
 // ==========================================
 // 👤 COMANDI GIOCATORE HOUSING
 // bussa, torna, trasferimento, chi, rimaste, cambio, rimuovi, preset
@@ -59,11 +58,15 @@ module.exports = function registerPlayerCommands(client) {
             if (!homeChannel) return message.channel.send("❌ Errore casa.");
 
             // ✅ FIX: Trova TUTTE le case dove hai permessi (potrebbero essere 2 dopo visita nascosta/normale/forzata)
-            const housesWithPerms = message.guild.channels.cache.filter(c =>
-                c.parentId === HOUSING.CATEGORIA_CASE &&
-                c.type === ChannelType.GuildText &&
-                c.permissionOverwrites.cache.has(message.author.id)
-            );
+            // Usa .some() invece di .cache.has() perché la cache potrebbe non essere aggiornata dopo !assegnacasa
+            const housesWithPerms = message.guild.channels.cache.filter(c => {
+                if (c.parentId !== HOUSING.CATEGORIA_CASE) return false;
+                if (c.type !== ChannelType.GuildText) return false;
+                // Verifica permessi personali in modo più affidabile
+                return c.permissionOverwrites.cache.some(
+                    overwrite => overwrite.id === message.author.id && overwrite.type === 1
+                );
+            });
 
             if (housesWithPerms.size === 0) {
                 return message.channel.send("🏠 Non sei in nessuna casa! Non puoi usare !torna.");
