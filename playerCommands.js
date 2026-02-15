@@ -58,14 +58,14 @@ module.exports = function registerPlayerCommands(client) {
             if (!homeChannel) return message.channel.send("❌ Errore casa.");
 
             // ✅ FIX: Trova TUTTE le case dove hai permessi (potrebbero essere 2 dopo visita nascosta/normale/forzata)
-            // Usa .some() invece di .cache.has() perché la cache potrebbe non essere aggiornata dopo !assegnacasa
+            // Usa .permissionsFor() invece di .cache perché la cache potrebbe non essere aggiornata dopo !assegna
+            const member = message.member;
             const housesWithPerms = message.guild.channels.cache.filter(c => {
                 if (c.parentId !== HOUSING.CATEGORIA_CASE) return false;
                 if (c.type !== ChannelType.GuildText) return false;
-                // Verifica permessi personali in modo più affidabile
-                return c.permissionOverwrites.cache.some(
-                    overwrite => overwrite.id === message.author.id && overwrite.type === 1
-                );
+                // Verifica che hai permessi ViewChannel effettivi (considera anche overwrite personali)
+                const perms = c.permissionsFor(member);
+                return perms && perms.has(PermissionsBitField.Flags.ViewChannel);
             });
 
             if (housesWithPerms.size === 0) {
