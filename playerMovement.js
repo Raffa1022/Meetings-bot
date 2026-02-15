@@ -26,8 +26,8 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
     const sponsors = await getSponsorsToMove(member, member.guild);
     let channelToLeave = oldChannel;
 
-    // Se arriva da chat privata, cerca la casa attuale
-    if (oldChannel && oldChannel.parentId === HOUSING.CATEGORIA_CHAT_PRIVATE) {
+    // Se non arriva da una casa, cerca la casa attuale dove ha i permessi
+    if (!oldChannel || oldChannel.parentId !== HOUSING.CATEGORIA_CASE) {
         const currentHouse = member.guild.channels.cache.find(c =>
             c.parentId === HOUSING.CATEGORIA_CASE &&
             c.permissionsFor(member).has(PermissionsBitField.Flags.ViewChannel) &&
