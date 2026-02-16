@@ -93,9 +93,17 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
     // --- INGRESSO nel nuovo canale ---
     const perms = { ViewChannel: true, SendMessages: true, ReadMessageHistory: true };
 
+    // ✅ FIX: Cancella vecchi overwrite PRIMA di ricrearli
+    // Quando un canale aveva ViewChannel: false, Discord non ricarica la cronologia
+    // con un semplice edit(). Cancellando e ricreando, Discord tratta l'accesso come nuovo
+    // e carica tutti i messaggi precedenti (con ReadMessageHistory: true).
+    const deleteOps = [newChannel.permissionOverwrites.delete(member.id).catch(() => {})];
+    for (const s of sponsors) {
+        deleteOps.push(newChannel.permissionOverwrites.delete(s.id).catch(() => {}));
+    }
+    await Promise.all(deleteOps);
+
     // Player + Sponsor entrano in parallelo
-    // ✅ FIX: Usa edit() invece di create() per preservare la continuità del canale
-    // e permettere la lettura della cronologia messaggi precedenti
     const enterOps = [
         newChannel.permissionOverwrites.edit(member.id, perms),
         db.housing.setPlayerMode(member.id, isSilent ? 'HIDDEN' : 'NORMAL'),
