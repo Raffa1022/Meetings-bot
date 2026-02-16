@@ -70,7 +70,13 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
             if (channelToLeave.id === myHomeId) {
                 await channelToLeave.permissionOverwrites.edit(member.id, { ViewChannel: false, SendMessages: false }).catch(() => {});
             } else {
-                await channelToLeave.permissionOverwrites.delete(member.id).catch(() => {});
+                // ✅ FIX CRONOLOGIA: Invece di cancellare, imposta sola lettura nascosta
+                // Questo preserva ReadMessageHistory permettendo di leggere messaggi vecchi
+                await channelToLeave.permissionOverwrites.edit(member.id, {
+                    ViewChannel: false,
+                    SendMessages: false,
+                    ReadMessageHistory: true
+                }).catch(() => {});
             }
             
             // ✅ FIX: Notifica che un occupante è uscito (per auto-apertura porte)
@@ -84,7 +90,12 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
             if (channelToLeave.id === sponsorHomeId) {
                 await channelToLeave.permissionOverwrites.edit(s.id, { ViewChannel: false, SendMessages: false }).catch(() => {});
             } else {
-                await channelToLeave.permissionOverwrites.delete(s.id).catch(() => {});
+                // ✅ FIX CRONOLOGIA: Preserva ReadMessageHistory anche per sponsor
+                await channelToLeave.permissionOverwrites.edit(s.id, {
+                    ViewChannel: false,
+                    SendMessages: false,
+                    ReadMessageHistory: true
+                }).catch(() => {});
             }
         });
         await Promise.all(sponsorOps);
@@ -160,7 +171,12 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
                 }
                 // Se è già nascosto (ViewChannel: false), non fare nulla
             } else {
-                cleanupOps.push(house.permissionOverwrites.delete(member.id).catch(() => {}));
+                // ✅ FIX CRONOLOGIA: Preserva ReadMessageHistory invece di cancellare
+                cleanupOps.push(house.permissionOverwrites.edit(member.id, {
+                    ViewChannel: false,
+                    SendMessages: false,
+                    ReadMessageHistory: true
+                }).catch(() => {}));
             }
             cleanedChannelIds.push(house.id);
         }
@@ -174,7 +190,12 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
                         cleanupOps.push(house.permissionOverwrites.edit(s.id, { ViewChannel: false, SendMessages: false }).catch(() => {}));
                     }
                 } else {
-                    cleanupOps.push(house.permissionOverwrites.delete(s.id).catch(() => {}));
+                    // ✅ FIX CRONOLOGIA: Preserva ReadMessageHistory anche per sponsor
+                    cleanupOps.push(house.permissionOverwrites.edit(s.id, {
+                        ViewChannel: false,
+                        SendMessages: false,
+                        ReadMessageHistory: true
+                    }).catch(() => {}));
                 }
             }
         }
