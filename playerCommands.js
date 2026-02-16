@@ -205,23 +205,55 @@ module.exports = function registerPlayerCommands(client) {
                 return sendTemp(message.channel, "⛔ Non hai il ruolo.");
 
             const newHomeChannel = message.channel;
-            const ownerId = await db.housing.findOwner(newHomeChannel.id);
+            
+            // ✅ FIX: Trova TUTTI i residenti di questa casa
+            const allResidents = await db.housing.findAllResidents(newHomeChannel.id);
 
-            if (ownerId === message.author.id)
+            if (allResidents.includes(message.author.id))
                 return message.reply("❌ Sei già a casa tua!");
 
-            if (!ownerId) {
+            if (allResidents.length === 0) {
+                // Casa senza residenti: trasferimento diretto, diventa proprietario originale
                 const sponsors = await getSponsorsToMove(message.member, message.guild);
+                
+                // ✅ FIX: Prima di trasferirsi, gestisci l'ownership della vecchia casa
+                const oldHomeId = await db.housing.getHome(message.author.id);
+                if (oldHomeId) {
+                    const oldOriginalOwner = await db.housing.getOriginalOwner(oldHomeId);
+                    if (oldOriginalOwner === message.author.id) {
+                        // Sto lasciando la mia casa originale: passa ownership al prossimo residente
+                        const oldResidents = await db.housing.findAllResidents(oldHomeId);
+                        const nextOwner = oldResidents.find(uid => uid !== message.author.id);
+                        if (nextOwner) {
+                            await db.housing.setOriginalOwner(oldHomeId, nextOwner);
+                        } else {
+                            await db.housing.removeOriginalOwner(oldHomeId);
+                        }
+                    }
+                }
+                
                 await cleanOldHome(message.author.id, message.guild);
                 for (const s of sponsors) await cleanOldHome(s.id, message.guild);
                 
                 await db.housing.setHome(message.author.id, newHomeChannel.id);
                 for (const s of sponsors) await db.housing.setHome(s.id, newHomeChannel.id);
                 
+                // ✅ FIX: Imposta come proprietario originale della nuova casa
+                await db.housing.setOriginalOwner(newHomeChannel.id, message.author.id);
+                
                 await newHomeChannel.permissionOverwrites.edit(message.author.id, { ViewChannel: true, SendMessages: true, ReadMessageHistory: true });
                 const pinnedMsg = await newHomeChannel.send(`🔑 **${message.author}**, questa è la tua dimora privata.`);
                 await pinnedMsg.pin();
                 return message.reply("✅ Trasferimento completato!");
+            }
+
+            // ✅ FIX: Trova il proprietario ORIGINALE della casa
+            let ownerId = await db.housing.getOriginalOwner(newHomeChannel.id);
+            
+            // Se non c'è un originalOwner registrato, usa il primo residente e registralo
+            if (!ownerId || !allResidents.includes(ownerId)) {
+                ownerId = allResidents[0];
+                await db.housing.setOriginalOwner(newHomeChannel.id, ownerId);
             }
 
             const owner = message.guild.members.cache.get(ownerId);
@@ -259,6 +291,22 @@ module.exports = function registerPlayerCommands(client) {
                 if (i.customId === `transfer_yes_${message.author.id}`) {
                     await i.update({ content: "✅ Accettato!", embeds: [], components: [] });
                     const sponsors = await getSponsorsToMove(message.member, message.guild);
+                    
+                    // ✅ FIX: Gestisci ownership della vecchia casa prima di trasferirsi
+                    const oldHomeId = await db.housing.getHome(message.author.id);
+                    if (oldHomeId) {
+                        const oldOriginalOwner = await db.housing.getOriginalOwner(oldHomeId);
+                        if (oldOriginalOwner === message.author.id) {
+                            const oldResidents = await db.housing.findAllResidents(oldHomeId);
+                            const nextOwner = oldResidents.find(uid => uid !== message.author.id);
+                            if (nextOwner) {
+                                await db.housing.setOriginalOwner(oldHomeId, nextOwner);
+                            } else {
+                                await db.housing.removeOriginalOwner(oldHomeId);
+                            }
+                        }
+                    }
+                    
                     await cleanOldHome(message.author.id, message.guild);
                     for (const s of sponsors) await cleanOldHome(s.id, message.guild);
                     await db.housing.setHome(message.author.id, newHomeChannel.id);
