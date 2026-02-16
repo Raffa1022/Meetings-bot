@@ -284,15 +284,8 @@ async function executeHousingAction(queueItem) {
             // 2. Cancellarlo e ricrearlo per forzare Discord a caricare TUTTA la cronologia
             // Se editassimo qui, Discord vedrebbe solo un cambio false->true e caricherebbe
             // solo i messaggi dal momento dell'edit in poi.
-
-            // Rimuovi permessi da tutte le case tranne home
-            for (const [houseId, house] of housesWithPerms) {
-                if (houseId !== homeId) {
-                    await house.permissionOverwrites.delete(member.id).catch(() => {});
-                    // ✅ FIX: Notifica uscita per auto-apertura porte
-                    eventBus.emit('house:occupant-left', { channelId: houseId });
-                }
-            }
+            
+            // ✅ NON cancellare i permessi qui - movePlayer gestisce tutto (uscita + ingresso)
 
             // MovePlayer gestisce l'entrata nella Home (inclusi i permessi)
             if (homeCh && guestHouse) {
