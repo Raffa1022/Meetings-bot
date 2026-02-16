@@ -68,6 +68,8 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
             // ✅ FIX: Se è la propria casa, NASCONDI l'overwrite (ViewChannel: false)
             // invece di cancellarlo, per preservare ReadMessageHistory e la continuità Discord
             if (channelToLeave.id === myHomeId) {
+                // ✅ FIX: Salva il timestamp di uscita per la cronologia !torna
+                await db.housing.setHomeLeftAt(member.id);
                 await channelToLeave.permissionOverwrites.edit(member.id, { ViewChannel: false, SendMessages: false }).catch(() => {});
             } else {
                 await channelToLeave.permissionOverwrites.delete(member.id).catch(() => {});
@@ -156,6 +158,8 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
             if (house.id === myHomeId) {
                 // Solo se ha ViewChannel allow (è "presente"), nascondilo
                 if (hasPhysicalAccess(house, member.id)) {
+                    // ✅ FIX: Salva timestamp uscita anche nel cleanup
+                    cleanupOps.push(db.housing.setHomeLeftAt(member.id));
                     cleanupOps.push(house.permissionOverwrites.edit(member.id, { ViewChannel: false, SendMessages: false }).catch(() => {}));
                 }
                 // Se è già nascosto (ViewChannel: false), non fare nulla
@@ -192,13 +196,81 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
         await newChannel.send(entryMessage);
     }
 
-    // ✅ FIX: Se stai tornando a casa, forza Discord a segnare i messaggi come letti
-    // fetchando l'ultimo messaggio. Questo previene il badge "2 notifiche" sui tuoi vecchi messaggi
+    // ✅ FIX: Se stai tornando a casa, mostra la cronologia dei messaggi persi
     if (isReturningHome) {
         try {
-            await newChannel.messages.fetch({ limit: 1 });
+            const leftAt = await db.housing.getHomeLeftAt(member.id);
+            if (leftAt) {
+                const leftTimestamp = new Date(leftAt).getTime();
+                
+                // Recupera i messaggi dal canale postati dopo l'uscita
+                // Discord API: fetchamo fino a 100 messaggi e filtriamo per timestamp
+                const allMessages = [];
+                let lastId = null;
+                let keepFetching = true;
+                
+                while (keepFetching) {
+                    const options = { limit: 100 };
+                    if (lastId) options.before = lastId;
+                    
+                    const batch = await newChannel.messages.fetch(options);
+                    if (batch.size === 0) break;
+                    
+                    for (const [, msg] of batch) {
+                        if (msg.createdTimestamp >= leftTimestamp) {
+                            // Includi solo messaggi di altri utenti (non del bot per la narrazione appena inviata)
+                            if (msg.author.id !== member.id && msg.content && !msg.content.includes('è ritornato')) {
+                                allMessages.push(msg);
+                            }
+                        } else {
+                            keepFetching = false;
+                            break;
+                        }
+                    }
+                    
+                    lastId = batch.last()?.id;
+                    if (batch.size < 100) keepFetching = false;
+                }
+                
+                // Ordina cronologicamente (dal più vecchio al più recente)
+                allMessages.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
+                
+                if (allMessages.length > 0) {
+                    // Costruisci il recap
+                    const recapLines = allMessages.map(msg => {
+                        const time = `<t:${Math.floor(msg.createdTimestamp / 1000)}:t>`;
+                        const author = msg.author.bot ? `🤖 ${msg.author.username}` : `${msg.member?.displayName || msg.author.username}`;
+                        // Tronca messaggi lunghi
+                        const content = msg.content.length > 200 ? msg.content.substring(0, 200) + '...' : msg.content;
+                        return `${time} **${author}:** ${content}`;
+                    });
+                    
+                    // Dividi in blocchi da max 1900 caratteri per rispettare il limite Discord
+                    const chunks = [];
+                    let currentChunk = '';
+                    
+                    for (const line of recapLines) {
+                        if ((currentChunk + '\n' + line).length > 1900) {
+                            if (currentChunk) chunks.push(currentChunk);
+                            currentChunk = line;
+                        } else {
+                            currentChunk = currentChunk ? currentChunk + '\n' + line : line;
+                        }
+                    }
+                    if (currentChunk) chunks.push(currentChunk);
+                    
+                    // Invia il recap
+                    await newChannel.send(`📜 **Cronologia messaggi mentre eri via** (${allMessages.length} messaggi):`);
+                    for (const chunk of chunks) {
+                        await newChannel.send(chunk);
+                    }
+                }
+                
+                // Pulisci il timestamp di uscita
+                await db.housing.clearHomeLeftAt(member.id);
+            }
         } catch (err) {
-            // Ignora errori (es. canale vuoto)
+            console.error('⚠️ Errore recap cronologia:', err.message);
         }
     }
 }
