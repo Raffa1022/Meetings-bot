@@ -355,9 +355,6 @@ async function executeHousingAction(queueItem) {
         // Crea una bussata e aspetta risposta
         await db.housing.createActiveKnock(member.id, targetCh.id);
         
-        // Invia messaggio di bussata nel canale target
-        const targetChannelId = queueItem.details.targetChannelId;
-        
         // Trova TUTTE le case dove il player ha accesso FISICO
         const housesWithPerms = guild.channels.cache.filter(c =>
             c.parentId === HOUSING.CATEGORIA_CASE &&
