@@ -27,7 +27,7 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
     const sponsors = await getSponsorsToMove(member, member.guild);
     let channelToLeave = oldChannel;
 
-    // ✅ FIX: Recupera la home del giocatore
+    // ✅ FIX: Recupera la home del giocatore per preservare l'overwrite
     const myHomeId = await db.housing.getHome(member.id);
 
     // Se non arriva da una casa, cerca la casa attuale dove ha i permessi
@@ -65,17 +65,37 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
                 await db.housing.clearHiddenEntry(member.id, channelToLeave.id);
             }
             
-            // 🔥 MODIFICA: CANCELLAZIONE TOTALE (Invece di nascondere)
-            // Questo è il trucco per far ricaricare la cronologia al rientro.
-            await channelToLeave.permissionOverwrites.delete(member.id).catch(() => {});
+            // ✅ FIX: Se è la propria casa, NASCONDI l'overwrite (ViewChannel: false)
+            // invece di cancellarlo, per preservare ReadMessageHistory e la continuità Discord
+            if (channelToLeave.id === myHomeId) {
+                await channelToLeave.permissionOverwrites.edit(member.id, { ViewChannel: false, SendMessages: false }).catch(() => {});
+            } else {
+                // ✅ FIX CRONOLOGIA: Mantieni ReadMessageHistory per vedere messaggi scritti mentre sei via
+                // Canale nascosto MA con accesso alla cronologia completa
+                await channelToLeave.permissionOverwrites.edit(member.id, {
+                    ViewChannel: false,       // Nascosto dalla lista
+                    SendMessages: false,      // Non può scrivere
+                    ReadMessageHistory: true  // ✅ MANTIENE cronologia per quando rientra
+                }).catch(() => {});
+            }
             
             // ✅ FIX: Notifica che un occupante è uscito (per auto-apertura porte)
             eventBus.emit('house:occupant-left', { channelId: channelToLeave.id });
         }
         // Rimuovi sponsor dalla vecchia casa (senza narrazione)
+        // ✅ FIX: Per sponsor sulla propria casa, nascondi overwrite come per il player
         const sponsorOps = sponsors.map(async (s) => {
-            if (channelToLeave.permissionOverwrites.cache.has(s.id)) {
-                await channelToLeave.permissionOverwrites.delete(s.id).catch(() => {});
+            if (!channelToLeave.permissionOverwrites.cache.has(s.id)) return;
+            const sponsorHomeId = await db.housing.getHome(s.id);
+            if (channelToLeave.id === sponsorHomeId) {
+                await channelToLeave.permissionOverwrites.edit(s.id, { ViewChannel: false, SendMessages: false }).catch(() => {});
+            } else {
+                // ✅ FIX CRONOLOGIA: Mantieni ReadMessageHistory anche per sponsor
+                await channelToLeave.permissionOverwrites.edit(s.id, {
+                    ViewChannel: false,
+                    SendMessages: false,
+                    ReadMessageHistory: true  // ✅ MANTIENE cronologia
+                }).catch(() => {});
             }
         });
         await Promise.all(sponsorOps);
@@ -84,22 +104,49 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
     // --- INGRESSO nel nuovo canale ---
     const perms = { ViewChannel: true, SendMessages: true, ReadMessageHistory: true };
 
-    // 🔥 PULIZIA PREVENTIVA + DELAY
-    // Assicuriamoci che non ci siano permessi vecchi che "bloccano" la cronologia
-    const deleteOps = [newChannel.permissionOverwrites.delete(member.id).catch(() => {})];
-    for (const s of sponsors) {
-        deleteOps.push(newChannel.permissionOverwrites.delete(s.id).catch(() => {}));
+    // ✅ FIX CRONOLOGIA MESSAGGI: Se stai tornando alla TUA home E l'overwrite esiste già
+    // con ViewChannel:false, allora cancellalo e ricrealo. Questo forza Discord a "resettare"
+    // lo stato del canale e caricare TUTTA la cronologia messaggi.
+    //
+    // PERCHÉ FUNZIONA: Quando un overwrite passa da ViewChannel:false → ViewChannel:true
+    // tramite EDIT, Discord carica solo i messaggi dal momento dell'edit. Ma se CANCELLIAMO
+    // l'overwrite (che aveva ViewChannel:false) e ne creiamo uno NUOVO (con ViewChannel:true),
+    // Discord tratta l'accesso come completamente nuovo e carica tutta la cronologia.
+    const isReturningHome = (newChannel.id === myHomeId);
+    const existingOverwrite = newChannel.permissionOverwrites.cache.get(member.id);
+    const hadViewChannelFalse = existingOverwrite && 
+                                existingOverwrite.deny?.has(PermissionsBitField.Flags.ViewChannel);
+    
+    // Se stai tornando a casa E l'overwrite aveva ViewChannel:false, cancellalo
+    if (isReturningHome && hadViewChannelFalse) {
+        console.log(`🔄 [FIX] Cancello overwrite nascosto di ${member.displayName} su home ${newChannel.name} per forzare reload cronologia`);
+        await newChannel.permissionOverwrites.delete(member.id).catch(() => {});
+        // Cancella anche per gli sponsor
+        for (const s of sponsors) {
+            const sponsorHomeId = await db.housing.getHome(s.id);
+            if (newChannel.id === sponsorHomeId) {
+                const sponsorOw = newChannel.permissionOverwrites.cache.get(s.id);
+                if (sponsorOw && sponsorOw.deny?.has(PermissionsBitField.Flags.ViewChannel)) {
+                    await newChannel.permissionOverwrites.delete(s.id).catch(() => {});
+                }
+            }
+        }
     }
-    await Promise.all(deleteOps);
+    // Se NON è la tua home, cancella sempre (comportamento normale)
+    else if (!isReturningHome) {
+        const deleteOps = [newChannel.permissionOverwrites.delete(member.id).catch(() => {})];
+        for (const s of sponsors) {
+            deleteOps.push(newChannel.permissionOverwrites.delete(s.id).catch(() => {}));
+        }
+        await Promise.all(deleteOps);
+    }
+    // Se stai tornando a casa ma l'overwrite NON aveva ViewChannel:false, fai solo edit
 
-    // ⏳ PAUSA CRUCIALE (500ms): Dà tempo a Discord di capire che sei "uscito" prima di farti rientrare
-    await new Promise(r => setTimeout(r, 500));
-
-    // Player + Sponsor entrano in parallelo (Creazione NUOVO permesso)
+    // Player + Sponsor entrano in parallelo
     const enterOps = [
-        newChannel.permissionOverwrites.create(member.id, perms),
+        newChannel.permissionOverwrites.edit(member.id, perms),
         db.housing.setPlayerMode(member.id, isSilent ? 'HIDDEN' : 'NORMAL'),
-        ...sponsors.map(s => newChannel.permissionOverwrites.create(s.id, perms)),
+        ...sponsors.map(s => newChannel.permissionOverwrites.edit(s.id, perms)),
         ...sponsors.map(s => db.housing.setPlayerMode(s.id, isSilent ? 'HIDDEN' : 'NORMAL')),
     ];
     await Promise.all(enterOps);
@@ -112,18 +159,44 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
     );
 
     const cleanupOps = [];
-    const cleanedChannelIds = []; 
+    const cleanedChannelIds = []; // ✅ FIX: Track cleaned channels for knock auto-open
     for (const [, house] of allCaseChannels) {
         // Pulisci permessi residui del giocatore
         if (house.permissionOverwrites.cache.has(member.id)) {
-            // 🔥 MODIFICA: CANCELLA SEMPRE (Mai nascondere, per evitare bug cronologia)
-            cleanupOps.push(house.permissionOverwrites.delete(member.id).catch(() => {}));
+            // ✅ FIX: Se è la propria casa, nascondi l'overwrite invece di cancellarlo
+            if (house.id === myHomeId) {
+                // Solo se ha ViewChannel allow (è "presente"), nascondilo
+                if (hasPhysicalAccess(house, member.id)) {
+                    cleanupOps.push(house.permissionOverwrites.edit(member.id, { ViewChannel: false, SendMessages: false }).catch(() => {}));
+                }
+                // Se è già nascosto (ViewChannel: false), non fare nulla
+            } else {
+                // ✅ FIX CRONOLOGIA: Preserva ReadMessageHistory invece di cancellare
+                cleanupOps.push(house.permissionOverwrites.edit(member.id, {
+                    ViewChannel: false,
+                    SendMessages: false,
+                    ReadMessageHistory: true
+                }).catch(() => {}));
+            }
             cleanedChannelIds.push(house.id);
         }
         // Pulisci permessi residui degli sponsor
         for (const s of sponsors) {
             if (house.permissionOverwrites.cache.has(s.id)) {
-                cleanupOps.push(house.permissionOverwrites.delete(s.id).catch(() => {}));
+                // ✅ FIX: Stessa logica per gli sponsor
+                const sponsorHomeId = await db.housing.getHome(s.id);
+                if (house.id === sponsorHomeId) {
+                    if (hasPhysicalAccess(house, s.id)) {
+                        cleanupOps.push(house.permissionOverwrites.edit(s.id, { ViewChannel: false, SendMessages: false }).catch(() => {}));
+                    }
+                } else {
+                    // ✅ FIX CRONOLOGIA: Preserva ReadMessageHistory anche per sponsor
+                    cleanupOps.push(house.permissionOverwrites.edit(s.id, {
+                        ViewChannel: false,
+                        SendMessages: false,
+                        ReadMessageHistory: true
+                    }).catch(() => {}));
+                }
             }
         }
     }
@@ -142,7 +215,7 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
 
     // ✅ FIX: Forza Discord a caricare tutta la cronologia dei messaggi
     try {
-        await newChannel.messages.fetch({ limit: 5 });
+        await newChannel.messages.fetch({ limit: 1 });
     } catch (err) {
         // Ignora errori (es. canale vuoto)
     }
