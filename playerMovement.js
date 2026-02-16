@@ -93,15 +93,22 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
     // --- INGRESSO nel nuovo canale ---
     const perms = { ViewChannel: true, SendMessages: true, ReadMessageHistory: true };
 
-    // ✅ FIX: Cancella vecchi overwrite PRIMA di ricrearli
-    // Quando un canale aveva ViewChannel: false, Discord non ricarica la cronologia
-    // con un semplice edit(). Cancellando e ricreando, Discord tratta l'accesso come nuovo
-    // e carica tutti i messaggi precedenti (con ReadMessageHistory: true).
-    const deleteOps = [newChannel.permissionOverwrites.delete(member.id).catch(() => {})];
-    for (const s of sponsors) {
-        deleteOps.push(newChannel.permissionOverwrites.delete(s.id).catch(() => {}));
+    // ✅ FIX STORIA MESSAGGI: Se stai tornando alla TUA home, NON cancellare l'overwrite
+    // Discord carica la cronologia solo se l'overwrite esiste da prima. Cancellandolo e 
+    // ricreandolo, Discord pensa che tu abbia appena ottenuto l'accesso e non carica i vecchi messaggi.
+    const isReturningHome = (newChannel.id === myHomeId);
+    
+    if (!isReturningHome) {
+        // ✅ Solo per case NON-home: Cancella vecchi overwrite PRIMA di ricrearli
+        // Quando un canale aveva ViewChannel: false, Discord non ricarica la cronologia
+        // con un semplice edit(). Cancellando e ricreando, Discord tratta l'accesso come nuovo
+        // e carica tutti i messaggi precedenti (con ReadMessageHistory: true).
+        const deleteOps = [newChannel.permissionOverwrites.delete(member.id).catch(() => {})];
+        for (const s of sponsors) {
+            deleteOps.push(newChannel.permissionOverwrites.delete(s.id).catch(() => {}));
+        }
+        await Promise.all(deleteOps);
     }
-    await Promise.all(deleteOps);
 
     // Player + Sponsor entrano in parallelo
     const enterOps = [
