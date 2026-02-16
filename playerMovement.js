@@ -93,22 +93,43 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
     // --- INGRESSO nel nuovo canale ---
     const perms = { ViewChannel: true, SendMessages: true, ReadMessageHistory: true };
 
-    // ✅ FIX STORIA MESSAGGI: Se stai tornando alla TUA home, NON cancellare l'overwrite
-    // Discord carica la cronologia solo se l'overwrite esiste da prima. Cancellandolo e 
-    // ricreandolo, Discord pensa che tu abbia appena ottenuto l'accesso e non carica i vecchi messaggi.
+    // ✅ FIX CRONOLOGIA MESSAGGI: Se stai tornando alla TUA home E l'overwrite esiste già
+    // con ViewChannel:false, allora cancellalo e ricrealo. Questo forza Discord a "resettare"
+    // lo stato del canale e caricare TUTTA la cronologia messaggi.
+    //
+    // PERCHÉ FUNZIONA: Quando un overwrite passa da ViewChannel:false → ViewChannel:true
+    // tramite EDIT, Discord carica solo i messaggi dal momento dell'edit. Ma se CANCELLIAMO
+    // l'overwrite (che aveva ViewChannel:false) e ne creiamo uno NUOVO (con ViewChannel:true),
+    // Discord tratta l'accesso come completamente nuovo e carica tutta la cronologia.
     const isReturningHome = (newChannel.id === myHomeId);
+    const existingOverwrite = newChannel.permissionOverwrites.cache.get(member.id);
+    const hadViewChannelFalse = existingOverwrite && 
+                                existingOverwrite.deny?.has(PermissionsBitField.Flags.ViewChannel);
     
-    if (!isReturningHome) {
-        // ✅ Solo per case NON-home: Cancella vecchi overwrite PRIMA di ricrearli
-        // Quando un canale aveva ViewChannel: false, Discord non ricarica la cronologia
-        // con un semplice edit(). Cancellando e ricreando, Discord tratta l'accesso come nuovo
-        // e carica tutti i messaggi precedenti (con ReadMessageHistory: true).
+    // Se stai tornando a casa E l'overwrite aveva ViewChannel:false, cancellalo
+    if (isReturningHome && hadViewChannelFalse) {
+        console.log(`🔄 [FIX] Cancello overwrite nascosto di ${member.displayName} su home ${newChannel.name} per forzare reload cronologia`);
+        await newChannel.permissionOverwrites.delete(member.id).catch(() => {});
+        // Cancella anche per gli sponsor
+        for (const s of sponsors) {
+            const sponsorHomeId = await db.housing.getHome(s.id);
+            if (newChannel.id === sponsorHomeId) {
+                const sponsorOw = newChannel.permissionOverwrites.cache.get(s.id);
+                if (sponsorOw && sponsorOw.deny?.has(PermissionsBitField.Flags.ViewChannel)) {
+                    await newChannel.permissionOverwrites.delete(s.id).catch(() => {});
+                }
+            }
+        }
+    }
+    // Se NON è la tua home, cancella sempre (comportamento normale)
+    else if (!isReturningHome) {
         const deleteOps = [newChannel.permissionOverwrites.delete(member.id).catch(() => {})];
         for (const s of sponsors) {
             deleteOps.push(newChannel.permissionOverwrites.delete(s.id).catch(() => {}));
         }
         await Promise.all(deleteOps);
     }
+    // Se stai tornando a casa ma l'overwrite NON aveva ViewChannel:false, fai solo edit
 
     // Player + Sponsor entrano in parallelo
     const enterOps = [
