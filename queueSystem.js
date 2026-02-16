@@ -278,24 +278,16 @@ async function executeHousingAction(queueItem) {
             // Recupera la modalità se presente (per sapere se era hidden)
             const mode = (queueItem.details && queueItem.details.mode) ? queueItem.details.mode : 'normal';
 
-            // ✅ FIX CRONOLOGIA MESSAGGI: NON editare i permessi della HOME qui!
-            // Lascia che movePlayer gestisca l'edit della home. In questo modo movePlayer può:
-            // 1. Rilevare se l'overwrite della home esiste con ViewChannel:false
-            // 2. Cancellarlo e ricrearlo per forzare Discord a caricare TUTTA la cronologia
-            // Se editassimo la home qui, Discord vedrebbe solo un cambio false->true e caricherebbe
-            // solo i messaggi dal momento dell'edit in poi.
+            // ✅ FIX CRONOLOGIA MESSAGGI: NON editare O cancellare permessi qui!
+            // Lascia che movePlayer gestisca TUTTO (uscita dalla casa ospite + ingresso nella home)
+            // movePlayer userà hasPhysicalAccess per trovare la casa ospite e gestirà:
+            // 1. Messaggio "è uscito" dalla casa ospite
+            // 2. Cancellazione permessi casa ospite  
+            // 3. Rilevamento se l'overwrite home ha ViewChannel:false
+            // 4. Cancellare/ricreare overwrite home per forzare Discord a caricare TUTTA la cronologia
+            // 5. Messaggio "è ritornato" nella home
 
-            // ✅ Rimuovi permessi da tutte le case OSPITI (NON la home)
-            // Questo è necessario per lo spostamento visuale del giocatore
-            for (const [houseId, house] of housesWithPerms) {
-                if (houseId !== homeId) {
-                    await house.permissionOverwrites.delete(member.id).catch(() => {});
-                    // ✅ FIX: Notifica uscita per auto-apertura porte
-                    eventBus.emit('house:occupant-left', { channelId: houseId });
-                }
-            }
-
-            // MovePlayer gestisce l'entrata nella Home (inclusi i permessi home)
+            // MovePlayer gestisce l'entrata nella Home (E l'uscita dalla casa ospite)
             if (homeCh && guestHouse) {
                 await movePlayer(member, guestHouse, homeCh, `🏠 ${member} è ritornato.`, false);
             } else if (homeCh && !guestHouse) {
