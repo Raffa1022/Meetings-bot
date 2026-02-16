@@ -17,9 +17,7 @@ async function enterHouse(member, fromChannel, toChannel, entryMessage, isSilent
 
 /**
  * Sposta un giocatore da un canale a un altro.
- * Gestisce: uscita, ingresso, sponsor, permessi, narrazione.
- * FIX: Narrazione solo per giocatore principale (ALIVE/DEAD), mai per sponsor
- * @param {boolean} forceNarration - Se true, forza la narrazione anche per sponsor (usato dopo !cambio)
+ * USA LA TECNICA "BLIND STEP" (Ingresso Cieco) per forzare il refresh della cronologia.
  */
 async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent, forceNarration = false) {
     if (!member || !newChannel) return;
@@ -27,7 +25,6 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
     const sponsors = await getSponsorsToMove(member, member.guild);
     let channelToLeave = oldChannel;
 
-    // ✅ FIX: Recupera la home del giocatore per preservare l'overwrite
     const myHomeId = await db.housing.getHome(member.id);
 
     // Se non arriva da una casa, cerca la casa attuale dove ha i permessi
@@ -40,119 +37,121 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
         if (currentHouse) channelToLeave = currentHouse;
     }
 
-    // FIX: Determina chi è il giocatore principale per la narrazione
-    // Solo ALIVE o DEAD devono narrare, mai SPONSOR o SPONSOR_DEAD (a meno che forceNarration = true)
     const isMainPlayer = forceNarration || member.roles.cache.has(RUOLI.ALIVE) || member.roles.cache.has(RUOLI.DEAD);
 
-    // --- USCITA dal vecchio canale ---
+    // --- 1. USCITA (Cancellazione Totale) ---
     if (channelToLeave && channelToLeave.id !== newChannel.id && channelToLeave.parentId === HOUSING.CATEGORIA_CASE) {
         const hasPersonalPerms = channelToLeave.permissionOverwrites.cache.has(member.id);
         if (hasPersonalPerms) {
-            // ✅ FIX: Controlla se eri entrato NASCOSTO in QUESTA casa specifica
             const wasHiddenEntry = await db.housing.isHiddenEntry(member.id, channelToLeave.id);
-            console.log(`🔍 [DEBUG] User ${member.id} esce da ${channelToLeave.name}: wasHiddenEntry=${wasHiddenEntry}, isMainPlayer=${isMainPlayer}`);
             
-            // FIX: Narrazione uscita solo per giocatore principale E NON se era entrato nascosto
             if (!wasHiddenEntry && isMainPlayer) {
-                console.log(`✅ [DEBUG] Mostro narrazione uscita per ${member.displayName}`);
                 await channelToLeave.send(`🚪 ${member} è uscito.`);
-            } else {
-                console.log(`❌ [DEBUG] SALTO narrazione uscita per ${member.displayName} (wasHiddenEntry=${wasHiddenEntry}, isMainPlayer=${isMainPlayer})`);
             }
-            
-            // Pulisci il flag hidden per questa casa
             if (wasHiddenEntry) {
                 await db.housing.clearHiddenEntry(member.id, channelToLeave.id);
             }
             
-            // 🔥 MODIFICA UNICA: Cancellazione Totale
-            // Invece di nascondere (ViewChannel: false), cancelliamo il permesso.
-            // Questo costringe Discord a ricaricare la cronologia al prossimo ingresso.
+            // Cancellazione secca overwrite
             await channelToLeave.permissionOverwrites.delete(member.id).catch(() => {});
-            
-            // ✅ FIX: Notifica che un occupante è uscito (per auto-apertura porte)
             eventBus.emit('house:occupant-left', { channelId: channelToLeave.id });
         }
-        // Rimuovi sponsor dalla vecchia casa (senza narrazione)
+        
         const sponsorOps = sponsors.map(async (s) => {
             if (channelToLeave.permissionOverwrites.cache.has(s.id)) {
-                // Cancellazione totale anche per gli sponsor
                 await channelToLeave.permissionOverwrites.delete(s.id).catch(() => {});
             }
         });
         await Promise.all(sponsorOps);
     }
 
-    // --- INGRESSO nel nuovo canale ---
-    const perms = { ViewChannel: true, SendMessages: true, ReadMessageHistory: true };
+    // --- 2. INGRESSO (Tecnica "Blind Step") ---
+    // Questa procedura forza il client a resettare la cache visiva.
 
-    // 🔥 PULIZIA PREVENTIVA: Assicura che non ci siano permessi residui
-    const cleanupEntryOps = [];
-    if (newChannel.permissionOverwrites.cache.has(member.id)) {
-        cleanupEntryOps.push(newChannel.permissionOverwrites.delete(member.id).catch(() => {}));
-    }
+    // A. PULIZIA PREVENTIVA (Rimuovi tutto)
+    const cleanupOps = [];
+    if (newChannel.permissionOverwrites.cache.has(member.id)) cleanupOps.push(newChannel.permissionOverwrites.delete(member.id).catch(() => {}));
     for (const s of sponsors) {
-        if (newChannel.permissionOverwrites.cache.has(s.id)) {
-            cleanupEntryOps.push(newChannel.permissionOverwrites.delete(s.id).catch(() => {}));
-        }
+        if (newChannel.permissionOverwrites.cache.has(s.id)) cleanupOps.push(newChannel.permissionOverwrites.delete(s.id).catch(() => {}));
     }
-    if (cleanupEntryOps.length > 0) await Promise.all(cleanupEntryOps);
+    await Promise.all(cleanupOps);
 
-    // ⏳ BREVE PAUSA TECNICA (150ms)
-    // Necessaria per dire all'API di Discord: "L'utente è uscito. Ora sta rientrando."
-    await new Promise(r => setTimeout(r, 150));
+    // ⏳ PAUSA 1 (300ms): Assicura che Discord registri "Nessun accesso"
+    await new Promise(r => setTimeout(r, 300));
 
-    // Player + Sponsor entrano in parallelo (Creazione permessi da zero)
-    const enterOps = [
-        newChannel.permissionOverwrites.create(member.id, perms),
+    // B. STEP 1: Entra ma "CIECO" (Vedi il canale, ma cronologia BLOCCATA)
+    // Il client carica il canale vuoto. Questo resetta la cache.
+    const blindPerms = { 
+        ViewChannel: true, 
+        SendMessages: true, 
+        ReadMessageHistory: false // ❌ VIETATO
+    };
+    
+    const stepOneOps = [
+        newChannel.permissionOverwrites.create(member.id, blindPerms),
+        ...sponsors.map(s => newChannel.permissionOverwrites.create(s.id, blindPerms))
+    ];
+    await Promise.all(stepOneOps);
+
+    // ⏳ PAUSA 2 (800ms): Tempo sufficiente al client per rendere il canale "vuoto"
+    await new Promise(r => setTimeout(r, 800));
+
+    // C. STEP 2: Sblocca la cronologia
+    // Il client vede il permesso cambiare e scarica i messaggi.
+    const finalPerms = { 
+        ViewChannel: true, 
+        SendMessages: true, 
+        ReadMessageHistory: true // ✅ PERMESSO
+    };
+
+    const stepTwoOps = [
+        newChannel.permissionOverwrites.edit(member.id, finalPerms),
         db.housing.setPlayerMode(member.id, isSilent ? 'HIDDEN' : 'NORMAL'),
-        ...sponsors.map(s => newChannel.permissionOverwrites.create(s.id, perms)),
+        ...sponsors.map(s => newChannel.permissionOverwrites.edit(s.id, finalPerms)),
         ...sponsors.map(s => db.housing.setPlayerMode(s.id, isSilent ? 'HIDDEN' : 'NORMAL')),
     ];
-    await Promise.all(enterOps);
+    await Promise.all(stepTwoOps);
 
-    // --- CLEANUP GLOBALE: Rimuovi permessi RESIDUI da TUTTE le case tranne destinazione ---
-    // Questo previene il bug "in due case contemporaneamente"
+
+    // --- 3. CLEANUP GLOBALE (Rimuovi permessi residui) ---
     const allCaseChannels = member.guild.channels.cache.filter(c =>
         c.parentId === HOUSING.CATEGORIA_CASE &&
-        c.id !== newChannel.id // Tieni solo la destinazione
+        c.id !== newChannel.id 
     );
 
-    const cleanupOps = [];
-    const cleanedChannelIds = []; // ✅ FIX: Track cleaned channels for knock auto-open
+    const globalCleanupOps = [];
+    const cleanedChannelIds = []; 
     for (const [, house] of allCaseChannels) {
-        // Pulisci permessi residui del giocatore
         if (house.permissionOverwrites.cache.has(member.id)) {
-            // 🔥 MODIFICA UNICA: Cancellazione Totale anche nel cleanup
-            cleanupOps.push(house.permissionOverwrites.delete(member.id).catch(() => {}));
+            // Cancellazione sempre totale
+            globalCleanupOps.push(house.permissionOverwrites.delete(member.id).catch(() => {}));
             cleanedChannelIds.push(house.id);
         }
-        // Pulisci permessi residui degli sponsor
         for (const s of sponsors) {
             if (house.permissionOverwrites.cache.has(s.id)) {
-                cleanupOps.push(house.permissionOverwrites.delete(s.id).catch(() => {}));
+                globalCleanupOps.push(house.permissionOverwrites.delete(s.id).catch(() => {}));
             }
         }
     }
-    if (cleanupOps.length > 0) {
-        await Promise.all(cleanupOps);
-        // ✅ FIX: Notifica uscita per ogni casa pulita (per auto-apertura porte)
+    if (globalCleanupOps.length > 0) {
+        await Promise.all(globalCleanupOps);
         for (const chId of cleanedChannelIds) {
             eventBus.emit('house:occupant-left', { channelId: chId });
         }
     }
 
-    // FIX: Narrazione ingresso solo per giocatore principale
+    // Narrazione
     if (!isSilent && entryMessage && isMainPlayer) {
-        await newChannel.send(entryMessage);
+        // Un piccolo delay extra per essere sicuri che la narrazione arrivi DOPO che l'utente vede la chat
+        setTimeout(() => {
+             newChannel.send(entryMessage).catch(() => {});
+        }, 500);
     }
 
-    // ✅ FIX: Forza Discord a caricare tutta la cronologia dei messaggi
+    // Fetch finale per sicurezza
     try {
-        await newChannel.messages.fetch({ limit: 1 });
-    } catch (err) {
-        // Ignora errori (es. canale vuoto)
-    }
+        await newChannel.messages.fetch({ limit: 5 });
+    } catch (err) {}
 }
 
 /**
