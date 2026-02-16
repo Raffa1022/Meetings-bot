@@ -25,6 +25,8 @@ module.exports = async function handleAdminCommand(message, command, args, clien
 
         await Promise.all([
             db.housing.setHome(targetUser.id, targetChannel.id),
+            // ✅ FIX: Imposta come proprietario originale della casa
+            db.housing.setOriginalOwner(targetChannel.id, targetUser.id),
             targetChannel.permissionOverwrites.set([
                 { id: message.guild.id, deny: [PermissionsBitField.Flags.ViewChannel] },
                 { id: targetUser.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory] },
