@@ -346,7 +346,6 @@ async function executeHousingAction(queueItem) {
 
         // --- NORMALE ---
         // Crea una bussata e aspetta risposta
-        await db.housing.setActiveKnock(member.id, targetCh.id);
         
         // Trova TUTTE le case dove il player ha accesso FISICO
         const housesWithPerms = guild.channels.cache.filter(c =>
@@ -356,14 +355,41 @@ async function executeHousingAction(queueItem) {
         
         // Trova da dove sta venendo (casa diversa dalla target)
         const currentHouse = housesWithPerms.find(h => h.id !== targetChannelId);
-        
-        const fromChannelName = currentHouse ? currentHouse.name : "?";
+
+        // ✅ FIX: Se la casa è vuota (admin esclusi), entra direttamente senza bussare
+        const occupants = getOccupants(targetCh, member.id);
+        if (occupants.size === 0) {
+            let oldHouse = currentHouse;
+            if (!oldHouse) oldHouse = housesWithPerms.find(c => c.id === myHomeId);
+            
+            if (oldHouse) {
+                if (oldHouse.id === myHomeId) {
+                    await oldHouse.permissionOverwrites.edit(member.id, { ViewChannel: false, SendMessages: false }).catch(() => {});
+                } else {
+                    await oldHouse.permissionOverwrites.delete(member.id).catch(() => {});
+                }
+                eventBus.emit('house:occupant-left', { channelId: oldHouse.id });
+            }
+
+            await enterHouse(member, oldHouse, targetCh, `👋 ${member} è entrato.`, false, true);
+            return;
+        }
+
+        await db.housing.setActiveKnock(member.id, targetCh.id);
         
         const msg = await targetCh.send(`🔔 <@&${RUOLI.ALIVE}> <@&${RUOLI.SPONSOR}> **TOC TOC!** Qualcuno bussa.\n✅ Apri | ❌ Rifiuta`);
 
         // ✅ FIX: Aggiungi collector al map per auto-apertura
+        // ✅ FIX: Escludi admin dalle reazioni (non contano come presenti)
         const collector = msg.createReactionCollector({
-            filter: (r, u) => ['✅', '❌'].includes(r.emoji.name) && !u.bot,
+            filter: async (r, u) => {
+                if (!['✅', '❌'].includes(r.emoji.name) || u.bot) return false;
+                try {
+                    const m = await guild.members.fetch(u.id);
+                    if (m.permissions.has(PermissionsBitField.Flags.Administrator)) return false;
+                } catch {}
+                return true;
+            },
             max: 1,
             time: 120000
         });
@@ -416,6 +442,8 @@ async function executeHousingAction(queueItem) {
                         try {
                             const m = await guild.members.fetch(id);
                             if (m && !m.user.bot && m.roles.cache.has(RUOLI.ALIVE)) {
+                                // ✅ FIX: Escludi admin - non contano come presenti fisicamente
+                                if (m.permissions.has(PermissionsBitField.Flags.Administrator)) continue;
                                 presentPlayers.push(m);
                             }
                         } catch {}
