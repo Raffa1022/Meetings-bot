@@ -94,6 +94,17 @@ function isAdmin(member) {
 }
 
 /**
+ * ✅ FIX: Controlla se un utente ha accesso FISICO a un canale
+ * (overwrite esiste E ViewChannel è allow)
+ * Usato per distinguere "è fisicamente presente" da "overwrite nascosto del proprietario"
+ */
+function hasPhysicalAccess(channel, userId) {
+    const ow = channel.permissionOverwrites.cache.get(userId);
+    if (!ow || ow.type !== 1) return false;
+    return ow.allow.has(PermissionsBitField.Flags.ViewChannel);
+}
+
+/**
  * Invia messaggio e auto-cancella dopo X ms
  */
 async function sendTemp(channel, content, ms = 5000) {
@@ -104,13 +115,14 @@ async function sendTemp(channel, content, ms = 5000) {
 
 /**
  * Verifica se un utente è fisicamente in una casa diversa da quella specificata
+ * ✅ FIX: Usa hasPhysicalAccess per ignorare overwrite nascosti del proprietario
  */
 function isVisitingOtherHouse(guild, userId, homeId) {
     return guild.channels.cache.some(c =>
         c.parentId === HOUSING.CATEGORIA_CASE &&
         c.type === ChannelType.GuildText &&
         c.id !== homeId &&
-        c.permissionOverwrites.cache.has(userId)
+        hasPhysicalAccess(c, userId)
     );
 }
 
@@ -146,6 +158,7 @@ module.exports = {
     getOccupants,
     getSponsorsToMove,
     isAdmin,
+    hasPhysicalAccess,
     sendTemp,
     isVisitingOtherHouse,
     detectCurrentPhase,
