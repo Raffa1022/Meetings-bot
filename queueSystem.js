@@ -291,9 +291,7 @@ async function executeHousingAction(queueItem) {
             if (homeCh && guestHouse) {
                 await movePlayer(member, guestHouse, homeCh, `🏠 ${member} è ritornato.`, false);
             } else if (homeCh && !guestHouse) {
-                // ✅ FIX CRITICO: Se non c'è guestHouse, il player potrebbe essere nella propria HOME con overwrite nascosto
-                // Passa homeCh come oldChannel così movePlayer può rilevare l'overwrite nascosto e fare il reload
-                await movePlayer(member, homeCh, homeCh, `🏠 ${member} è ritornato.`, false);
+                await movePlayer(member, null, homeCh, `🏠 ${member} è ritornato.`, false);
             }
         }
         return;
