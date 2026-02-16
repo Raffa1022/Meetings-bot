@@ -12,7 +12,7 @@ const {
 } = require('discord.js');
 const { HOUSING, RUOLI, RUOLI_PUBBLICI, PREFIX } = require('./config');
 const db = require('./db');
-const { isAdmin, formatName, getSponsorsToMove } = require('./helpers');
+const { isAdmin, formatName, getSponsorsToMove, hasPhysicalAccess } = require('./helpers');
 const { cleanOldHome } = require('./playerMovement');
 const eventBus = require('./eventBus');
 
@@ -1296,10 +1296,11 @@ const shopEffects = {
             const member = await guild.members.fetch(userId).catch(() => null);
             if (member) {
                 // Cerca in quale casa si trova il giocatore
+                // ✅ FIX: Usa hasPhysicalAccess per ignorare overwrite nascosti
                 channel = guild.channels.cache.find(c =>
                     c.parentId === HOUSING.CATEGORIA_CASE &&
                     c.type === ChannelType.GuildText &&
-                    c.permissionOverwrites.cache.has(userId)
+                    hasPhysicalAccess(c, userId)
                 );
             }
         }
@@ -1349,10 +1350,11 @@ const shopEffects = {
             const member = await guild.members.fetch(userId).catch(() => null);
             if (member) {
                 // La tenda si usa "dove sei ora"
+                // ✅ FIX: Usa hasPhysicalAccess per ignorare overwrite nascosti
                 newHomeChannel = guild.channels.cache.find(c =>
                     c.parentId === HOUSING.CATEGORIA_CASE &&
                     c.type === ChannelType.GuildText &&
-                    c.permissionOverwrites.cache.has(userId)
+                    hasPhysicalAccess(c, userId)
                 );
             }
         }
@@ -1412,7 +1414,8 @@ const shopEffects = {
         );
 
         // ✅ FIX: Controlla se il proprietario è fisicamente presente nella casa
-        const ownerIsInHouse = newHomeChannel.permissionOverwrites.cache.has(ownerId);
+        // Usa hasPhysicalAccess per ignorare overwrite nascosti del proprietario
+        const ownerIsInHouse = hasPhysicalAccess(newHomeChannel, ownerId);
 
         // Se il proprietario NON è in casa, manda la richiesta nella sua chat privata
         let requestChannel = newHomeChannel;
