@@ -273,21 +273,7 @@ async function executeHousingAction(queueItem) {
             // Recupera la modalità se presente (per sapere se era hidden)
             const mode = (queueItem.details && queueItem.details.mode) ? queueItem.details.mode : 'normal';
 
-            // Messaggio uscita PRIMA di togliere i permessi
-            // Controlla nel database se era entrato in modalità hidden
-            if (guestHouse) {
-                const wasHidden = await db.housing.isHiddenEntry(member.id, guestHouse.id);
-                
-                if (!wasHidden) {
-                    await guestHouse.send({
-                        content: `🚪 ${member} è uscito.`,
-                        allowedMentions: { parse: [] }
-                    }).catch(() => {});
-                } else {
-                    // Pulisco il flag hidden
-                    await db.housing.clearHiddenEntry(member.id, guestHouse.id);
-                }
-            }
+            // ✅ FIX: Messaggio uscita gestito da movePlayer (evita doppio messaggio)
 
             // Assegna permessi HOME
             if (homeCh) {
@@ -380,20 +366,7 @@ async function executeHousingAction(queueItem) {
             let oldHouse = candidates.find(c => c.id !== myHomeId);
             if (!oldHouse) oldHouse = candidates.find(c => c.id === myHomeId);
             
-            if (oldHouse) {
-                // Controlla se era entrato in modalità hidden
-                const wasHidden = await db.housing.isHiddenEntry(member.id, oldHouse.id);
-                
-                if (!wasHidden) {
-                    await oldHouse.send({
-                        content: `🚪 ${member} è uscito.`,
-                        allowedMentions: { parse: [] }
-                    }).catch(() => {});
-                } else {
-                    // Pulisco il flag hidden
-                    await db.housing.clearHiddenEntry(member.id, oldHouse.id);
-                }
-            }
+            // ✅ FIX: Messaggio uscita gestito da enterHouse/movePlayer (evita doppio messaggio)
             
             await targetCh.permissionOverwrites.edit(member.id, {
                 ViewChannel: true, 
@@ -454,19 +427,8 @@ async function executeHousingAction(queueItem) {
                     let currentFrom = candidates.find(c => c.id !== myHomeId);
                     if (!currentFrom) currentFrom = candidates.find(c => c.id === myHomeId);
                     
+                    // ✅ FIX: Messaggio uscita gestito da enterHouse/movePlayer (evita doppio messaggio)
                     if (currentFrom) {
-                        // Controlla se era entrato in modalità hidden
-                        const wasHidden = await db.housing.isHiddenEntry(member.id, currentFrom.id);
-                        
-                        if (!wasHidden) {
-                            await currentFrom.send({
-                                content: `🚪 ${member} è uscito.`,
-                                allowedMentions: { parse: [] }
-                            }).catch(() => {});
-                        } else {
-                            // Pulisco il flag hidden
-                            await db.housing.clearHiddenEntry(member.id, currentFrom.id);
-                        }
                         // ✅ FIX: Se è la propria casa, nascondi overwrite
                         if (currentFrom.id === myHomeId) {
                             await currentFrom.permissionOverwrites.edit(member.id, { ViewChannel: false, SendMessages: false }).catch(() => {});
@@ -550,19 +512,8 @@ async function executeHousingAction(queueItem) {
                     let currentFrom = candidates.find(c => c.id !== myHomeId);
                     if (!currentFrom) currentFrom = candidates.find(c => c.id === myHomeId);
                     
+                    // ✅ FIX: Messaggio uscita gestito da enterHouse/movePlayer (evita doppio messaggio)
                     if (currentFrom) {
-                        // Controlla se era entrato in modalità hidden
-                        const wasHidden = await db.housing.isHiddenEntry(member.id, currentFrom.id);
-                        
-                        if (!wasHidden) {
-                            await currentFrom.send({
-                                content: `🚪 ${member} è uscito.`,
-                                allowedMentions: { parse: [] }
-                            }).catch(() => {});
-                        } else {
-                            // Pulisco il flag hidden
-                            await db.housing.clearHiddenEntry(member.id, currentFrom.id);
-                        }
                         // ✅ FIX: Se è la propria casa, nascondi overwrite
                         if (currentFrom.id === myHomeId) {
                             await currentFrom.permissionOverwrites.edit(member.id, { ViewChannel: false, SendMessages: false }).catch(() => {});
