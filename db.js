@@ -554,6 +554,20 @@ async incrementSpecificPhaseLimit(userId, field) {
         return doc?.activeKnocks || {};
     },
 
+    // ✅ FIX: Traccia quando il giocatore esce da casa (per cronologia !torna)
+    async setHomeLeftAt(userId) {
+        return HousingModel.updateOne(H_ID, { $set: { [`homeLeftAt.${userId}`]: new Date() } });
+    },
+
+    async getHomeLeftAt(userId) {
+        const doc = await HousingModel.findOne(H_ID, { [`homeLeftAt.${userId}`]: 1 }).lean();
+        return doc?.homeLeftAt?.[userId] || null;
+    },
+
+    async clearHomeLeftAt(userId) {
+        return HousingModel.updateOne(H_ID, { $unset: { [`homeLeftAt.${userId}`]: '' } });
+    },
+
     // Rimuovi tutte le proprietà delle case
     async clearAllHomes() {
         return HousingModel.updateOne(H_ID, { $set: { playerHomes: {} } });
