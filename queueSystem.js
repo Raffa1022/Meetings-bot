@@ -346,7 +346,7 @@ async function executeHousingAction(queueItem) {
 
         // --- NORMALE ---
         // Crea una bussata e aspetta risposta
-        await db.housing.createActiveKnock(member.id, targetCh.id);
+        await db.housing.setActiveKnock(member.id, targetCh.id);
         
         // Trova TUTTE le case dove il player ha accesso FISICO
         const housesWithPerms = guild.channels.cache.filter(c =>
