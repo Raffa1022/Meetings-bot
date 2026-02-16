@@ -808,10 +808,12 @@ module.exports = async function handleAdminCommand(message, command, args, clien
             if (!homeChannel) continue;
 
             // Trova dove si trova fisicamente
+            // ✅ FIX: Usa permissionsFor per ignorare overwrite nascosti del proprietario
             const currentHouse = message.guild.channels.cache.find(c =>
                 c.parentId === HOUSING.CATEGORIA_CASE &&
                 c.type === ChannelType.GuildText &&
-                c.permissionOverwrites.cache.has(member.id)
+                c.permissionOverwrites.cache.has(member.id) &&
+                c.permissionsFor(member).has(PermissionsBitField.Flags.ViewChannel)
             );
 
             // Già a casa: salta
