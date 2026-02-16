@@ -24,7 +24,8 @@ const housingSchema = new mongoose.Schema({
     multiplaHistory: { type: Object, default: {} },
     lastReset: { type: String, default: '' },
     pendingKnocks: { type: Array, default: [] },
-    activeKnocks: { type: Object, default: {} }
+    activeKnocks: { type: Object, default: {} },
+    originalOwners: { type: Object, default: {} } // ✅ FIX: { channelId: userId } - proprietario originale per casa
 }, { minimize: false, versionKey: false });
 
 // ==========================================
