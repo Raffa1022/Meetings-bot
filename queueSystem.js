@@ -23,6 +23,9 @@ let clientRef = null;
 
 let processing = false;
 
+// ✅ FIX: Mappa dei collector attivi per auto-apertura quando casa diventa vuota
+const activeKnockCollectors = new Map(); // channelId -> { collector, knockerId }
+
 
 // ==========================================
 // ⚙️ PROCESSORE CODA (Aggiornato)
@@ -298,6 +301,8 @@ async function executeHousingAction(queueItem) {
             for (const [houseId, house] of housesWithPerms) {
                 if (houseId !== homeId) {
                     await house.permissionOverwrites.delete(member.id).catch(() => {});
+                    // ✅ FIX: Notifica uscita per auto-apertura porte
+                    eventBus.emit('house:occupant-left', { channelId: houseId });
                 }
             }
 
@@ -393,7 +398,11 @@ async function executeHousingAction(queueItem) {
                 ReadMessageHistory: true
             });
             
-            if (oldHouse) await oldHouse.permissionOverwrites.delete(member.id).catch(() => {});
+            if (oldHouse) {
+                await oldHouse.permissionOverwrites.delete(member.id).catch(() => {});
+                // ✅ FIX: Notifica uscita per auto-apertura porte su altre case
+                eventBus.emit('house:occupant-left', { channelId: oldHouse.id });
+            }
 
             await enterHouse(member, oldHouse, targetCh, `👋 ${member} è entrato.`, false);
             return;
@@ -407,8 +416,14 @@ async function executeHousingAction(queueItem) {
         const filter = (r, u) => ['✅', '❌'].includes(r.emoji.name) && occupants.has(u.id);
         const collector = msg.createReactionCollector({ filter, time: 300000, max: 1 });
 
+        // ✅ FIX: Salva il collector per auto-apertura quando casa diventa vuota
+        activeKnockCollectors.set(targetChannelId, { collector, knockerId: member.id });
+
         collector.on('collect', async (r) => {
             try {
+                // ✅ FIX: Rimuovi dal map quando il collector raccoglie una reazione
+                activeKnockCollectors.delete(targetChannelId);
+                
                 // ✅ FIX: Controlla se il giocatore è stato VB nel frattempo
                 const isVBNow = await db.moderation.isBlockedVB(member.id);
                 if (isVBNow) {
@@ -445,6 +460,8 @@ async function executeHousingAction(queueItem) {
                             await db.housing.clearHiddenEntry(member.id, currentFrom.id);
                         }
                         await currentFrom.permissionOverwrites.delete(member.id).catch(() => {});
+                        // ✅ FIX: Notifica uscita per auto-apertura porte su altre case
+                        eventBus.emit('house:occupant-left', { channelId: currentFrom.id });
                     }
                     
                     await enterHouse(member, currentFrom, targetCh, `👋 ${member} è entrato.`, false, true);
@@ -489,7 +506,10 @@ async function executeHousingAction(queueItem) {
 
         collector.on('end', async (collected, reason) => {
             try {
-                if (reason === 'time' && collected.size === 0) {
+                // ✅ FIX: Rimuovi dal map quando il collector termina
+                activeKnockCollectors.delete(targetChannelId);
+                
+                if ((reason === 'time' || reason === 'house_empty') && collected.size === 0) {
                     // ✅ FIX: Controlla se il giocatore è stato VB nel frattempo
                     const isVBNow = await db.moderation.isBlockedVB(member.id);
                     if (isVBNow) {
@@ -499,7 +519,13 @@ async function executeHousingAction(queueItem) {
                     }
                     
                     await db.housing.clearActiveKnock(member.id);
-                    await msg.reply("⏱️ Tempo scaduto - Apertura automatica.");
+                    
+                    // ✅ FIX: Messaggio diverso in base al motivo
+                    if (reason === 'house_empty') {
+                        await msg.reply("🏠 La casa è ora vuota - Apertura automatica.");
+                    } else {
+                        await msg.reply("⏱️ Tempo scaduto - Apertura automatica.");
+                    }
                     
                     const candidates = guild.channels.cache.filter(c => 
                         c.parentId === HOUSING.CATEGORIA_CASE && 
@@ -524,6 +550,8 @@ async function executeHousingAction(queueItem) {
                             await db.housing.clearHiddenEntry(member.id, currentFrom.id);
                         }
                         await currentFrom.permissionOverwrites.delete(member.id).catch(() => {});
+                        // ✅ FIX: Notifica uscita per auto-apertura porte su altre case
+                        eventBus.emit('house:occupant-left', { channelId: currentFrom.id });
                     }
 
                     await enterHouse(member, currentFrom, targetCh, `👋 ${member} è entrato.`, false, true);
@@ -603,6 +631,26 @@ module.exports = function initQueueSystem(client) {
             }
         } catch (err) {
             console.error(`❌ [VB] Errore cancellazione knock per ${userId}:`, err);
+        }
+    });
+
+    // ✅ FIX: Ascolta quando un occupante esce da una casa per auto-aprire la porta
+    eventBus.on('house:occupant-left', async ({ channelId }) => {
+        try {
+            const knockData = activeKnockCollectors.get(channelId);
+            if (!knockData) return; // Nessun knock attivo su questa casa
+            
+            const channel = clientRef.channels.cache.get(channelId);
+            if (!channel) return;
+            
+            // Controlla se la casa è ora vuota (escludendo chi ha bussato)
+            const occupants = getOccupants(channel, knockData.knockerId);
+            if (occupants.size === 0) {
+                console.log(`🚪 [AutoOpen] Casa ${channel.name} vuota durante knock di ${knockData.knockerId} - apertura automatica`);
+                knockData.collector.stop('house_empty');
+            }
+        } catch (err) {
+            console.error(`❌ [AutoOpen] Errore house:occupant-left per ${channelId}:`, err);
         }
     });
 
