@@ -206,45 +206,50 @@ async function updateDashboard(isPaused = false) {
 
                 new ButtonBuilder().setCustomId(`q_done_${queue[0]._id}`).setLabel('✅ Gestita').setStyle(ButtonStyle.Success),
 
+                new ButtonBuilder().setCustomId(`q_rb_${queue[0]._id}`).setLabel('🚫 Annulla (RB)').setStyle(ButtonStyle.Danger)
+
             ));
-
-
-            const detailText = (queue[0].details && queue[0].details.text) ? queue[0].details.text : "Nessun dettaglio";
-
-            embed.addFields({ name: '📜 Dettaglio Azione', value: detailText });
 
         }
 
     }
 
 
-    try {
+    const dashboardId = QUEUE.MESSAGE_ID;
 
-        const messages = await channel.messages.fetch({ limit: 10 });
+    if (dashboardId) {
 
-        const existingMsg = messages.find(m => m.author.id === clientRef.user.id);
+        const msg = await channel.messages.fetch(dashboardId).catch(() => null);
 
-        if (existingMsg) await existingMsg.edit({ content: contentText, embeds: [embed], components });
+        if (msg) {
 
-        else await channel.send({ content: contentText, embeds: [embed], components });
+            await msg.edit({ content: contentText, embeds: [embed], components }).catch(() => {});
 
-    } catch (e) {
+        } else {
 
-        console.error("Errore updateDashboard:", e);
+            const newMsg = await channel.send({ content: contentText, embeds: [embed], components });
+
+            console.log(`✅ Dashboard creata: ${newMsg.id}`);
+
+        }
+
+    } else {
+
+        const newMsg = await channel.send({ content: contentText, embeds: [embed], components });
+
+        console.log(`✅ Dashboard creata: ${newMsg.id} - Aggiungi questo ID nel config!`);
 
     }
 
 }
 
-// ==========================================
-
-// 🎯 HOUSING ACTION EXECUTOR
 
 // ==========================================
 
+// 🏠 ESECUZIONE AZIONI HOUSING
+
 // ==========================================
-// 🎯 HOUSING ACTION EXECUTOR (Aggiornato)
-// ==========================================
+
 async function executeHousingAction(queueItem) {
     let guild = clientRef.guilds.cache.first();
     if (!guild) return;
@@ -273,16 +278,12 @@ async function executeHousingAction(queueItem) {
             // Recupera la modalità se presente (per sapere se era hidden)
             const mode = (queueItem.details && queueItem.details.mode) ? queueItem.details.mode : 'normal';
 
-            // ✅ FIX: Messaggio uscita gestito da movePlayer (evita doppio messaggio)
-
-            // Assegna permessi HOME
-            if (homeCh) {
-                await homeCh.permissionOverwrites.edit(member.id, { 
-                    ViewChannel: true, 
-                    SendMessages: true, 
-                    ReadMessageHistory: true
-                });
-            }
+            // ✅ FIX CRONOLOGIA MESSAGGI: NON editare i permessi qui!
+            // Lascia che movePlayer gestisca tutto. In questo modo movePlayer può:
+            // 1. Rilevare se l'overwrite esiste con ViewChannel:false
+            // 2. Cancellarlo e ricrearlo per forzare Discord a caricare TUTTA la cronologia
+            // Se editassimo qui, Discord vedrebbe solo un cambio false->true e caricherebbe
+            // solo i messaggi dal momento dell'edit in poi.
 
             // Rimuovi permessi da tutte le case tranne home
             for (const [houseId, house] of housesWithPerms) {
@@ -293,7 +294,7 @@ async function executeHousingAction(queueItem) {
                 }
             }
 
-            // MovePlayer gestisce l'entrata nella Home
+            // MovePlayer gestisce l'entrata nella Home (inclusi i permessi)
             if (homeCh && guestHouse) {
                 await movePlayer(member, guestHouse, homeCh, `🏠 ${member} è ritornato.`, false);
             } else if (homeCh && !guestHouse) {
@@ -350,80 +351,56 @@ async function executeHousingAction(queueItem) {
             return;
         }
 
-        // --- VISITA NORMALE ---
-        const occupants = getOccupants(targetCh, member.id);
+        // --- NORMALE ---
+        // Crea una bussata e aspetta risposta
+        await db.housing.createActiveKnock(member.id, targetCh.id);
         
-        // Se casa vuota, entra subito
-        if (occupants.size === 0) {
-            // ✅ FIX: Usa hasPhysicalAccess per ignorare overwrite nascosti
-            const candidates = guild.channels.cache.filter(c => 
-                c.parentId === HOUSING.CATEGORIA_CASE && 
-                hasPhysicalAccess(c, member.id) &&
-                c.id !== targetCh.id
-            );
-            
-            // LOGICA DEDUTTIVA
-            let oldHouse = candidates.find(c => c.id !== myHomeId);
-            if (!oldHouse) oldHouse = candidates.find(c => c.id === myHomeId);
-            
-            // ✅ FIX: Messaggio uscita gestito da enterHouse/movePlayer (evita doppio messaggio)
-            
-            await targetCh.permissionOverwrites.edit(member.id, {
-                ViewChannel: true, 
-                SendMessages: true, 
-                ReadMessageHistory: true
-            });
-            
-            if (oldHouse) {
-                // ✅ FIX: Se è la propria casa, nascondi overwrite invece di cancellarlo
-                if (oldHouse.id === myHomeId) {
-                    await oldHouse.permissionOverwrites.edit(member.id, { ViewChannel: false, SendMessages: false }).catch(() => {});
-                } else {
-                    await oldHouse.permissionOverwrites.delete(member.id).catch(() => {});
-                }
-                // ✅ FIX: Notifica uscita per auto-apertura porte su altre case
-                eventBus.emit('house:occupant-left', { channelId: oldHouse.id });
-            }
+        // Invia messaggio di bussata nel canale target
+        const targetChannelId = queueItem.details.targetChannelId;
+        
+        // Trova TUTTE le case dove il player ha accesso FISICO
+        const housesWithPerms = guild.channels.cache.filter(c =>
+            c.parentId === HOUSING.CATEGORIA_CASE &&
+            hasPhysicalAccess(c, member.id)
+        );
+        
+        // Trova da dove sta venendo (casa diversa dalla target)
+        const currentHouse = housesWithPerms.find(h => h.id !== targetChannelId);
+        
+        const fromChannelName = currentHouse ? currentHouse.name : "?";
+        
+        const msg = await targetCh.send(`🚪 **${member}** ha bussato! (da ${fromChannelName})`);
 
-            await enterHouse(member, oldHouse, targetCh, `👋 ${member} è entrato.`, false);
-            return;
-        }
-
-        // --- TOC TOC (Richiede approvazione) ---
-        const msg = await targetCh.send(`🔔 <@&${RUOLI.ALIVE}> <@&${RUOLI.SPONSOR}> **TOC TOC!** Qualcuno bussa.\n✅ Apri | ❌ Rifiuta`);
-        await Promise.all([msg.react('✅'), msg.react('❌')]);
-        await db.housing.setActiveKnock(member.id, targetChannelId);
-
-        const filter = (r, u) => ['✅', '❌'].includes(r.emoji.name) && occupants.has(u.id);
-        const collector = msg.createReactionCollector({ filter, time: 300000, max: 1 });
-
-        // ✅ FIX: Salva il collector per auto-apertura quando casa diventa vuota
+        // ✅ FIX: Aggiungi collector al map per auto-apertura
+        const collector = msg.createReactionCollector({
+            filter: (r, u) => ['✅', '❌'].includes(r.emoji.name) && !u.bot,
+            max: 1,
+            time: 120000
+        });
         activeKnockCollectors.set(targetChannelId, { collector, knockerId: member.id });
 
-        collector.on('collect', async (r) => {
+        await msg.react('✅');
+        await msg.react('❌');
+
+        collector.on('collect', async (reaction, user) => {
             try {
-                // ✅ FIX: Rimuovi dal map quando il collector raccoglie una reazione
-                activeKnockCollectors.delete(targetChannelId);
-                
-                // ✅ FIX: Controlla se il giocatore è stato VB nel frattempo
-                const isVBNow = await db.moderation.isBlockedVB(member.id);
-                if (isVBNow) {
-                    await db.housing.clearActiveKnock(member.id);
-                    await msg.reply({ content: "🚫 La bussata è stata annullata (Visitblock).", allowedMentions: { parse: [] } });
-                    return;
-                }
-                
                 await db.housing.clearActiveKnock(member.id);
-                if (r.emoji.name === '✅') {
-                    await msg.reply({ content: "✅ Qualcuno ha aperto.", allowedMentions: { parse: [] } });
+
+                if (reaction.emoji.name === '✅') {
+                    // ✅ FIX: Controlla se nel frattempo è stato VB
+                    const isVBNow = await db.moderation.isBlockedVB(member.id);
+                    if (isVBNow) {
+                        await msg.reply("⛔ Entrata negata: il visitatore è stato visitbloccato.");
+                        return;
+                    }
                     
+                    // ✅ FIX: Usa hasPhysicalAccess per trovare dove sei
                     const candidates = guild.channels.cache.filter(c => 
                         c.parentId === HOUSING.CATEGORIA_CASE && 
                         hasPhysicalAccess(c, member.id) &&
                         c.id !== targetCh.id
                     );
-
-                    // LOGICA DEDUTTIVA
+                    
                     let currentFrom = candidates.find(c => c.id !== myHomeId);
                     if (!currentFrom) currentFrom = candidates.find(c => c.id === myHomeId);
                     
@@ -438,12 +415,10 @@ async function executeHousingAction(queueItem) {
                         // ✅ FIX: Notifica uscita per auto-apertura porte su altre case
                         eventBus.emit('house:occupant-left', { channelId: currentFrom.id });
                     }
-                    
-                    await enterHouse(member, currentFrom, targetCh, `👋 ${member} è entrato.`, false, true);
+
+                    await enterHouse(member, currentFrom, targetCh, `👋 ${member} è entrato.`, false);
                 } else {
-                    await msg.reply({ content: "❌ Qualcuno ha rifiutato.", allowedMentions: { parse: [] } });
-                    
-                    // Recupera i giocatori fisicamente presenti nella casa (esclusi quelli da !pubblico)
+                    // ❌ Entrata rifiutata
                     const presentPlayers = [];
                     for (const [id, overwrite] of targetCh.permissionOverwrites.cache) {
                         if (overwrite.type !== 1) continue; // Solo Member, non Role
