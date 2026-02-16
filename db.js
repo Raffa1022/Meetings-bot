@@ -509,9 +509,49 @@ async incrementSpecificPhaseLimit(userId, field) {
 
     // Trova proprietario di una casa
     async findOwner(channelId) {
-        const doc = await HousingModel.findOne(H_ID, { playerHomes: 1 }).lean();
+        const doc = await HousingModel.findOne(H_ID, { playerHomes: 1, originalOwners: 1 }).lean();
         if (!doc?.playerHomes) return null;
+        
+        // ✅ FIX: Priorità al proprietario originale
+        if (doc.originalOwners?.[channelId]) {
+            const origOwnerId = doc.originalOwners[channelId];
+            // Verifica che il proprietario originale abbia ancora questa casa come home
+            if (doc.playerHomes[origOwnerId] === channelId) {
+                return origOwnerId;
+            }
+        }
+        
+        // Fallback: primo giocatore trovato con questa casa
         return Object.keys(doc.playerHomes).find(uid => doc.playerHomes[uid] === channelId) || null;
+    },
+
+    // ✅ FIX: Imposta il proprietario originale di una casa
+    async setOriginalOwner(channelId, userId) {
+        return HousingModel.updateOne(H_ID, { $set: { [`originalOwners.${channelId}`]: userId } });
+    },
+
+    // ✅ FIX: Ottieni il proprietario originale di una casa
+    async getOriginalOwner(channelId) {
+        const doc = await HousingModel.findOne(H_ID, { [`originalOwners.${channelId}`]: 1 }).lean();
+        return doc?.originalOwners?.[channelId] || null;
+    },
+
+    // ✅ FIX: Rimuovi il proprietario originale di una casa
+    async removeOriginalOwner(channelId) {
+        return HousingModel.updateOne(H_ID, { $unset: { [`originalOwners.${channelId}`]: '' } });
+    },
+
+    // ✅ FIX: Trova tutti i giocatori che hanno una specifica casa come home
+    async findAllResidents(channelId) {
+        const doc = await HousingModel.findOne(H_ID, { playerHomes: 1 }).lean();
+        if (!doc?.playerHomes) return [];
+        return Object.keys(doc.playerHomes).filter(uid => doc.playerHomes[uid] === channelId);
+    },
+
+    // ✅ FIX: Ottieni tutti i knock attivi (per auto-apertura porte)
+    async getAllActiveKnocks() {
+        const doc = await HousingModel.findOne(H_ID, { activeKnocks: 1 }).lean();
+        return doc?.activeKnocks || {};
     },
 
     // Rimuovi tutte le proprietà delle case
