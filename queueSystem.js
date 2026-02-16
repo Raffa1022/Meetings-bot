@@ -359,7 +359,7 @@ async function executeHousingAction(queueItem) {
         
         const fromChannelName = currentHouse ? currentHouse.name : "?";
         
-        const msg = await targetCh.send(`🚪 **${member}** ha bussato! (da ${fromChannelName})`);
+        const msg = await targetCh.send(`🔔 <@&${RUOLI.ALIVE}> <@&${RUOLI.SPONSOR}> **TOC TOC!** Qualcuno bussa.\n✅ Apri | ❌ Rifiuta`);
 
         // ✅ FIX: Aggiungi collector al map per auto-apertura
         const collector = msg.createReactionCollector({
