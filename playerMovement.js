@@ -5,7 +5,7 @@
 const { PermissionsBitField } = require('discord.js');
 const { HOUSING, RUOLI } = require('./config');
 const db = require('./db');
-const { getSponsorsToMove } = require('./helpers');
+const { getSponsorsToMove, hasPhysicalAccess } = require('./helpers');
 const eventBus = require('./eventBus');
 
 /**
@@ -26,6 +26,9 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
 
     const sponsors = await getSponsorsToMove(member, member.guild);
     let channelToLeave = oldChannel;
+
+    // ✅ FIX: Recupera la home del giocatore per preservare l'overwrite
+    const myHomeId = await db.housing.getHome(member.id);
 
     // Se non arriva da una casa, cerca la casa attuale dove ha i permessi
     if (!oldChannel || oldChannel.parentId !== HOUSING.CATEGORIA_CASE) {
@@ -62,19 +65,29 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
                 await db.housing.clearHiddenEntry(member.id, channelToLeave.id);
             }
             
-            // ✅ Rimuovi sempre i permessi quando esci
-            await channelToLeave.permissionOverwrites.delete(member.id).catch(() => {});
+            // ✅ FIX: Se è la propria casa, NASCONDI l'overwrite (ViewChannel: false)
+            // invece di cancellarlo, per preservare ReadMessageHistory e la continuità Discord
+            if (channelToLeave.id === myHomeId) {
+                await channelToLeave.permissionOverwrites.edit(member.id, { ViewChannel: false, SendMessages: false }).catch(() => {});
+            } else {
+                await channelToLeave.permissionOverwrites.delete(member.id).catch(() => {});
+            }
             
             // ✅ FIX: Notifica che un occupante è uscito (per auto-apertura porte)
             eventBus.emit('house:occupant-left', { channelId: channelToLeave.id });
         }
         // Rimuovi sponsor dalla vecchia casa (senza narrazione)
-        const sponsorDeletes = sponsors.map(s =>
-            channelToLeave.permissionOverwrites.cache.has(s.id)
-                ? channelToLeave.permissionOverwrites.delete(s.id).catch(() => {})
-                : Promise.resolve()
-        );
-        await Promise.all(sponsorDeletes);
+        // ✅ FIX: Per sponsor sulla propria casa, nascondi overwrite come per il player
+        const sponsorOps = sponsors.map(async (s) => {
+            if (!channelToLeave.permissionOverwrites.cache.has(s.id)) return;
+            const sponsorHomeId = await db.housing.getHome(s.id);
+            if (channelToLeave.id === sponsorHomeId) {
+                await channelToLeave.permissionOverwrites.edit(s.id, { ViewChannel: false, SendMessages: false }).catch(() => {});
+            } else {
+                await channelToLeave.permissionOverwrites.delete(s.id).catch(() => {});
+            }
+        });
+        await Promise.all(sponsorOps);
     }
 
     // --- INGRESSO nel nuovo canale ---
@@ -103,13 +116,30 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
     for (const [, house] of allCaseChannels) {
         // Pulisci permessi residui del giocatore
         if (house.permissionOverwrites.cache.has(member.id)) {
-            cleanupOps.push(house.permissionOverwrites.delete(member.id).catch(() => {}));
+            // ✅ FIX: Se è la propria casa, nascondi l'overwrite invece di cancellarlo
+            if (house.id === myHomeId) {
+                // Solo se ha ViewChannel allow (è "presente"), nascondilo
+                if (hasPhysicalAccess(house, member.id)) {
+                    cleanupOps.push(house.permissionOverwrites.edit(member.id, { ViewChannel: false, SendMessages: false }).catch(() => {}));
+                }
+                // Se è già nascosto (ViewChannel: false), non fare nulla
+            } else {
+                cleanupOps.push(house.permissionOverwrites.delete(member.id).catch(() => {}));
+            }
             cleanedChannelIds.push(house.id);
         }
         // Pulisci permessi residui degli sponsor
         for (const s of sponsors) {
             if (house.permissionOverwrites.cache.has(s.id)) {
-                cleanupOps.push(house.permissionOverwrites.delete(s.id).catch(() => {}));
+                // ✅ FIX: Stessa logica per gli sponsor
+                const sponsorHomeId = await db.housing.getHome(s.id);
+                if (house.id === sponsorHomeId) {
+                    if (hasPhysicalAccess(house, s.id)) {
+                        cleanupOps.push(house.permissionOverwrites.edit(s.id, { ViewChannel: false, SendMessages: false }).catch(() => {}));
+                    }
+                } else {
+                    cleanupOps.push(house.permissionOverwrites.delete(s.id).catch(() => {}));
+                }
             }
         }
     }
