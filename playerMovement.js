@@ -194,7 +194,7 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
 
     // ✅ FIX: Se stai tornando a casa, forza Discord a segnare i messaggi come letti
     // fetchando l'ultimo messaggio. Questo previene il badge "2 notifiche" sui tuoi vecchi messaggi
-    if (isGoingHome) {
+    if (isReturningHome) {
         try {
             await newChannel.messages.fetch({ limit: 1 });
         } catch (err) {
