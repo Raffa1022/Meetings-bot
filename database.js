@@ -25,7 +25,8 @@ const housingSchema = new mongoose.Schema({
     lastReset: { type: String, default: '' },
     pendingKnocks: { type: Array, default: [] },
     activeKnocks: { type: Object, default: {} },
-    originalOwners: { type: Object, default: {} } // ✅ FIX: { channelId: userId } - proprietario originale per casa
+    originalOwners: { type: Object, default: {} }, // ✅ FIX: { channelId: userId } - proprietario originale per casa
+    homeLeftAt: { type: Object, default: {} } // ✅ FIX: { userId: timestamp } - quando il giocatore è uscito da casa
 }, { minimize: false, versionKey: false });
 
 // ==========================================
