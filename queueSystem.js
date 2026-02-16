@@ -278,16 +278,24 @@ async function executeHousingAction(queueItem) {
             // Recupera la modalità se presente (per sapere se era hidden)
             const mode = (queueItem.details && queueItem.details.mode) ? queueItem.details.mode : 'normal';
 
-            // ✅ FIX CRONOLOGIA MESSAGGI: NON editare i permessi qui!
-            // Lascia che movePlayer gestisca tutto. In questo modo movePlayer può:
-            // 1. Rilevare se l'overwrite esiste con ViewChannel:false
+            // ✅ FIX CRONOLOGIA MESSAGGI: NON editare i permessi della HOME qui!
+            // Lascia che movePlayer gestisca l'edit della home. In questo modo movePlayer può:
+            // 1. Rilevare se l'overwrite della home esiste con ViewChannel:false
             // 2. Cancellarlo e ricrearlo per forzare Discord a caricare TUTTA la cronologia
-            // Se editassimo qui, Discord vedrebbe solo un cambio false->true e caricherebbe
+            // Se editassimo la home qui, Discord vedrebbe solo un cambio false->true e caricherebbe
             // solo i messaggi dal momento dell'edit in poi.
-            
-            // ✅ NON cancellare i permessi qui - movePlayer gestisce tutto (uscita + ingresso)
 
-            // MovePlayer gestisce l'entrata nella Home (inclusi i permessi)
+            // ✅ Rimuovi permessi da tutte le case OSPITI (NON la home)
+            // Questo è necessario per lo spostamento visuale del giocatore
+            for (const [houseId, house] of housesWithPerms) {
+                if (houseId !== homeId) {
+                    await house.permissionOverwrites.delete(member.id).catch(() => {});
+                    // ✅ FIX: Notifica uscita per auto-apertura porte
+                    eventBus.emit('house:occupant-left', { channelId: houseId });
+                }
+            }
+
+            // MovePlayer gestisce l'entrata nella Home (inclusi i permessi home)
             if (homeCh && guestHouse) {
                 await movePlayer(member, guestHouse, homeCh, `🏠 ${member} è ritornato.`, false);
             } else if (homeCh && !guestHouse) {
