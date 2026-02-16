@@ -365,6 +365,8 @@ module.exports = function initMeetingSystem(client) {
 
                 // Player: proprietario + permessi
                 await db.housing.setHome(slot.player, house.id);
+                // ✅ FIX: Imposta il player come proprietario originale della casa
+                await db.housing.setOriginalOwner(house.id, slot.player);
                 await house.permissionOverwrites.create(slot.player, { ViewChannel: true, SendMessages: true, ReadMessageHistory: true });
 
                 const playerMember = await message.guild.members.fetch(slot.player).catch(() => null);
