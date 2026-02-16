@@ -16,7 +16,7 @@ const eventBus = require('./eventBus');
 
 const { movePlayer, enterHouse } = require('./playerMovement');
 
-const { getOccupants } = require('./helpers');
+const { getOccupants, hasPhysicalAccess } = require('./helpers');
 
 
 let clientRef = null;
@@ -260,10 +260,11 @@ async function executeHousingAction(queueItem) {
         if (homeId && !destroyed.includes(homeId)) {
             const homeCh = guild.channels.cache.get(homeId);
             
-            // Trova TUTTE le case dove il player ha permessi
+            // Trova TUTTE le case dove il player ha accesso FISICO (ViewChannel: true)
+            // ✅ FIX: Usa hasPhysicalAccess per ignorare overwrite nascosti del proprietario
             const housesWithPerms = guild.channels.cache.filter(c =>
                 c.parentId === HOUSING.CATEGORIA_CASE &&
-                c.permissionOverwrites.cache.has(member.id)
+                hasPhysicalAccess(c, member.id)
             );
 
             // LOGICA: Se ho permessi in una casa diversa dalla mia HOME, sono lì.
@@ -332,10 +333,11 @@ async function executeHousingAction(queueItem) {
         // --- FORZATA / NASCOSTA ---
         if (mode === 'mode_forced' || mode === 'mode_hidden') {
             
-            // Cerca le case dove ho i permessi (escludendo quella dove sto andando)
+            // Cerca le case dove ho accesso FISICO (escludendo quella dove sto andando)
+            // ✅ FIX: Usa hasPhysicalAccess per ignorare overwrite nascosti del proprietario
             const candidates = guild.channels.cache.filter(c => 
                 c.parentId === HOUSING.CATEGORIA_CASE && 
-                c.permissionOverwrites.cache.has(member.id) &&
+                hasPhysicalAccess(c, member.id) &&
                 c.id !== targetCh.id
             );
 
@@ -367,9 +369,10 @@ async function executeHousingAction(queueItem) {
         
         // Se casa vuota, entra subito
         if (occupants.size === 0) {
+            // ✅ FIX: Usa hasPhysicalAccess per ignorare overwrite nascosti
             const candidates = guild.channels.cache.filter(c => 
                 c.parentId === HOUSING.CATEGORIA_CASE && 
-                c.permissionOverwrites.cache.has(member.id) &&
+                hasPhysicalAccess(c, member.id) &&
                 c.id !== targetCh.id
             );
             
@@ -399,7 +402,12 @@ async function executeHousingAction(queueItem) {
             });
             
             if (oldHouse) {
-                await oldHouse.permissionOverwrites.delete(member.id).catch(() => {});
+                // ✅ FIX: Se è la propria casa, nascondi overwrite invece di cancellarlo
+                if (oldHouse.id === myHomeId) {
+                    await oldHouse.permissionOverwrites.edit(member.id, { ViewChannel: false, SendMessages: false }).catch(() => {});
+                } else {
+                    await oldHouse.permissionOverwrites.delete(member.id).catch(() => {});
+                }
                 // ✅ FIX: Notifica uscita per auto-apertura porte su altre case
                 eventBus.emit('house:occupant-left', { channelId: oldHouse.id });
             }
@@ -438,7 +446,7 @@ async function executeHousingAction(queueItem) {
                     
                     const candidates = guild.channels.cache.filter(c => 
                         c.parentId === HOUSING.CATEGORIA_CASE && 
-                        c.permissionOverwrites.cache.has(member.id) &&
+                        hasPhysicalAccess(c, member.id) &&
                         c.id !== targetCh.id
                     );
 
@@ -459,7 +467,12 @@ async function executeHousingAction(queueItem) {
                             // Pulisco il flag hidden
                             await db.housing.clearHiddenEntry(member.id, currentFrom.id);
                         }
-                        await currentFrom.permissionOverwrites.delete(member.id).catch(() => {});
+                        // ✅ FIX: Se è la propria casa, nascondi overwrite
+                        if (currentFrom.id === myHomeId) {
+                            await currentFrom.permissionOverwrites.edit(member.id, { ViewChannel: false, SendMessages: false }).catch(() => {});
+                        } else {
+                            await currentFrom.permissionOverwrites.delete(member.id).catch(() => {});
+                        }
                         // ✅ FIX: Notifica uscita per auto-apertura porte su altre case
                         eventBus.emit('house:occupant-left', { channelId: currentFrom.id });
                     }
@@ -527,9 +540,10 @@ async function executeHousingAction(queueItem) {
                         await msg.reply("⏱️ Tempo scaduto - Apertura automatica.");
                     }
                     
+                    // ✅ FIX: Usa hasPhysicalAccess per ignorare overwrite nascosti
                     const candidates = guild.channels.cache.filter(c => 
                         c.parentId === HOUSING.CATEGORIA_CASE && 
-                        c.permissionOverwrites.cache.has(member.id) &&
+                        hasPhysicalAccess(c, member.id) &&
                         c.id !== targetCh.id
                     );
                     
@@ -549,7 +563,12 @@ async function executeHousingAction(queueItem) {
                             // Pulisco il flag hidden
                             await db.housing.clearHiddenEntry(member.id, currentFrom.id);
                         }
-                        await currentFrom.permissionOverwrites.delete(member.id).catch(() => {});
+                        // ✅ FIX: Se è la propria casa, nascondi overwrite
+                        if (currentFrom.id === myHomeId) {
+                            await currentFrom.permissionOverwrites.edit(member.id, { ViewChannel: false, SendMessages: false }).catch(() => {});
+                        } else {
+                            await currentFrom.permissionOverwrites.delete(member.id).catch(() => {});
+                        }
                         // ✅ FIX: Notifica uscita per auto-apertura porte su altre case
                         eventBus.emit('house:occupant-left', { channelId: currentFrom.id });
                     }
