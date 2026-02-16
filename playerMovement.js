@@ -6,6 +6,7 @@ const { PermissionsBitField } = require('discord.js');
 const { HOUSING, RUOLI } = require('./config');
 const db = require('./db');
 const { getSponsorsToMove } = require('./helpers');
+const eventBus = require('./eventBus');
 
 /**
  * Wrapper: entra in casa (delegata a movePlayer)
@@ -63,6 +64,9 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
             
             // ✅ Rimuovi sempre i permessi quando esci
             await channelToLeave.permissionOverwrites.delete(member.id).catch(() => {});
+            
+            // ✅ FIX: Notifica che un occupante è uscito (per auto-apertura porte)
+            eventBus.emit('house:occupant-left', { channelId: channelToLeave.id });
         }
         // Rimuovi sponsor dalla vecchia casa (senza narrazione)
         const sponsorDeletes = sponsors.map(s =>
@@ -77,10 +81,12 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
     const perms = { ViewChannel: true, SendMessages: true, ReadMessageHistory: true };
 
     // Player + Sponsor entrano in parallelo
+    // ✅ FIX: Usa edit() invece di create() per preservare la continuità del canale
+    // e permettere la lettura della cronologia messaggi precedenti
     const enterOps = [
-        newChannel.permissionOverwrites.create(member.id, perms),
+        newChannel.permissionOverwrites.edit(member.id, perms),
         db.housing.setPlayerMode(member.id, isSilent ? 'HIDDEN' : 'NORMAL'),
-        ...sponsors.map(s => newChannel.permissionOverwrites.create(s.id, perms)),
+        ...sponsors.map(s => newChannel.permissionOverwrites.edit(s.id, perms)),
         ...sponsors.map(s => db.housing.setPlayerMode(s.id, isSilent ? 'HIDDEN' : 'NORMAL')),
     ];
     await Promise.all(enterOps);
@@ -93,10 +99,12 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
     );
 
     const cleanupOps = [];
+    const cleanedChannelIds = []; // ✅ FIX: Track cleaned channels for knock auto-open
     for (const [, house] of allCaseChannels) {
         // Pulisci permessi residui del giocatore
         if (house.permissionOverwrites.cache.has(member.id)) {
             cleanupOps.push(house.permissionOverwrites.delete(member.id).catch(() => {}));
+            cleanedChannelIds.push(house.id);
         }
         // Pulisci permessi residui degli sponsor
         for (const s of sponsors) {
@@ -105,7 +113,13 @@ async function movePlayer(member, oldChannel, newChannel, entryMessage, isSilent
             }
         }
     }
-    if (cleanupOps.length > 0) await Promise.all(cleanupOps);
+    if (cleanupOps.length > 0) {
+        await Promise.all(cleanupOps);
+        // ✅ FIX: Notifica uscita per ogni casa pulita (per auto-apertura porte)
+        for (const chId of cleanedChannelIds) {
+            eventBus.emit('house:occupant-left', { channelId: chId });
+        }
+    }
 
     // FIX: Narrazione ingresso solo per giocatore principale
     if (!isSilent && entryMessage && isMainPlayer) {
