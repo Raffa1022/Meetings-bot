@@ -191,6 +191,20 @@ const housing = {
         return HousingModel.updateOne(H_ID, { $unset: { [`hiddenEntries.${userId}.${channelId}`]: '' } });
     },
 
+    // --- 📜 Tracking uscita/ritorno per recap messaggi ---
+    async setDepartureTime(userId) {
+        return HousingModel.updateOne(H_ID, { $set: { [`departureTimestamps.${userId}.departed`]: Date.now() } });
+    },
+
+    async setReturnTime(userId) {
+        return HousingModel.updateOne(H_ID, { $set: { [`departureTimestamps.${userId}.returned`]: Date.now() } });
+    },
+
+    async getDepartureTimes(userId) {
+        const doc = await HousingModel.findOne(H_ID, { [`departureTimestamps.${userId}`]: 1 }).lean();
+        return doc?.departureTimestamps?.[userId] || null;
+    },
+
     // 🔥 NUOVO: Decrementa visite per la fase SUCCESSIVA (per preset)
     async decrementNextPhaseForcedLimit(userId) {
         const mode = await housing.getMode();
