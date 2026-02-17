@@ -2,8 +2,8 @@
 // 🚀 APP.JS - Entry Point
 // Orchestratore di tutti i moduli
 // ==========================================
-const { Client, GatewayIntentBits, Partials, Options } = require('discord.js');
-const express = require('express');
+cokdkdnst { Client, GatewayIntentBits, Partials, Options } = require('discord.js');
+conkekst express = require('express');
 
 const { TOKEN, PORT, PREFIX } = require('./config');
 const { connectDB } = require('./database');
