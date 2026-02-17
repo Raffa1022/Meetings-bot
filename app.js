@@ -15,6 +15,7 @@ const initMeetingSystem = require('./meetingSystem');
 const initAbilitySystem = require('./abilitySystem');
 const initModerationSystem = require('./moderationSystem'); // FIX: Aggiunto import mancante
 const initEconomySystem = require('./economySystem');       // 💰 Economy System
+const { initMessageRecap } = require('./messageRecap');     // 📜 Message Recap System
 const { registerPresetInteractions, startPresetTimer } = require('./presetSystem'); // ⏰ Preset System
 const { isAdmin } = require('./helpers');
 
@@ -112,6 +113,7 @@ client.on('messageCreate', async message => {
         initAbilitySystem(client);
         initModerationSystem(client);  // FIX: Aggiunta inizializzazione mancante
         initEconomySystem(client);     // 💰 Economy System
+        initMessageRecap(client);      // 📜 Message Recap System
 
         // 3. Login
         await client.login(TOKEN);
@@ -124,6 +126,7 @@ client.on('messageCreate', async message => {
         console.log('✨ Abilità: Coda cronologica');
         console.log('🛡️ Moderazione: Attivo');
         console.log('💰 Economia: Mercato, Inventario, Shop');
+        console.log('📜 Recap: Messaggi persi durante assenza');
         console.log('⏰ Preset: Sistema azioni programmate + Timer automatico');
         console.log('💾 Database: MongoDB-First, zero dbCache');
         console.log('='.repeat(50));
