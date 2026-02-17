@@ -618,6 +618,30 @@ module.exports = function registerPlayerCommands(client) {
                 }, 60000);
             }
         }
+
+        // ===================== LOG =====================
+        else if (command === 'log') {
+            message.delete().catch(() => {});
+            // Solo in chat privata
+            if (message.channel.parentId !== HOUSING.CATEGORIA_CHAT_PRIVATE)
+                return sendTemp(message.channel, "⛔ Usa `!log` nella tua chat privata.", 5000);
+
+            // Deve avere un ruolo valido
+            if (!message.member.roles.cache.hasAny(RUOLI.ALIVE, RUOLI.DEAD))
+                return sendTemp(message.channel, "⛔ Non hai i permessi.", 5000);
+
+            const { generateLogFile } = require('./messageRecap');
+            const result = await generateLogFile(message.guild, message.author.id);
+
+            if (!result) {
+                return sendTemp(message.channel, "📜 Nessun messaggio registrato dall'ultima uscita da casa.", 8000);
+            }
+
+            await message.channel.send({
+                content: `📁 **Registro messaggi** — ${result.houseName} (${result.messageCount} messaggi)`,
+                files: [result.attachment],
+            });
+        }
     });
 
 };
