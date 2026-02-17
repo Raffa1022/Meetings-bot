@@ -22,6 +22,7 @@ const housingSchema = new mongoose.Schema({
     destroyedHouses: { type: Array, default: [] }, // Manteniamo per compatibilità legacy
     destroyedHousesData: { type: Object, default: {} }, // { channelId: { phase: 'NOTTE 1' | 'GIORNO 1', timestamp: Date } }
     multiplaHistory: { type: Object, default: {} },
+    departureTimestamps: { type: Object, default: {} }, // 📜 { userId: { departed: Number, returned: Number } }
     lastReset: { type: String, default: '' },
     pendingKnocks: { type: Array, default: [] },
     activeKnocks: { type: Object, default: {} },
